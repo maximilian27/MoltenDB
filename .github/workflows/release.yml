@@ -1,0 +1,50 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # This matrix spins up three separate virtual machines in parallel
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: moltendb
+            asset_name: moltendb-linux-amd64
+          - os: macos-latest
+            artifact_name: moltendb
+            asset_name: moltendb-macos-amd64
+          - os: windows-latest
+            artifact_name: moltendb.exe
+            asset_name: moltendb-windows-amd64.exe
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Release Binary
+        run: cargo build --release
+
+      - name: Rename Binary (Linux & macOS)
+        if: matrix.os != 'windows-latest'
+        run: mv target/release/${{ matrix.artifact_name }} ./${{ matrix.asset_name }}
+
+      - name: Rename Binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: move target\release\${{ matrix.artifact_name }} .\${{ matrix.asset_name }}
+
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./${{ matrix.asset_name }}
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
