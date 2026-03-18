@@ -29,7 +29,7 @@ jobs:
       - name: Parse and Bump Cargo.toml
         run: |
           # 1. Read the current version from Cargo.toml
-          CURRENT_VERSION=$(grep -m 1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          CURRENT_VERSION=$(grep -m 1 '^version = ' Cargo.toml | tr -d ' "' | sed 's/version=//')
           echo "Current version: $CURRENT_VERSION"
           
           # 2. Use Regex to split the string (e.g., "0.1.0-alpha." and "3")
@@ -46,9 +46,14 @@ jobs:
             # 4. Replace the old version with the new version in Cargo.toml
             sed -i -e "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
           
-            # 5. Commit and Push back to the dev branch
-            # We add [skip ci] to the commit message as a secondary defense against infinite loops
-            git add Cargo.toml
+            # 5. Sync Cargo.lock safely
+            # Extract the crate name dynamically and update ONLY this package in the lockfile
+            CRATE_NAME=$(grep -m 1 '^name = ' Cargo.toml | tr -d ' "' | sed 's/name=//')
+            cargo update -p "$CRATE_NAME"
+          
+            # 6. Commit and Push back to the dev branch
+            # Notice we are now adding BOTH files to the commit
+            git add Cargo.toml Cargo.lock
             git commit -m "chore: bump alpha version to $NEW_VERSION [skip ci]"
             git push
           else
