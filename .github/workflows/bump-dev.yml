@@ -1,0 +1,58 @@
+name: Auto-Bump Alpha Version
+
+# Trigger when code is pushed or merged into the dev branch
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  bump-version:
+    # THE SHIELD: This prevents the infinite loop. It tells GitHub to ignore commits made by this bot.
+    if: "!startsWith(github.event.head_commit.message, 'chore: bump alpha version')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to push the new Cargo.toml back to the repo
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          # Fetch the full history so we can push back
+          fetch-depth: 0
+
+      - name: Configure Git Bot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Parse and Bump Cargo.toml
+        run: |
+          # 1. Read the current version from Cargo.toml
+          CURRENT_VERSION=$(grep -m 1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "Current version: $CURRENT_VERSION"
+          
+          # 2. Use Regex to split the string (e.g., "0.1.0-alpha." and "3")
+          if [[ $CURRENT_VERSION =~ (.*-alpha\.)([0-9]+) ]]; then
+            BASE="${BASH_REMATCH[1]}"
+            NUM="${BASH_REMATCH[2]}"
+          
+            # 3. Increment the number
+            NEW_NUM=$((NUM + 1))
+            NEW_VERSION="${BASE}${NEW_NUM}"
+          
+            echo "Bumping to: $NEW_VERSION"
+          
+            # 4. Replace the old version with the new version in Cargo.toml
+            sed -i -e "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
+          
+            # 5. Commit and Push back to the dev branch
+            # We add [skip ci] to the commit message as a secondary defense against infinite loops
+            git add Cargo.toml
+            git commit -m "chore: bump alpha version to $NEW_VERSION [skip ci]"
+            git push
+          else
+            echo "Current version ($CURRENT_VERSION) does not match the '-alpha.X' pattern."
+            echo "Skipping version bump."
+            exit 0
+          fi
