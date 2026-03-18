@@ -1,0 +1,81 @@
+name: Build WASM & Sync to Web Repo
+
+# Trigger exactly when your auto-tagger creates a new 'v*' release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout MoltenDB Core (Rust)
+        uses: actions/checkout@v4
+        with:
+          path: core-repo
+
+      - name: Checkout Web Monorepo (TS/JS)
+        uses: actions/checkout@v4
+        with:
+          repository: maximilian27/moltendb-web
+          path: web-repo
+          token: ${{ secrets.REPO_PAT }} # CRITICAL: Authorizes the push to the second repo
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM
+        working-directory: ./core-repo
+        run: wasm-pack build --target web
+
+      - name: Surgical Artifact Sync
+        run: |
+          # Define exact paths to prevent typos
+          SRC_PKG="core-repo/pkg"
+          DEST_CORE="web-repo/packages/core"
+          DEST_DIST="$DEST_CORE/dist"
+          
+          echo "Syncing artifacts to $DEST_DIST..."
+          
+          # 1. Ensure the dist directory exists
+          mkdir -p "$DEST_DIST"
+          
+          # 2. Copy exactly the 4 code artifacts into /packages/core/dist/
+          cp "$SRC_PKG/moltendb.d.ts" "$DEST_DIST/"
+          cp "$SRC_PKG/moltendb.js" "$DEST_DIST/"
+          cp "$SRC_PKG/moltendb_bg.wasm" "$DEST_DIST/"
+          cp "$SRC_PKG/moltendb_bg.wasm.d.ts" "$DEST_DIST/"
+          
+          # 3. Copy the License to /packages/core/ (skipping the generated README)
+          cp "$SRC_PKG/LICENSE.md" "$DEST_CORE/"
+          
+          # 4. Extract the newly built version from the WASM package.json
+          NEW_VERSION=$(jq -r '.version' "$SRC_PKG/package.json")
+          echo "Detected new version: $NEW_VERSION"
+          
+          # 5. Inject that version into the Web monorepo's package.json
+          # We write it to a temporary file, then replace the original
+          jq --arg v "$NEW_VERSION" '.version = $v' "$DEST_CORE/package.json" > tmp.json
+          mv tmp.json "$DEST_CORE/package.json"
+
+      - name: Commit and Push to Web Monorepo
+        working-directory: ./web-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git add .
+          
+          # Prevent the workflow from crashing if the files haven't actually changed
+          if git diff --staged --quiet; then
+            echo "No WASM changes detected. Skipping push."
+          else
+            git commit -m "chore: sync WASM engine artifacts & bump version to ${{ github.ref_name }}"
+          
+            # Notice we are pushing to 'master' based on your screenshot
+            git push origin master 
+          fi
