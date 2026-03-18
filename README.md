@@ -68,12 +68,13 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Graceful shutdown: drains in-flight requests (up to 30 s), then flushes the DB before exit
 
 ### ✅ Developer Tooling
-- **Query Explorer** (`src/moltenDB_wasm_tests/raw-json-explorer.html`) — run raw JSON queries against the WASM engine in the browser, with live events panel and activity log
-- **Query Builder Explorer** (`src/moltenDB_wasm_tests/query-builder-explorer.html`) — same explorer but using the chainable query builder API
+- **Interactive WASM Browser Demo** — A complete, live environment to test raw JSON queries and the chainable builder directly in your browser.
+  - [Run Live on StackBlitz](https://stackblitz.com/~/github.com/maximilian27/moltendb-wasm-demo) (Zero setup required)
+  - [View Demo Source Code (GitHub)](https://github.com/maximilian27/moltendb-wasm-demo)
 - **Server Query Builder** (`src/server_test/server-query-builder.html`) — identical layout, targets the HTTP server instead of WASM
 - **WebSocket Tester** (`src/ws_test/websocket-test.html`) — connect, authenticate, and observe real-time push events
-- **57+ documented example requests** in `src/requests.http`
-- **56 integration tests** covering all query features, versioning, persistence, compaction, concurrency, and analytics
+- **57+ documented example requests** in `tests/requests.http`
+- **56 integration tests** covering all query features, versioning, persistence, compaction, concurrency, and analytics.
 
 ---
 
@@ -122,25 +123,6 @@ cargo run --release -- --debug
 ```
 
 Run `cargo run -- --help` to see all available flags.
-
-### Run the WASM demo
-
-```bash
-# 1. Build the WASM package
-wasm-pack build --target web
-
-# 2. Sync artifacts into the npm package
-node moltendb-wasm/scripts/build.mjs
-
-# 3. Install local packages
-cd src/moltenDB_wasm_tests
-npm install
-
-# 4. Start the dev server (sets required COOP/COEP headers for OPFS)
-npm start
-# → http://localhost:8000/raw-json-explorer.html
-# → http://localhost:8000/query-builder-explorer.html
-```
 
 ---
 
@@ -547,21 +529,25 @@ assets/
 
 ## What's Next? (The Roadmap)
 
-MoltenDB is currently in **Alpha**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by community feedback.
+MoltenDB is currently in **Alpha**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by roadmap and community feedback.
 
-Instead of locking into a rigid feature timeline, development is focused on three major architectural themes. **If you need a specific feature to adopt MoltenDB, please open a GitHub Issue or vote on existing ones so it gets prioritized!**
+Because I am a solo developer and I don't make any money from this project (yet?), my personal life comes first. I am moving at a sustainable pace to ensure the architecture stays clean and I don't burn out. Instead of locking into a rigid feature timeline, development is focused on three major architectural themes. **If you need a specific feature to adopt MoltenDB, please open a GitHub Issue or vote on existing ones so it gets prioritized!**
 
 ### 1. Scaling & Ecosystem
 - **Multi-Tab WASM:** Cross-tab synchronization using the Leader Election pattern so multiple browser tabs can seamlessly share the OPFS engine without locking conflicts.
+- **Mobile Native Modules:** Compiling the exact same Rust core to run natively on iOS and Android (via FFI/JNI). This will bring blazing-fast, local-first embedded databases to React Native and Flutter.
 - **Language Clients:** Official transport drivers for Python, Go, and Swift.
+- **Data Portability:** Built-in, zero-friction utilities to export your entire database to standard JSON and CSV formats. No vendor lock-in.
 
-### 2. Distributed Systems
+### 2. Distributed Systems & Core
 - **Robust Sync:** Two-way browser ↔ server delta sync with automatic conflict resolution (server-wins on `_v` collision).
 - **Transactions:** ACID multi-key writes with optimistic locking (`BEGIN`, `COMMIT`, `ROLLBACK`).
+- **Hardened Analytics:** Expanding and rigorously testing the `COUNT/SUM/AVG` analytics engine, accompanied by a comprehensive, interactive live demo.
 
-### 3. Security & Integrity
+### 3. Security & Tooling
 - **Schema Validation:** Optional, opt-in per-collection type constraints (enforcing strings, numbers, required fields).
 - **Granular ACLs:** User management and role-based access control for individual collections.
+- **MoltenDB Studio (Premium):** A paid, official GUI dashboard to visually manage your databases, inspect collections, and execute queries without touching the CLI.
 
 ---
 
