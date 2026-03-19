@@ -46,7 +46,11 @@ jobs:
       - name: Upload to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: ./${{ matrix.asset_name }}
+          files: |
+            ./${{ matrix.asset_name }}
+            cert.pem
+            key.pem
+            tests/requests.http
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
