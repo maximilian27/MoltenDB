@@ -76,6 +76,5 @@ jobs:
           else
             git commit -m "chore: sync WASM engine artifacts & bump version to ${{ github.ref_name }}"
           
-            # Notice we are pushing to 'master' based on your screenshot
-            git push origin master 
+            git push origin develop 
           fi
