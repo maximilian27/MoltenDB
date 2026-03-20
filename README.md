@@ -1,18 +1,18 @@
 <div align="center">
   <img src="assets/logo.png" alt="MoltenDB Logo" width="400"/>
 
-  # MoltenDB
+# MoltenDB
 
-  ### 🌋 A Local-First Embedded Database in Pure Rust
+### 🌋 A Local-First Embedded Database in Pure Rust
 
-  **Runs in the browser (WASM + OPFS) and on the server (Rust + disk).**  
-  Same query engine. Same log format. Two environments.
+**Runs in the browser (WASM + OPFS) and on the server (Rust + disk).**  
+Same query engine. Same log format. Two environments.
 
-  **Request only the fields you need — like GraphQL, but over a plain JSON API.**
+**Request only the fields you need — like GraphQL, but over a plain JSON API.**
 
-  [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
-  [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
-  [![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen?style=flat-square)](#testing)
+[![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
+[![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen?style=flat-square)](#testing)
 
 </div>
 
@@ -33,8 +33,9 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Data persists across page reloads using the Origin Private File System (OPFS)
 - Automatic log compaction: count-based (every 500 inserts) and size-based (> 5 MB)
 - Analytics queries: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` with `WHERE` filtering
-- **`moltendb-wasm` npm package** — bundles the WASM engine, Web Worker, and main-thread client into a single publishable artifact
-- **`moltendb-query-builder` npm package** — type-safe, chainable query builder (CJS + ESM + `.d.ts`)
+- **[`@moltendb-web/core` on NPM](https://www.npmjs.com/package/@moltendb-web/core)** — bundles the WASM engine, Web Worker, and main-thread client into a single publishable artifact
+- **[`@moltendb-web/query` on NPM](https://www.npmjs.com/package/@moltendb-web/query)** — type-safe, chainable query builder (CJS + ESM + `.d.ts`)
+- **[⚡ Try the Live Browser WASM Demo on StackBlitz](https://stackblitz.com/~/github.com/maximilian27/moltendb-wasm-demo)**
 
 ### ✅ Server (Rust binary)
 - HTTPS-only server with TLS (cert + key required)
@@ -83,9 +84,21 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 ### Prerequisites
 
 - Rust 1.85+ (`rustup update stable`)
-- `wasm-pack` for the browser build (`cargo install wasm-pack`)
-- Node.js 18+ (for the dev server and npm packages)
+- Node.js 20+ (for the dev server and npm packages)
+- `wasm-pack` (only if building the browser package: `cargo install wasm-pack`)
 - A TLS certificate and key (for the server)
+
+### Install via Cargo (Easiest)
+
+If you just want to run the standalone database server, install it directly from crates.io:
+
+```bash
+cargo install moltendb
+```
+
+### Download Pre-built Binaries
+
+Alternatively, you can also download the pre-compiled binaries and self-signed certificates directly from the GitHub releases page.
 
 ### Generate a self-signed certificate (development only)
 
@@ -124,6 +137,14 @@ cargo run --release -- --debug
 
 Run `cargo run -- --help` to see all available flags.
 
+
+### Quick Test with `requests.http`
+
+If you want to quickly test the functionality with the requests.http file, you should start the server with the following credentials (via CLI flags or environment variables): \
+  **--admin-user `admin`**\
+  **--admin-password `admin123`**\
+Make sure to login first and then replace the token in the requests.http file with the one you get from the login response.
+
 ---
 
 ## HTTP API
@@ -133,7 +154,11 @@ All endpoints return a consistent JSON envelope with a `statusCode` field:
 
 ```json
 { "statusCode": 200, "count": 5, "status": "ok" }
+```
+```json
 { "statusCode": 400, "error": "Unknown property: 'foo'. Check the API docs..." }
+```
+```json
 { "statusCode": 404, "error": "No documents found" }
 ```
 
@@ -221,29 +246,36 @@ Authorization: Bearer <token>
 
 **Query examples:**
 
-```json
 // WHERE with multiple conditions (all must match — implicit AND)
+```json
 { "collection": "laptops", "where": { "brand": "Apple", "in_stock": true } }
-
+```
 // GraphQL-style field selection
+```json
 { "collection": "laptops", "fields": ["brand", "model", "price"] }
-
+```
 // Deep nested field selection
+```json
 { "collection": "laptops", "fields": ["brand", "specs.cpu.ghz", "specs.weight_kg"] }
-
+```
 // Field exclusion
+```json
 { "collection": "laptops", "excludedFields": ["memory_id", "display_id"] }
-
+```
 // Sort by price descending, then brand ascending
+```json
 { "collection": "laptops", "sort": [{ "field": "price", "order": "desc" }, { "field": "brand", "order": "asc" }] }
-
+```
 // Pagination — second page of 3
+```json
 { "collection": "laptops", "sort": [{ "field": "price", "order": "asc" }], "offset": 3, "count": 3 }
-
+```
 // $in — brand is one of a list
+```json
 { "collection": "laptops", "where": { "brand": { "$in": ["Apple", "Dell", "Razer"] } } }
-
+```
 // $contains on an array field
+```json
 { "collection": "laptops", "where": { "tags": { "$contains": "gaming" } } }
 ```
 
@@ -344,14 +376,14 @@ Returns all documents in the collection, with optional pagination.
 
 ## Query Builder (JavaScript / TypeScript)
 
-The `moltendb-query-builder` package provides a type-safe, chainable API that works with both the HTTP server and the WASM engine.
+The `@moltendb-web/query` package provides a type-safe, chainable API that works with both the HTTP server and the WASM engine.
 
 ```bash
-npm install moltendb-query-builder
+npm install @moltendb-web/query
 ```
 
 ```typescript
-import { MoltenDBClient, WorkerTransport, HttpTransport } from 'moltendb-query-builder';
+import { MoltenDBClient, WorkerTransport, HttpTransport } from '@moltendb-web/query';
 
 // WASM (browser)
 const client = new MoltenDBClient(new WorkerTransport(worker));
@@ -402,7 +434,11 @@ wss://localhost:1538/ws
 2. After authentication, the server pushes a change event on every write:
    ```json
    { "event": "change", "collection": "laptops", "key": "lp2", "new_v": 3 }
+   ```
+   ```json
    { "event": "change", "collection": "laptops", "key": "lp6", "new_v": null }
+   ```
+   ```json
    { "event": "change", "collection": "laptops", "key": "*",   "new_v": null }
    ```
    - `new_v` is the document's `_v` after the write, or `null` for deletes/drops
@@ -460,7 +496,11 @@ MoltenDB uses an append-only log format — every insert, update, and delete is 
 
 ```json
 {"cmd":"INSERT","collection":"laptops","key":"lp1","value":{"brand":"Lenovo","model":"ThinkPad X1 Carbon","price":1499,"_v":1,"createdAt":"2026-03-09T13:51:05Z","modifiedAt":"2026-03-09T13:51:05Z"}}
+```
+```json
 {"cmd":"DELETE","collection":"laptops","key":"lp6","value":null}
+```
+```json
 {"cmd":"DROP","collection":"laptops","key":"_","value":null}
 ```
 
@@ -529,7 +569,7 @@ assets/
 
 ## What's Next? (The Roadmap)
 
-MoltenDB is currently in **Alpha**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by roadmap and community feedback.
+MoltenDB is currently in **Alpha**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by following roadmap and community feedback.
 
 Because I am a solo developer and I don't make any money from this project (yet?), my personal life comes first. I am moving at a sustainable pace to ensure the architecture stays clean and I don't burn out. Instead of locking into a rigid feature timeline, development is focused on three major architectural themes. **If you need a specific feature to adopt MoltenDB, please open a GitHub Issue or vote on existing ones so it gets prioritized!**
 
@@ -548,6 +588,19 @@ Because I am a solo developer and I don't make any money from this project (yet?
 - **Schema Validation:** Optional, opt-in per-collection type constraints (enforcing strings, numbers, required fields).
 - **Granular ACLs:** User management and role-based access control for individual collections.
 - **MoltenDB Studio (Premium):** A paid, official GUI dashboard to visually manage your databases, inspect collections, and execute queries without touching the CLI.
+
+
+### What's NOT on the Roadmap (The Anti-Goals)
+
+Keeping a project fast and lightweight means being very strict about what *not* to build. Here are a few things I have intentionally decided to leave out of MoltenDB:
+
+- **Natural Language Queries (NLQ):** I know AI and "chat-to-query" interfaces are the hot trend right now, and it feels like every database is bolting them on.
+However, MoltenDB is fundamentally designed to be lean, predictable, and exceptionally fast.
+Adding NLQ or embedding a vector engine would completely destroy the lightweight footprint of the WASM build and the native binary.
+While I might explore building an NLQ adapter as a completely separate middleware package down the road, it will never be baked into the core engine.
+- **Heavy Data Transformations (`map`, `flat`, `flatMap`):** The query engine is highly optimized to retrieve your data (with precise field selection) as quickly as possible. 
+Baking complex array manipulations or heavy map/reduce operations into the fetch pipeline adds unnecessary overhead to the core engine.
+It is much faster and cleaner to let the database be a database, and handle those specific data transformations in your application layer (JavaScript/Rust) after the data is returned.
 
 ---
 
