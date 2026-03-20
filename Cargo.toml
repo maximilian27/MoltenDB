@@ -1,12 +1,15 @@
 [package]
 name = "moltendb"
-version = "0.1.0-alpha.12"
+version = "0.1.0-alpha.13"
 edition = "2024"
 authors = ["Maximilian Both <maximilian.both27@outlook.com>"]
 description = "A real-time, local-first NoSQL database written in Rust."
-license = "LICENSE.md"
+license = "BSL-1.1"
+license-file = "LICENSE.md"
 repository = "https://github.com/maximilian27/MoltenDB"
 readme = "README.md"
+keywords = ["nosql", "embedded", "local-first", "wasm", "json"]
+categories = ["database-implementations", "wasm", "data-structures"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
