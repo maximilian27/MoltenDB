@@ -1,4 +1,4 @@
-<div  style="display: flex; flex-direction: column; align-items: center;">
+<div align="center">
   <img src="assets/logo.png" alt="MoltenDB Logo" width="400"/>
 
 # MoltenDB
