@@ -584,11 +584,13 @@ Because I am a solo developer and I don't make any money from this project (yet?
 - **Transactions:** ACID multi-key writes with optimistic locking (`BEGIN`, `COMMIT`, `ROLLBACK`).
 - **Hardened Analytics:** Expanding and rigorously testing the `COUNT/SUM/AVG` analytics engine, accompanied by a comprehensive, interactive live demo.
 
-### 3. Security & Tooling & Polish
+### 3. Security, Tooling & Polish
 - **Schema Validation:** Optional, opt-in per-collection type constraints (enforcing strings, numbers, required fields).
 - **Granular ACLs:** User management and role-based access control for individual collections.
 - **MoltenDB Studio (Premium):** A paid, official GUI dashboard to visually manage your databases, inspect collections, and execute queries without touching the CLI.
-- **A "Professional" Logo:** I know the current logo isn't exactly boring and corporate enough for an enterprise database, but I wanted the Alpha release to have a bit of personality! As we approach `v1.0`, MoltenDB will get a clean, professional brand identity.
+- **Comprehensive Changelog:** Establishing a clear, detailed changelog so the community can easily track new features, API adjustments, and performance improvements release by release.
+- **A "Professional" Logo:** I know the current logo isn't exactly boring and corporate enough for an enterprise database, but I wanted the Alpha release to have a bit of personality!
+As we approach `v1.0`, MoltenDB will get a clean, professional brand identity.
 
 
 ### What's NOT on the Roadmap (The Anti-Goals)
