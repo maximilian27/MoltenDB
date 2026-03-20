@@ -1,4 +1,4 @@
-<div align="center">
+<div  style="display: flex; flex-direction: column; align-items: center;">
   <img src="assets/logo.png" alt="MoltenDB Logo" width="400"/>
 
 # MoltenDB
@@ -13,6 +13,8 @@ Same query engine. Same log format. Two environments.
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen?style=flat-square)](#testing)
+
+**⚠️ Alpha Software** — APIs may change. Not recommended for production use yet.
 
 </div>
 
@@ -32,7 +34,6 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Full document store running inside a Web Worker — zero main-thread blocking
 - Data persists across page reloads using the Origin Private File System (OPFS)
 - Automatic log compaction: count-based (every 500 inserts) and size-based (> 5 MB)
-- Analytics queries: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` with `WHERE` filtering
 - **[`@moltendb-web/core` on NPM](https://www.npmjs.com/package/@moltendb-web/core)** — bundles the WASM engine, Web Worker, and main-thread client into a single publishable artifact
 - **[`@moltendb-web/query` on NPM](https://www.npmjs.com/package/@moltendb-web/query)** — type-safe, chainable query builder (CJS + ESM + `.d.ts`)
 - **[⚡ Try the Live Browser WASM Demo on StackBlitz](https://stackblitz.com/~/github.com/maximilian27/moltendb-wasm-demo)**
@@ -71,9 +72,8 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 ### ✅ Developer Tooling
 - **Interactive WASM Browser Demo** — A complete, live environment to test raw JSON queries and the chainable builder directly in your browser.
   - [Run Live on StackBlitz](https://stackblitz.com/~/github.com/maximilian27/moltendb-wasm-demo) (Zero setup required)
-  - [View Demo Source Code (GitHub)](https://github.com/maximilian27/moltendb-wasm-demo)
-- **Server Query Builder** (`src/server_test/server-query-builder.html`) — identical layout, targets the HTTP server instead of WASM
-- **WebSocket Tester** (`src/ws_test/websocket-test.html`) — connect, authenticate, and observe real-time push events
+  - [View WASM Demo Source Code (GitHub)](https://github.com/maximilian27/moltendb-wasm-demo)
+- **[Server Integration Test Suite (GitHub)](https://github.com/maximilian27/moltendb-server-test)** — A browser-based testing environment to exercise the HTTP API and WebSocket endpoint against a live server using the TypeScript client. Includes an interactive Server Query Builder, a WebSocket tester, and a collection fetcher.
 - **57+ documented example requests** in `tests/requests.http`
 - **56 integration tests** covering all query features, versioning, persistence, compaction, concurrency, and analytics.
 
@@ -584,10 +584,11 @@ Because I am a solo developer and I don't make any money from this project (yet?
 - **Transactions:** ACID multi-key writes with optimistic locking (`BEGIN`, `COMMIT`, `ROLLBACK`).
 - **Hardened Analytics:** Expanding and rigorously testing the `COUNT/SUM/AVG` analytics engine, accompanied by a comprehensive, interactive live demo.
 
-### 3. Security & Tooling
+### 3. Security & Tooling & Polish
 - **Schema Validation:** Optional, opt-in per-collection type constraints (enforcing strings, numbers, required fields).
 - **Granular ACLs:** User management and role-based access control for individual collections.
 - **MoltenDB Studio (Premium):** A paid, official GUI dashboard to visually manage your databases, inspect collections, and execute queries without touching the CLI.
+- **A "Professional" Logo:** I know the current logo isn't exactly boring and corporate enough for an enterprise database, but I wanted the Alpha release to have a bit of personality! As we approach `v1.0`, MoltenDB will get a clean, professional brand identity.
 
 
 ### What's NOT on the Roadmap (The Anti-Goals)
