@@ -1,3 +1,12 @@
+# [0.1.0-alpha.19](https://github.com/maximilian27/MoltenDB/compare/v0.1.0-alpha.18...v0.1.0-alpha.19) (2026-03-21)
+
+
+### Bug Fixes
+
+* remove skip ci in order to trigger next workflows ([b5a81d0](https://github.com/maximilian27/MoltenDB/commit/b5a81d0346beff15c3a33e0e0d8e46eb98b7200a))
+
+
+
 # [0.1.0-alpha.18](https://github.com/maximilian27/MoltenDB/compare/v0.1.0-alpha.16...v0.1.0-alpha.18) (2026-03-21)
 
 
