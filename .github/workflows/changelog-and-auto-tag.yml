@@ -1,6 +1,5 @@
 name: Changelog & Tag Pipeline
 
-# Trigger ONLY when code is pushed or merged into the master branch
 on:
   push:
     branches:
@@ -8,7 +7,6 @@ on:
 
 jobs:
   changelog-and-tag:
-    # THE SHIELD: Prevent loops if the changelog commit itself triggers this
     if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
 
@@ -19,7 +17,6 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.REPO_PAT }}
 
-          # 1. MOVED UP: Extract the version FIRST
       - name: Extract Version from Cargo.toml
         id: extract
         run: |
@@ -34,11 +31,9 @@ jobs:
           output-file: "CHANGELOG.md"
           skip-version-file: "true"
           skip-tag: "true"
-          # TELL IT EXACTLY WHAT VERSION TO USE
           skip-bump: "true"
           fallback-version: ${{ env.VERSION }}
-          # CORRECTED PARAMETER NAME
-          git-message: "chore(release): update changelog v${{ env.VERSION }} [skip ci]"
+          git-message: "chore(release): update changelog v${{ env.VERSION }}"
 
 
       - name: Check if Tag Already Exists
