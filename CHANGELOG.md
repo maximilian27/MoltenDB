@@ -1,3 +1,12 @@
+# [0.1.0-alpha.20](https://github.com/maximilian27/MoltenDB/compare/v0.1.0-alpha.19...v0.1.0-alpha.20) (2026-03-21)
+
+
+### Bug Fixes
+
+* generate changelog configuration ([4afb758](https://github.com/maximilian27/MoltenDB/commit/4afb758adb3c3c151fd7aa88825b9438fde417b7))
+
+
+
 # [0.1.0-alpha.19](https://github.com/maximilian27/MoltenDB/compare/v0.1.0-alpha.18...v0.1.0-alpha.19) (2026-03-21)
 
 
