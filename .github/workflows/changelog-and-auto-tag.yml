@@ -1,22 +1,35 @@
-name: Auto-Tag on Master
+name: Changelog & Tag Pipeline
 
 # Trigger ONLY when code is pushed or merged into the master branch
 on:
   push:
     branches:
-      - master # (Change to 'main' if your default branch is main)
+      - master
 
 jobs:
-  create-tag:
+  changelog-and-tag:
+    # THE SHIELD: Prevent loops if the changelog commit itself triggers this
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # We need the full git history to check for existing tags
-          # CRITICAL: We use a custom PAT here so the tag push triggers the Release workflow
+          fetch-depth: 0
+          # CRITICAL: We use your PAT so the subsequent tag push triggers the WASM Sync workflow
           token: ${{ secrets.REPO_PAT }}
+
+      - name: Generate Changelog
+        uses: TriPSs/conventional-changelog-action@v5
+        with:
+          github-token: ${{ secrets.REPO_PAT }}
+          output-file: "CHANGELOG.md"
+          # Skip version bumping here since your Cargo.toml is the source of truth
+          skip-version-file: "true"
+          # Disable the action's built-in tagging so your custom logic below handles it
+          skip-tag: "true"
+          commit-message: "chore(release): update changelog [skip ci]"
 
       - name: Extract Version from Cargo.toml
         id: extract
@@ -29,8 +42,9 @@ jobs:
       - name: Check if Tag Already Exists
         id: check_tag
         run: |
-          # If we merge to master but didn't bump the version, we don't want to crash.
-          # This checks if the tag is already in the repository.
+          # Make sure we have the latest commits locally (including the new changelog commit)
+          git pull origin master
+          
           if git rev-parse "v${{ env.VERSION }}" >/dev/null 2>&1; then
             echo "Tag v${{ env.VERSION }} already exists. Skipping tag creation."
             echo "EXISTS=true" >> $GITHUB_ENV
@@ -42,12 +56,12 @@ jobs:
       - name: Create and Push Tag
         if: env.EXISTS == 'false'
         run: |
-          # Use the official bot identity for the tag metadata
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
           TAG_NAME="v${{ env.VERSION }}"
           echo "Cutting new release tag: $TAG_NAME"
           
+          # Tag the current HEAD (which now includes the CHANGELOG.md update)
           git tag $TAG_NAME
           git push origin $TAG_NAME
