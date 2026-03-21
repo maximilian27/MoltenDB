@@ -285,4 +285,22 @@ impl WorkerDb {
             }
         }).to_string()
     }
+
+    /// Subscribe to real-time database changes.
+    /// The provided JavaScript function will be called with a JSON string
+    /// representing the mutation event.
+    #[wasm_bindgen]
+    pub fn subscribe(&self, callback: js_sys::Function) {
+        // Tap into the exact same channel the native WebSocket server uses
+        let mut rx = self.db.subscribe();
+
+        // Spawn an async task on the local WASM thread
+        wasm_bindgen_futures::spawn_local(async move {
+            while let Ok(msg) = rx.recv().await {
+                // msg is already a formatted JSON string from operations.rs
+                // e.g., {"event": "change", "collection": "laptops", "key": "lp1", "new_v": 2}
+                let _ = callback.call1(&wasm_bindgen::JsValue::NULL, &wasm_bindgen::JsValue::from_str(&msg));
+            }
+        });
+    }
 }
