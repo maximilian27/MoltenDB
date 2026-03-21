@@ -17,6 +17,11 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.REPO_PAT }}
 
+      - name: Configure Git Bot
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Extract Version from Cargo.toml
         id: extract
         run: |
@@ -32,14 +37,15 @@ jobs:
           skip-version-file: "true"
           skip-tag: "true"
           skip-bump: "true"
+          skip-ci: "false"
           fallback-version: ${{ env.VERSION }}
           git-message: "chore(release): update changelog v${{ env.VERSION }}"
-
+          git-user-name: "github-actions[bot]"
+          git-user-email: "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Check if Tag Already Exists
         id: check_tag
         run: |
-          # Make sure we have the latest commits locally (including the new changelog commit)
           git pull origin master
           
           if git rev-parse "v${{ env.VERSION }}" >/dev/null 2>&1; then
@@ -53,12 +59,9 @@ jobs:
       - name: Create and Push Tag
         if: env.EXISTS == 'false'
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
           TAG_NAME="v${{ env.VERSION }}"
           echo "Cutting new release tag: $TAG_NAME"
           
-          # Tag the current HEAD (which now includes the CHANGELOG.md update)
-          git tag $TAG_NAME
+          # Changed to an ANNOTATED tag (-a) so the author is explicitly recorded
+          git tag -a $TAG_NAME -m "Release $TAG_NAME"
           git push origin $TAG_NAME
