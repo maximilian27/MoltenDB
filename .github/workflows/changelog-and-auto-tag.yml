@@ -17,27 +17,29 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # CRITICAL: We use your PAT so the subsequent tag push triggers the WASM Sync workflow
           token: ${{ secrets.REPO_PAT }}
+
+          # 1. MOVED UP: Extract the version FIRST
+      - name: Extract Version from Cargo.toml
+        id: extract
+        run: |
+          VERSION=$(grep -m 1 '^version = ' Cargo.toml | tr -d ' "' | sed 's/version=//')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Detected version: $VERSION"
 
       - name: Generate Changelog
         uses: TriPSs/conventional-changelog-action@v5
         with:
           github-token: ${{ secrets.REPO_PAT }}
           output-file: "CHANGELOG.md"
-          # Skip version bumping here since your Cargo.toml is the source of truth
           skip-version-file: "true"
-          # Disable the action's built-in tagging so your custom logic below handles it
           skip-tag: "true"
-          commit-message: "chore(release): update changelog [skip ci]"
+          # TELL IT EXACTLY WHAT VERSION TO USE
+          skip-bump: "true"
+          fallback-version: ${{ env.VERSION }}
+          # CORRECTED PARAMETER NAME
+          git-message: "chore(release): update changelog v${{ env.VERSION }} [skip ci]"
 
-      - name: Extract Version from Cargo.toml
-        id: extract
-        run: |
-          # Read the raw version string from Cargo.toml
-          VERSION=$(grep -m 1 '^version = ' Cargo.toml | tr -d ' "' | sed 's/version=//')
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Detected version: $VERSION"
 
       - name: Check if Tag Already Exists
         id: check_tag
