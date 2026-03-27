@@ -54,6 +54,11 @@ use crate::handlers;
 // json! = macro to create JSON values inline, e.g. json!({"status": "ok"}).
 use serde_json::{Value, json};
 
+// Auto-compaction thresholds (mirrors the JS worker defaults).
+// Compaction is triggered when EITHER condition is met after a write.
+const COMPACT_AFTER_WRITES: u32 = 500;   // number of write operations
+const COMPACT_SIZE_BYTES:   u64 = 5 * 1024 * 1024; // 5 MB
+
 // ─── WorkerDb ─────────────────────────────────────────────────────────────────
 
 /// The WASM-exposed database handle used by the JavaScript Web Worker.
@@ -71,6 +76,11 @@ pub struct WorkerDb {
     /// The underlying database engine instance.
     /// `Db` holds the in-memory state (DashMap) and the storage backend (OpfsStorage).
     db: Db,
+
+    /// Counts write operations (set / update / delete) since the last compaction.
+    /// `Cell<u32>` gives interior mutability without requiring `&mut self` —
+    /// necessary because all `#[wasm_bindgen]` methods receive `&self`.
+    write_count: std::cell::Cell<u32>,
 }
 
 /// Implementation block for WorkerDb.
@@ -109,7 +119,7 @@ impl WorkerDb {
         // Log a success message to the browser's DevTools console.
         web_sys::console::log_1(&JsValue::from_str("✅ MoltenDB initialized in worker"));
 
-        Ok(WorkerDb { db })
+        Ok(WorkerDb { db, write_count: std::cell::Cell::new(0) })
     }
 
     /// Route an incoming message from the JavaScript worker to the correct handler.
@@ -223,6 +233,7 @@ impl WorkerDb {
         let (code, mut body) = handlers::process_set::process_set(&self.db, request);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), serde_json::json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
+        self.maybe_compact();
         serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -232,6 +243,7 @@ impl WorkerDb {
         let (code, mut body) = handlers::process_update::process_update(&self.db, request);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), serde_json::json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
+        self.maybe_compact();
         serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -241,6 +253,7 @@ impl WorkerDb {
         let (code, mut body) = handlers::process_delete::process_delete(&self.db, request);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), serde_json::json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
+        self.maybe_compact();
         serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -284,6 +297,59 @@ impl WorkerDb {
                 "rows_scanned": result.metadata.rows_scanned
             }
         }).to_string()
+    }
+
+    /// Check auto-compaction thresholds and compact if needed.
+    ///
+    /// Called after every successful write (set / update / delete).
+    /// Compaction is triggered when EITHER:
+    ///   - `write_count` reaches `COMPACT_AFTER_WRITES` (500), OR
+    ///   - the OPFS file size exceeds `COMPACT_SIZE_BYTES` (5 MB).
+    ///
+    /// On compaction the counter is reset to 0. Errors are logged to the
+    /// browser console but never propagated — a failed compaction is not
+    /// fatal; the log simply grows a little larger until the next attempt.
+    fn maybe_compact(&self) {
+        let count = self.write_count.get() + 1;
+        self.write_count.set(count);
+
+        // Check count-based threshold first (cheap, no OPFS call).
+        let count_triggered = count >= COMPACT_AFTER_WRITES;
+
+        // Check size-based threshold only when count hasn't already triggered.
+        let size_triggered = if !count_triggered {
+            self.db.storage.get_size()
+                .map(|s| s >= COMPACT_SIZE_BYTES)
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        if count_triggered || size_triggered {
+            let reason = if count_triggered {
+                format!("write count reached {}", count)
+            } else {
+                "file size exceeded 5 MB".to_string()
+            };
+
+            web_sys::console::log_1(&JsValue::from_str(
+                &format!("🗜️ MoltenDB: auto-compaction triggered ({})", reason)
+            ));
+
+            match self.db.compact() {
+                Ok(()) => {
+                    self.write_count.set(0);
+                    web_sys::console::log_1(&JsValue::from_str(
+                        "✅ MoltenDB: auto-compaction complete"
+                    ));
+                }
+                Err(e) => {
+                    web_sys::console::error_1(&JsValue::from_str(
+                        &format!("❌ MoltenDB: auto-compaction failed: {}", e)
+                    ));
+                }
+            }
+        }
     }
 
     /// Subscribe to real-time database changes.
