@@ -50,17 +50,6 @@ jobs:
           cp "$SRC_PKG/moltendb_bg.wasm" "$DEST_DIST/"
           cp "$SRC_PKG/moltendb_bg.wasm.d.ts" "$DEST_DIST/"
           
-          # 3. Copy the License to /packages/core/ (skipping the generated README)
-          cp "$SRC_PKG/LICENSE.md" "$DEST_CORE/"
-          
-          # 4. Extract the newly built version from the WASM package.json
-          NEW_VERSION=$(jq -r '.version' "$SRC_PKG/package.json")
-          echo "Detected new version: $NEW_VERSION"
-          
-          # 5. Inject that version into the Web monorepo's package.json
-          # We write it to a temporary file, then replace the original
-          jq --arg v "$NEW_VERSION" '.version = $v' "$DEST_CORE/package.json" > tmp.json
-          mv tmp.json "$DEST_CORE/package.json"
 
       - name: Commit and Push to Web Monorepo
         working-directory: ./web-repo
