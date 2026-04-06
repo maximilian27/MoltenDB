@@ -187,6 +187,24 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
     // Every condition in the query object must pass (implicit AND at the top level).
     for (key, condition) in query_obj {
 
+        // ── Logical operators ($or / $and) ────────────────────────────────────
+        if key == "$or" {
+            let sub_queries = match condition.as_array() {
+                Some(arr) => arr,
+                None => return false,
+            };
+            if !sub_queries.iter().any(|sub| evaluate_where(doc, sub)) { return false; }
+            continue;
+        }
+
+        if key == "$and" {
+            let sub_queries = match condition.as_array() {
+                Some(arr) => arr,
+                None => return false,
+            };
+            if !sub_queries.iter().all(|sub| evaluate_where(doc, sub)) { return false; }
+            continue;
+        }
 
         // ── Field condition ───────────────────────────────────────────────────
         // The key is a field name (possibly dot-notation like "meta.logins").

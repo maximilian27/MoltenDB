@@ -37,18 +37,18 @@ jobs:
           # Define exact paths to prevent typos
           SRC_PKG="core-repo/pkg"
           DEST_CORE="web-repo/packages/core"
-          DEST_DIST="$DEST_CORE/dist"
+          DEST_WASM="$DEST_CORE/src/wasm"
           
-          echo "Syncing artifacts to $DEST_DIST..."
+          echo "Syncing artifacts to $DEST_WASM..."
           
           # 1. Ensure the dist directory exists
-          mkdir -p "$DEST_DIST"
+          mkdir -p "$DEST_WASM"
           
           # 2. Copy exactly the 4 code artifacts into /packages/core/dist/
-          cp "$SRC_PKG/moltendb.d.ts" "$DEST_DIST/"
-          cp "$SRC_PKG/moltendb.js" "$DEST_DIST/"
-          cp "$SRC_PKG/moltendb_bg.wasm" "$DEST_DIST/"
-          cp "$SRC_PKG/moltendb_bg.wasm.d.ts" "$DEST_DIST/"
+          cp "$SRC_PKG/moltendb.d.ts" "$DEST_WASM/"
+          cp "$SRC_PKG/moltendb.js" "$DEST_WASM/"
+          cp "$SRC_PKG/moltendb_bg.wasm" "$DEST_WASM/"
+          cp "$SRC_PKG/moltendb_bg.wasm.d.ts" "$DEST_WASM/"
           
 
       - name: Commit and Push to Web Monorepo
