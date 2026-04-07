@@ -217,7 +217,12 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
         if !condition.is_object() {
             if let Some(dv) = &doc_val_opt {
                 // The document's field value must equal the condition value.
-                if dv != condition { return false; }
+                // String comparisons are case-insensitive.
+                let matches = match (dv, condition) {
+                    (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
+                    _ => dv == condition,
+                };
+                if !matches { return false; }
             } else {
                 // The field doesn't exist in the document — condition fails.
                 return false;
@@ -236,8 +241,14 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
             let passed = match op.as_str() {
                 // ── Equality operators ────────────────────────────────────────
                 // Both shorthand ($eq) and verbose ($equals) are supported.
-                "$eq" | "$equals" => doc_val_ref == op_val,
-                "$ne" | "$notEquals" => doc_val_ref != op_val,
+                "$eq" | "$equals" => match (doc_val_ref, op_val) {
+                    (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
+                    _ => doc_val_ref == op_val,
+                },
+                "$ne" | "$notEquals" => match (doc_val_ref, op_val) {
+                    (Value::String(a), Value::String(b)) => a.to_lowercase() != b.to_lowercase(),
+                    _ => doc_val_ref != op_val,
+                },
 
 
                 // ── Numeric comparison operators ──────────────────────────────
@@ -277,7 +288,7 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
                         // String case: check if the document string contains the needle string.
                         Value::String(d_str) => {
                             if let Some(o_str) = op_val.as_str() {
-                                d_str.contains(o_str)
+                                d_str.to_lowercase().contains(&o_str.to_lowercase())
                             } else {
                                 false
                             }
@@ -307,8 +318,11 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
                 "$in" | "$oneOf" => {
                     if let Some(allowed) = op_val.as_array() {
                         // Check if the document value matches any element in the list.
-                        // `contains` does a deep equality check — works for any JSON type.
-                        allowed.contains(doc_val_ref)
+                        // String comparisons are case-insensitive.
+                        allowed.iter().any(|v| match (doc_val_ref, v) {
+                            (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
+                            _ => doc_val_ref == v,
+                        })
                     } else {
                         // The operator value is not an array — condition fails.
                         false
@@ -326,7 +340,11 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
                 "$nin" | "$notIn" => {
                     if let Some(excluded) = op_val.as_array() {
                         // True only if the document value is NOT in the exclusion list.
-                        !excluded.contains(doc_val_ref)
+                        // String comparisons are case-insensitive.
+                        !excluded.iter().any(|v| match (doc_val_ref, v) {
+                            (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
+                            _ => doc_val_ref == v,
+                        })
                     } else {
                         // The operator value is not an array — condition fails.
                         false
