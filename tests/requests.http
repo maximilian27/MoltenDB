@@ -10,6 +10,8 @@ Content-Type: application/json
   "password": "admin123"
 }
 
+### Paste the token from the response here:
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTY3MDY5N30.0gfs-oQW18KiC2NwN_Ko3xyEqco5DlDyJtWdDqazrIg
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
 ### subsequent examples. The laptops collection references memory and display
@@ -19,7 +21,7 @@ Content-Type: application/json
 ### Each document describes a RAM module. Laptops reference these via `memory_id`.
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "memory",
@@ -36,7 +38,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### Each document describes a screen. Laptops reference these via `display_id`.
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "display",
@@ -54,7 +56,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### This single collection is used for all query examples below.
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -152,7 +154,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### Returns the document directly (no array wrapper) for single-key lookups.
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -162,7 +164,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §5. Get all laptops (returns JSON array with _key in each element)
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops"
@@ -171,7 +173,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §6. Get a batch of specific laptops by key array
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -183,7 +185,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §7. Select only brand, model and price — nothing else sent over the wire
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -194,7 +196,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### Response: [ { "_key": "lp1", "specs": { "cpu": { "ghz": 3.5 } } }, ... ]
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -204,7 +206,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §9. excludedFields — return everything except price and the foreign key IDs
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -214,7 +216,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §10. Validation error — fields and excludedFields cannot be used together
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -227,7 +229,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §11. Exact equality — only Apple laptops
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -238,7 +240,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §12. Numeric range — laptops priced between 1000 and 2000
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -251,7 +253,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §13. Nested field WHERE — laptops with 12+ CPU cores
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -264,7 +266,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §14. Multiple conditions (implicit AND) — Intel laptops under 2kg
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -278,7 +280,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §15. $ne — all laptops NOT made by Intel
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -291,7 +293,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §16. $contains on a string field — models containing "Pro"
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -304,7 +306,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §17. $contains on an array field — laptops tagged as "gaming"
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -317,7 +319,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §18. $in — laptops from a specific brand shortlist
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -330,7 +332,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §19. $nin — exclude budget/modular brands
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -343,7 +345,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §20. Combined WHERE — in-stock gaming laptops under $2000
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -361,7 +363,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### Expected: Framework(849), Lenovo(1499), Asus(1699), Dell(1899), Razer(2499), Apple(3499)
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -372,7 +374,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §22. Sort by price descending — most expensive first
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -383,7 +385,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §23. Sort by nested field — most CPU cores first
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -394,7 +396,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §24. Multi-field sort — brand asc, then price asc within same brand
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -408,7 +410,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §25. Sort + WHERE — in-stock laptops sorted by weight (lightest first)
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -422,7 +424,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §26. count — return only the 3 cheapest laptops
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -435,7 +437,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### Expected: Asus(1699), Dell(1899)
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -448,7 +450,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §28. offset + count + WHERE — page 2 of in-stock laptops by price
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -464,7 +466,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §29. Join laptops → memory — embed full memory spec for each laptop
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -477,7 +479,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §30. Join laptops → display — embed only refresh_hz and panel type
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -490,7 +492,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §31. Double join — embed both memory and display in one query
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -504,7 +506,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §32. Join + WHERE on main collection — only in-stock laptops with their display info
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -518,7 +520,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §33. Join + WHERE on joined field — laptops with an OLED or Mini-LED display
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -534,7 +536,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §34. Join + WHERE on joined field — laptops with 120Hz+ display
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -550,7 +552,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §35. Join + WHERE on joined field — laptops with upgradeable RAM
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -566,7 +568,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §36. Join + sort — all laptops sorted by display refresh rate descending
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -582,7 +584,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §37. Update a single laptop — mark Dell XPS 15 back in stock and drop price
 POST https://localhost:1538/update
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -594,7 +596,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §38. Update multiple laptops in one call
 POST https://localhost:1538/update
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -607,7 +609,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §39. Delete a single laptop by key
 POST https://localhost:1538/delete
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -617,7 +619,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §40. Delete multiple laptops in one call
 POST https://localhost:1538/delete
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -627,7 +629,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §41. Drop an entire collection
 POST https://localhost:1538/delete
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -638,22 +640,22 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 
 ### §42. GET single laptop via REST endpoint
 GET https://localhost:1538/collections/laptops/docs/lp2
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 ### §43. GET all laptops via REST (paginated — first 3)
 GET https://localhost:1538/collections/laptops?limit=3&offset=0
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 ### §44. GET all laptops via REST (paginated — next 3)
 GET https://localhost:1538/collections/laptops?limit=3&offset=3
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 ### ─── VERSIONING ──────────────────────────────────────────────────────────────
 
 ### §45. Read lp2 — note the _v, createdAt, modifiedAt fields added by the engine
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -664,7 +666,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### Run §39 first (which bumps lp4 to _v:2), then run this — it should be ignored.
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -686,7 +688,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### After this insert, lp7 contains the full mem4 and dsp3 documents inline.
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -715,7 +717,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### The "extend" key is gone — it was consumed at insert time.
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -726,7 +728,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### The extend block works identically when data is an array (UUIDv7 keys auto-assigned).
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -748,7 +750,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### and the stored document will have brand/model/price but no "ram" field.
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -777,7 +779,7 @@ Content-Type: application/json
 ### §55. Invalid collection name (path traversal attempt) — should return validation error
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "../etc/passwd",
@@ -787,7 +789,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §56. Reserved collection name — should return validation error
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "admin",
@@ -797,7 +799,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §57. Invalid property set
 POST https://localhost:1538/set
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -817,7 +819,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §57. Invalid property get
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -831,7 +833,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### Expected: Apple MacBook Pro + Dell XPS 15
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -848,7 +850,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### Expected: same as implicit AND, but using explicit $and syntax
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
@@ -864,7 +866,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsI
 ### §60. $or combined with top-level condition — in-stock laptops from Apple or Dell
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTU0MzQzOH0.JZENW5jZWXMqk4c7Y1RbVh0EMaa9SbC5vCHPlWjB_-Y
+Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",

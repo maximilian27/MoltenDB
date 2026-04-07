@@ -2,3 +2,5 @@
 /pkg
 /my_database.log
 /.idea
+/tests/stress_data.json
+/tests/stress_keys.json
