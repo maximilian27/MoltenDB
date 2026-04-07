@@ -1397,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb"
-version = "0.1.0-alpha.25"
+version = "0.1.0-alpha.26"
 dependencies = [
  "argon2",
  "axum",
