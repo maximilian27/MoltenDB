@@ -22,7 +22,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTY2ODQxNX0.1Gx75mgDw9X7KTFu8jSloeXvhgVo5cI0BNixWvHwtAM
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NTY3MDE3MH0.O84hmhEIPWKmUv6MhTsXriI3HxRik4M9s2JERSe4EWE
 
 ### ─── §1. Fetch entire stress_items collection (all 100 000 docs) ─────────────
 ### WARNING: this returns a large payload — use §2 for a lighter check.
