@@ -1,3 +1,12 @@
+# [0.1.0-alpha.25](https://github.com/maximilian27/MoltenDB/compare/v0.1.0-alpha.23...v0.1.0-alpha.25) (2026-04-07)
+
+
+### Performance Improvements
+
+* dev only deps for reqwest ([9910666](https://github.com/maximilian27/MoltenDB/commit/9910666cca2de2e31d67515813d01b1299ca47fb))
+
+
+
 # [0.1.0-alpha.23](https://github.com/maximilian27/MoltenDB/compare/v0.1.0-alpha.21...v0.1.0-alpha.23) (2026-04-06)
 
 
