@@ -33,8 +33,8 @@ fn bar(n: u64) -> ProgressBar {
         ProgressStyle::with_template(
             "{spinner:.cyan} [{elapsed_precise}] [{bar:45.cyan/blue}] {pos}/{len} ({percent}%) — {msg}",
         )
-        .unwrap()
-        .progress_chars("█▉▊▋▌▍▎▏ "),
+            .unwrap()
+            .progress_chars("█▉▊▋▌▍▎▏ "),
     );
     pb.enable_steady_tick(Duration::from_millis(80));
     pb
@@ -51,11 +51,7 @@ async fn main() {
     let collection = env("STRESS_COLLECTION", "stress");
 
     // ── Header ───────────────────────────────────────────────────────────────
-    println!();
-    println!("{}", "╔══════════════════════════════════════════════╗".bright_cyan());
-    println!("{}", "║     🔥  MoltenDB  Stress Fetch  🔥           ║".bright_cyan());
-    println!("{}", "╚══════════════════════════════════════════════╝".bright_cyan());
-    println!();
+    println!("\n{}\n", "🔥 MOLTENDB STRESS FETCH".bold().bright_red());
 
     // ── 1. Build async client ────────────────────────────────────────────────
     let client = Client::builder()
@@ -95,9 +91,9 @@ async fn main() {
     let total_keys = all_keys.len();
 
     println!(
-        "  {} Loaded {} keys  •  collection: {}  •  concurrency: {}",
-        "📦".bright_yellow(),
-        total_keys.to_string().bright_white(),
+        "  {} Target: {}  |  Collection: {}  |  Concurrency: {}",
+        "🎯".bright_cyan(),
+        base_url.bright_white(),
         collection.bright_white(),
         concurrency.to_string().bright_white(),
     );
@@ -165,8 +161,8 @@ async fn main() {
         match handle.await {
             Ok((status, elapsed, err)) => {
                 latencies_ms.push(elapsed.as_secs_f64() * 1000.0);
-                if err.is_some()    { errors  += 1; }
-                else if status == 200 { ok    += 1; }
+                if err.is_some()      { errors  += 1; }
+                else if status == 200 { ok      += 1; }
                 else                  { non_200 += 1; }
             }
             Err(_) => errors += 1,
@@ -190,100 +186,66 @@ async fn main() {
     let min  = latencies_ms.first().copied().unwrap_or(0.0);
     let max  = latencies_ms.last().copied().unwrap_or(0.0);
 
-    // colour helpers
+    // Color helpers
     let ok_pct = ok as f64 / concurrency as f64 * 100.0;
     let ok_str = if ok_pct >= 99.0 {
-        format!("{} ({:.1}%)", ok, ok_pct).bright_green().to_string()
+        format!("{} ({:.1}%)", ok, ok_pct).bright_green().bold().to_string()
     } else if ok_pct >= 90.0 {
-        format!("{} ({:.1}%)", ok, ok_pct).yellow().to_string()
+        format!("{} ({:.1}%)", ok, ok_pct).bright_yellow().bold().to_string()
     } else {
-        format!("{} ({:.1}%)", ok, ok_pct).bright_red().to_string()
+        format!("{} ({:.1}%)", ok, ok_pct).bright_red().bold().to_string()
     };
 
     let non200_str = if non_200 == 0 {
-        "0".bright_green().to_string()
+        "0".bright_black().to_string()
     } else {
-        non_200.to_string().bright_red().to_string()
+        non_200.to_string().bright_yellow().bold().to_string()
     };
 
     let err_str = if errors == 0 {
-        "0".bright_green().to_string()
+        "0".bright_black().to_string()
     } else {
-        errors.to_string().bright_red().to_string()
+        errors.to_string().bright_red().bold().to_string()
     };
 
     let lat_color = |ms: f64| -> String {
         if ms < 50.0       { format!("{:>8.2} ms", ms).bright_green().to_string() }
-        else if ms < 200.0 { format!("{:>8.2} ms", ms).yellow().to_string() }
-        else               { format!("{:>8.2} ms", ms).bright_red().to_string() }
+        else if ms < 200.0 { format!("{:>8.2} ms", ms).bright_yellow().to_string() }
+        else               { format!("{:>8.2} ms", ms).bright_red().bold().to_string() }
     };
 
+    let throughput = concurrency as f64 / wall_secs;
+
     // ── 7. Report ────────────────────────────────────────────────────────────
-    println!();
-    println!("{}", "╔══════════════════════════════════════════════╗".bright_cyan());
-    println!("{}", "║      MoltenDB Concurrent Fetch — Report      ║".bright_cyan());
-    println!("{}", "╠══════════════════════════════════════════════╣".bright_cyan());
-    println!(
-        "{}  {:<22} {}",
-        "║".bright_cyan(),
-        "Total requests".bright_white(),
-        format!("{:<20}", concurrency).bright_white()
-    );
-    println!(
-        "{}  {:<22} {}",
-        "║".bright_cyan(),
-        "✅  200 OK".bright_white(),
-        format!("{:<20}", ok_str)
-    );
-    println!(
-        "{}  {:<22} {}",
-        "║".bright_cyan(),
-        "⚠️   Non-200".bright_white(),
-        format!("{:<20}", non200_str)
-    );
-    println!(
-        "{}  {:<22} {}",
-        "║".bright_cyan(),
-        "❌  Errors".bright_white(),
-        format!("{:<20}", err_str)
-    );
-    println!(
-        "{}  {:<22} {}",
-        "║".bright_cyan(),
-        "⏱   Wall time".bright_white(),
-        format!("{:.3}s", wall_secs).bright_white()
-    );
-    println!(
-        "{}  {:<22} {}",
-        "║".bright_cyan(),
-        "🚀  Throughput".bright_white(),
-        format!("{:.0} req/s", concurrency as f64 / wall_secs).bright_white()
-    );
-    println!("{}", "╠══════════════════════════════════════════════╣".bright_cyan());
-    println!("{}", "║  Latency breakdown                           ║".bright_cyan());
-    println!("{}", "╠══════════════════════════════════════════════╣".bright_cyan());
+    println!("\n{}", "📊 STRESS TEST REPORT".bold().bright_cyan());
+    println!("{}", "━".repeat(45).bright_black());
+
+    println!("  {:<20} {}", "Total requests", concurrency.to_string().bright_white());
+    println!("  {:<20} {}", "✅ 200 OK", ok_str);
+    println!("  {:<20} {}", "⚠️ Non-200", non200_str);
+    println!("  {:<20} {}", "❌ Errors", err_str);
+    println!("  {:<20} {}", "⏱️ Wall time", format!("{:.3}s", wall_secs).bright_white());
+    println!("  {:<20} {}", "🚀 Throughput", format!("{:.0} req/s", throughput).bright_cyan().bold());
+
+    println!("\n{}", "⏱️ LATENCY DISTRIBUTION".bold().bright_cyan());
+    println!("{}", "━".repeat(45).bright_black());
 
     let rows: &[(&str, f64)] = &[
-        ("min",   min),
-        ("mean",  mean),
+        ("Min",   min),
+        ("Mean",  mean),
         ("p50",   percentile(50.0)),
         ("p75",   percentile(75.0)),
         ("p90",   percentile(90.0)),
         ("p95",   percentile(95.0)),
         ("p99",   percentile(99.0)),
         ("p99.9", percentile(99.9)),
-        ("max",   max),
+        ("Max",   max),
     ];
 
     for (label, val) in rows {
-        println!(
-            "{}  {:<10} {}",
-            "║".bright_cyan(),
-            label.bright_white(),
-            lat_color(*val)
-        );
+        // Aligned beautifully
+        println!("  {:<10} {}", label.bright_white(), lat_color(*val));
     }
 
-    println!("{}", "╚══════════════════════════════════════════════╝".bright_cyan());
     println!();
 }

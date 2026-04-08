@@ -46,7 +46,7 @@ pub use storage::OpfsStorage;
 
 // DashMap = concurrent hash map. DashSet = concurrent hash set.
 use dashmap::{DashMap, DashSet};
-use tracing::{info, debug};
+use tracing::{info};
 // Value = dynamically-typed JSON value.
 use serde_json::Value;
 // Standard HashMap — used for return values from get operations.
