@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex};
 // Tokio's async MPSC channel: multiple producers, single consumer.
 // Used to send log lines from the write path to the background flush task.
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 // ─── Snapshot helpers ────────────────────────────────────────────────────────
 //
@@ -270,9 +271,11 @@ pub(super) fn write_compacted_log(path: &str, entries: &[LogEntry]) -> Result<()
 pub struct AsyncDiskStorage {
     /// The sending half of the MPSC channel. Cloning this is cheap — all
     /// clones share the same underlying channel.
-    sender: mpsc::UnboundedSender<String>,
+    sender: Option<mpsc::UnboundedSender<String>>,
     /// Path to the log file on disk. Stored so we can read/compact it later.
     path: String,
+    /// Handle to the background writer task. Stored so Drop can await it.
+    writer_task: Option<JoinHandle<()>>,
 }
 
 impl AsyncDiskStorage {
@@ -285,7 +288,7 @@ impl AsyncDiskStorage {
 
         // Spawn a Tokio task that owns the file handle and BufWriter.
         // This task runs for the lifetime of the server.
-        tokio::spawn(async move {
+        let writer_task = tokio::spawn(async move {
             // Open the file in append mode so existing data is preserved.
             let file = OpenOptions::new()
                 .create(true)
@@ -346,12 +349,33 @@ impl AsyncDiskStorage {
                 }
             }
             // When the loop exits, `w` is dropped here, which flushes the BufWriter.
+            let _ = w.flush();
         });
 
         Ok(Self {
-            sender: log_tx,
+            sender: Some(log_tx),
             path: path.to_string(),
+            writer_task: Some(writer_task),
         })
+    }
+}
+
+impl Drop for AsyncDiskStorage {
+    /// On drop, close the sender (signals the writer task to exit) then block
+    /// until the task has drained its queue and flushed everything to disk.
+    fn drop(&mut self) {
+        // Drop the sender — this closes the channel and causes log_rx.recv()
+        // to return None, which breaks the writer task's loop.
+        drop(self.sender.take());
+
+        // Now await the writer task so we don't return until all queued lines
+        // have been written and flushed to the OS.
+        if let Some(handle) = self.writer_task.take() {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(handle)
+            })
+            .ok();
+        }
     }
 }
 
@@ -362,9 +386,9 @@ impl StorageBackend for AsyncDiskStorage {
         let json_line = serde_json::to_string(entry)?;
         // send() only fails if the receiver (background task) has been dropped,
         // which means the server is shutting down.
-        self.sender
-            .send(json_line)
-            .map_err(|_| DbError::WriteError)?;
+        if let Some(ref sender) = self.sender {
+            sender.send(json_line).map_err(|_| DbError::WriteError)?;
+        }
         Ok(())
     }
 
@@ -394,9 +418,11 @@ impl StorageBackend for AsyncDiskStorage {
         // closes the current file, renames the temp file over it, and reopens.
         // This is the only safe way to swap the file on Windows (where you
         // can't rename a file that's currently open by another handle).
-        self.sender
-            .send(format!("__RELOAD_FILE__{}", temp_path))
-            .map_err(|_| DbError::WriteError)?;
+        if let Some(ref sender) = self.sender {
+            sender
+                .send(format!("__RELOAD_FILE__{}", temp_path))
+                .map_err(|_| DbError::WriteError)?;
+        }
         Ok(())
     }
 

@@ -14,7 +14,7 @@ Same query engine. Same log format. Two environments.
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen?style=flat-square)](#testing)
 
-**⚠️ Alpha Software** — APIs may change. Not recommended for production use yet.
+**⚠️ Beta Software** — APIs may change. Not recommended for production use yet.
 
 </div>
 
@@ -23,6 +23,8 @@ Same query engine. Same log format. Two environments.
 ## What is MoltenDB?
 
 MoltenDB is a JSON document database written in Rust that compiles to both a native server binary and a WebAssembly module. The same query engine runs in your browser (via WASM + OPFS) and on your server (via a Rust binary + disk). Data written in the browser persists across page reloads and can optionally sync to the server.
+
+> **Deployment model:** MoltenDB is currently designed as a standalone HTTP server and a WASM browser package. Embedded Rust library usage is in development and will be stabilized before v1.0.
 
 All data is kept in RAM for the lifetime of the server process — there is no eviction, TTL, or page cache. Once a document is loaded it stays in memory until explicitly deleted or the process exits. This means **RAM is the hard limit on dataset size**. A 100 000-document collection of typical JSON objects occupies roughly 100–200 MB of RAM. The tiered storage mode separates hot and cold logs on disk but both are still fully loaded into the same in-memory `DashMap` on startup — tiered storage improves write throughput, not memory usage.
 
@@ -602,7 +604,7 @@ assets/
 
 ## What's Next? (The Roadmap)
 
-MoltenDB is currently in **Alpha**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by following roadmap and community feedback.
+MoltenDB is currently in **Beta**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by following roadmap and community feedback.
 
 Because I am a solo developer and I don't make any money from this project (yet?), my personal life comes first. I am moving at a sustainable pace to ensure the architecture stays clean and I don't burn out. Instead of locking into a rigid feature timeline, development is focused on three major architectural themes. **If you need a specific feature to adopt MoltenDB, please open a GitHub Issue or vote on existing ones so it gets prioritized!**
 
@@ -622,7 +624,7 @@ Because I am a solo developer and I don't make any money from this project (yet?
 - **Granular ACLs:** User management and role-based access control for individual collections.
 - **MoltenDB Studio (Premium):** A paid, official GUI dashboard to visually manage your databases, inspect collections, and execute queries without touching the CLI.
 - **Comprehensive Changelog:** Establishing a clear, detailed changelog so the community can easily track new features, API adjustments, and performance improvements release by release.
-- **A "Professional" Logo:** I know the current logo isn't exactly boring and corporate enough for an enterprise database, but I wanted the Alpha release to have a bit of personality!
+- **A "Professional" Logo:** I know the current logo isn't exactly boring and corporate enough for an enterprise database, but I wanted the Beta release to have a bit of personality!
 As we approach `v1.0`, MoltenDB will get a clean, professional brand identity.
 
 
