@@ -1,3 +1,18 @@
+# [0.1.0-beta.1] (2026-04-08)
+
+
+### Bug Fixes
+
+* **AsyncDiskStorage**: store writer task `JoinHandle` and implement `Drop` to await full queue drain and flush before process exit — fixes data loss on graceful shutdown where buffered log entries were silently discarded
+
+
+### Features
+
+* case-insensitive string matching across all query operators (`$eq`, `$ne`, `$contains`, `$in`, `$nin`)
+* stress tooling: `examples/generate_stress_data.rs`, `examples/stress_insert.rs`, `examples/stress_fetch.rs` for real-world load testing against a live server
+
+
+
 # [0.1.0-alpha.25](https://github.com/maximilian27/MoltenDB/compare/v0.1.0-alpha.23...v0.1.0-alpha.25) (2026-04-07)
 
 

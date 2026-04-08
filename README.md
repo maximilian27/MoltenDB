@@ -14,7 +14,7 @@ Same query engine. Same log format. Two environments.
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen?style=flat-square)](#testing)
 
-**⚠️ Alpha Software** — APIs may change. Not recommended for production use yet.
+**⚠️ Beta Software** — APIs may change. Not recommended for production use yet.
 
 </div>
 
@@ -23,6 +23,10 @@ Same query engine. Same log format. Two environments.
 ## What is MoltenDB?
 
 MoltenDB is a JSON document database written in Rust that compiles to both a native server binary and a WebAssembly module. The same query engine runs in your browser (via WASM + OPFS) and on your server (via a Rust binary + disk). Data written in the browser persists across page reloads and can optionally sync to the server.
+
+> **Deployment model:** MoltenDB is currently designed as a standalone HTTP server and a WASM browser package. Embedded Rust library usage is in development and will be stabilized before v1.0.
+
+All data is kept in RAM for the lifetime of the server process — there is no eviction, TTL, or page cache. Once a document is loaded it stays in memory until explicitly deleted or the process exits. This means **RAM is the hard limit on dataset size**. A 100 000-document collection of typical JSON objects occupies roughly 100–200 MB of RAM. The tiered storage mode separates hot and cold logs on disk but both are still fully loaded into the same in-memory `DashMap` on startup — tiered storage improves write throughput, not memory usage.
 
 One of MoltenDB's core features is **GraphQL-style field selection**: every query lets you specify exactly which fields (including deeply nested ones) you want back. You never receive more data than you asked for — no over-fetching, no under-fetching, no separate schema to maintain.
 
@@ -43,6 +47,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - JWT authentication (`POST /login` → bearer token)
 - Per-IP sliding-window rate limiting
 - At-rest encryption with XChaCha20-Poly1305 (on by default, key from `--encryption-key`)
+- **In-memory store:** the entire dataset lives in RAM (`DashMap`) — reads are pure hashmap lookups with no disk I/O; RAM is the hard dataset size limit
 - Two write modes: async (50 ms flush, high throughput) and sync (flush-on-write, zero data loss)
 - Two storage modes: standard (single log file) and tiered (hot + cold log, mmap cold reads)
 - Binary snapshots on compaction for fast startup (snapshot + delta replay, not full log replay)
@@ -51,7 +56,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 
 ### ✅ Query Engine (shared between browser and server)
 - **GraphQL-style field selection** — request only the fields you need using `fields` (include) or `excludedFields` (exclude). Dot-notation works at any depth: `"specs.display.features.refresh_rate"` returns only that one nested value, not the whole document.
-- `WHERE` clause with: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains` / `$ct` (strings and arrays), `$in` / `$oneOf`, `$nin` / `$notIn`
+- `WHERE` clause with: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains` / `$ct` (strings and arrays), `$in` / `$oneOf`, `$nin` / `$notIn` — all string comparisons are **case-insensitive**
 - Field projection (`fields`) and field exclusion (`excludedFields`) — mutually exclusive, validated before any data is read
 - Pagination: `count` (limit) and `offset`
 - Cross-collection joins with dot-notation foreign keys
@@ -67,7 +72,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Credentials loaded from environment variables at startup (no hardcoded defaults in production)
 - Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch size (max 1000 keys)
 - Security headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `HSTS`, `CSP`, etc.
-- Graceful shutdown: drains in-flight requests (up to 30 s), then flushes the DB before exit
+- Graceful shutdown: drains in-flight requests (up to 30 s), then awaits the async writer task to fully flush all buffered log entries before exit
 
 ### ✅ Developer Tooling
 - **Interactive WASM Browser Demo** — A complete, live environment to test raw JSON queries and the chainable builder directly in your browser.
@@ -76,6 +81,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - **[Server Integration Test Suite (GitHub)](https://github.com/maximilian27/moltendb-server-test)** — A browser-based testing environment to exercise the HTTP API and WebSocket endpoint against a live server using the TypeScript client. Includes an interactive Server Query Builder, a WebSocket tester, and a collection fetcher.
 - **57+ documented example requests** in `tests/requests.http`
 - **56 integration tests** covering all query features, versioning, persistence, compaction, concurrency, and analytics.
+- **Rust stress-test examples** (`examples/`) — generate 100 000 synthetic documents, bulk-insert via HTTP, and run 10 000–100 000 concurrent fetch requests with a full latency percentile report.
 
 ---
 
@@ -240,8 +246,8 @@ Authorization: Bearer <token>
 | `$gte` | | Greater than or equal |
 | `$lt` | `$lessThan` | Less than (numeric) |
 | `$lte` | | Less than or equal |
-| `$contains` | `$ct` | Substring check (string) or membership check (array) |
-| `$in` | `$oneOf` | Field value is one of a list |
+| `$contains` | `$ct` | Substring check (string, **case-insensitive**) or membership check (array) |
+| `$in` | `$oneOf` | Field value is one of a list (string comparison is **case-insensitive**) |
 | `$nin` | `$notIn` | Field value is not in a list |
 
 **Query examples:**
@@ -522,9 +528,32 @@ cargo test --test integration
 
 # Run with verbose output
 cargo test --test integration -- --nocapture
+
+# Run the 100 000-entry stress test (insert + log replay verification)
+cargo test --test stress -- --nocapture
 ```
 
-The test suite covers: SET, GET, field selection, WHERE (all 9 operators), sort, pagination, joins, update, delete, versioning, extends, validation, persistence, compaction, concurrency (8 threads × 100 docs), auto-indexing, and analytics.
+The test suite covers: SET, GET, field selection, WHERE (all 9 operators, case-insensitive string matching), sort, pagination, joins, update, delete, versioning, extends, validation, persistence, compaction, concurrency (8 threads × 100 docs), auto-indexing, and analytics.
+
+### Stress & Performance Tools
+
+Three Rust example binaries are provided for real-world load testing against a live server:
+
+```bash
+# 1. Generate 100 000 synthetic documents (writes tests/stress_data.json + stress_keys.json)
+cargo run --example generate_stress_data
+
+# 2. Bulk-insert the dataset into the running server
+cargo run --example stress_insert
+
+# 3. Fire 10 000 concurrent fetch requests and print a latency report
+cargo run --example stress_fetch
+
+# Tune concurrency (default 10 000) and collection name via env vars
+STRESS_CONCURRENCY=50000 STRESS_COLLECTION=stress cargo run --example stress_fetch
+```
+
+The fetch report includes min / mean / p50 / p75 / p90 / p95 / p99 / p99.9 / max latency and sustained throughput (req/s). In a typical local debug build, MoltenDB sustains **4 000–8 000 req/s** for pure in-memory reads.
 
 ---
 
@@ -559,7 +588,13 @@ src/
       wasm.rs                — OpfsStorage (browser OPFS backend)
 tests/
   integration.rs             — 56 integration tests
-  requests.http              — 60+ documented example requests for every endpoint
+  stress.rs                  — 100 000-entry stress test (insert + replay verification)
+  requests.http              — 57+ documented example requests for every endpoint
+  stress_fetch.http          — manual HTTP requests for stress dataset inspection
+examples/
+  generate_stress_data.rs    — generates 100 000 synthetic documents → tests/stress_data.json
+  stress_insert.rs           — bulk-inserts the dataset into a live server via HTTP API
+  stress_fetch.rs            — fires 10 000–100 000 concurrent GET requests, reports latency percentiles
 pkg/                         — generated WASM package (wasm-pack output)
 assets/
   logo.png                   — project logo
@@ -569,7 +604,7 @@ assets/
 
 ## What's Next? (The Roadmap)
 
-MoltenDB is currently in **Alpha**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by following roadmap and community feedback.
+MoltenDB is currently in **Beta**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by following roadmap and community feedback.
 
 Because I am a solo developer and I don't make any money from this project (yet?), my personal life comes first. I am moving at a sustainable pace to ensure the architecture stays clean and I don't burn out. Instead of locking into a rigid feature timeline, development is focused on three major architectural themes. **If you need a specific feature to adopt MoltenDB, please open a GitHub Issue or vote on existing ones so it gets prioritized!**
 
@@ -589,7 +624,7 @@ Because I am a solo developer and I don't make any money from this project (yet?
 - **Granular ACLs:** User management and role-based access control for individual collections.
 - **MoltenDB Studio (Premium):** A paid, official GUI dashboard to visually manage your databases, inspect collections, and execute queries without touching the CLI.
 - **Comprehensive Changelog:** Establishing a clear, detailed changelog so the community can easily track new features, API adjustments, and performance improvements release by release.
-- **A "Professional" Logo:** I know the current logo isn't exactly boring and corporate enough for an enterprise database, but I wanted the Alpha release to have a bit of personality!
+- **A "Professional" Logo:** I know the current logo isn't exactly boring and corporate enough for an enterprise database, but I wanted the Beta release to have a bit of personality!
 As we approach `v1.0`, MoltenDB will get a clean, professional brand identity.
 
 
