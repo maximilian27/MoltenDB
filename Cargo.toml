@@ -1,10 +1,9 @@
 [package]
 name = "moltendb"
-version = "0.1.0-alpha.26"
+version = "0.1.0-beta.1"
 edition = "2024"
 authors = ["Maximilian Both <maximilian.both27@outlook.com>"]
 description = "A real-time, local-first NoSQL database written in Rust."
-license = "BUSL-1.1"
 license-file = "LICENSE.md"
 repository = "https://github.com/maximilian27/MoltenDB"
 readme = "README.md"
@@ -27,6 +26,10 @@ path = "examples/generate_stress_data.rs"
 name = "stress_insert"
 path = "examples/stress_insert.rs"
 
+[[example]]
+name = "stress_fetch"
+path = "examples/stress_fetch.rs"
+
 [profile.release]
 opt-level = "z"
 lto = true
@@ -36,6 +39,8 @@ panic = "abort"
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["blocking", "json", "native-tls"] }
+indicatif = "0.17"
+colored = "2"
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }

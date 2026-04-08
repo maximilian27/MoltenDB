@@ -238,55 +238,56 @@ fn apply_entry(
     }
 }
 
-/// Replay a slice of already-decoded log entries into RAM state.
-///
-/// This is an alternative to stream_into_state() used when the entries have
-/// already been loaded into memory (e.g. after decryption by EncryptedStorage).
-/// It applies the same logic as apply_entry() but iterates a pre-built slice.
-pub fn replay_log_entries(
-    entries: &[LogEntry],
-    state: &DashMap<String, DashMap<String, Value>>,
-    indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-) {
-    for entry in entries {
-        match entry.cmd.as_str() {
-            "INSERT" => {
-                // Get or create the collection, then insert the document.
-                let col = state
-                    .entry(entry.collection.clone())
-                    .or_insert_with(DashMap::new);
-                col.insert(entry.key.clone(), entry.value.clone());
-                // Keep indexes in sync with the inserted document.
-                crate::engine::indexing::index_doc(indexes, &entry.collection, &entry.key, &entry.value);
-            }
-            "DELETE" => {
-                if let Some(col) = state.get(&entry.collection) {
-                    // Remove from indexes before removing from state.
-                    if let Some(old_val) = col.get(&entry.key) {
-                        crate::engine::indexing::unindex_doc(
-                            indexes,
-                            &entry.collection,
-                            &entry.key,
-                            old_val.value(),
-                        );
-                    }
-                    col.remove(&entry.key);
-                }
-            }
-            "DROP" => {
-                // Remove the collection and all its associated indexes.
-                state.remove(&entry.collection);
-                indexes.retain(|k, _| !k.starts_with(&format!("{}:", entry.collection)));
-            }
-            "INDEX" => {
-                // Register an empty index slot.
-                indexes.insert(
-                    format!("{}:{}", entry.collection, entry.key),
-                    DashMap::new(),
-                );
-            }
-            _ => {}
-        }
-    }
-    println!("✅ Database restored & Indexes rebuilt!");
-}
+// Replay a slice of already-decoded log entries into RAM state.
+//
+// This is an alternative to stream_into_state() used when the entries have
+// already been loaded into memory (e.g. after decryption by EncryptedStorage).
+// It applies the same logic as apply_entry() but iterates a pre-built slice.
+
+// pub fn replay_log_entries(
+//     entries: &[LogEntry],
+//     state: &DashMap<String, DashMap<String, Value>>,
+//     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
+// ) {
+//     for entry in entries {
+//         match entry.cmd.as_str() {
+//             "INSERT" => {
+//                 // Get or create the collection, then insert the document.
+//                 let col = state
+//                     .entry(entry.collection.clone())
+//                     .or_insert_with(DashMap::new);
+//                 col.insert(entry.key.clone(), entry.value.clone());
+//                 // Keep indexes in sync with the inserted document.
+//                 crate::engine::indexing::index_doc(indexes, &entry.collection, &entry.key, &entry.value);
+//             }
+//             "DELETE" => {
+//                 if let Some(col) = state.get(&entry.collection) {
+//                     // Remove from indexes before removing from state.
+//                     if let Some(old_val) = col.get(&entry.key) {
+//                         crate::engine::indexing::unindex_doc(
+//                             indexes,
+//                             &entry.collection,
+//                             &entry.key,
+//                             old_val.value(),
+//                         );
+//                     }
+//                     col.remove(&entry.key);
+//                 }
+//             }
+//             "DROP" => {
+//                 // Remove the collection and all its associated indexes.
+//                 state.remove(&entry.collection);
+//                 indexes.retain(|k, _| !k.starts_with(&format!("{}:", entry.collection)));
+//             }
+//             "INDEX" => {
+//                 // Register an empty index slot.
+//                 indexes.insert(
+//                     format!("{}:{}", entry.collection, entry.key),
+//                     DashMap::new(),
+//                 );
+//             }
+//             _ => {}
+//         }
+//     }
+//     println!("✅ Database restored & Indexes rebuilt!");
+// }

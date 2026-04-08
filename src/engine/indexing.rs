@@ -117,7 +117,7 @@ pub fn unindex_doc(
 
                 // Remove this document key from the index entry for this value.
                 // get_mut() returns a mutable reference to the DashSet.
-                if let Some(mut key_set) = index_ref.value().get_mut(&val_str) {
+                if let Some(key_set) = index_ref.value().get_mut(&val_str) {
                     key_set.remove(key);
                     // Note: we don't remove the empty DashSet from the index map.
                     // This is a minor memory leak but avoids a race condition where
