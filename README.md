@@ -125,6 +125,7 @@ wasm-pack build --target web
 # Set credentials (REQUIRED)
 export MOLTENDB_ADMIN_USER=myuser
 export MOLTENDB_ADMIN_PASSWORD=str0ng-p4ssw0rd
+export JWT_SECRET=another-strong-secret
 
 # Run the app
 cargo run --release
@@ -471,9 +472,10 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--storage-mode` | `STORAGE_MODE` | `standard` | `standard` or `tiered` |
 | `--rate-limit-requests` | `RATE_LIMIT_REQUESTS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `RATE_LIMIT_WINDOW_SECS` | `60` | Window size in seconds |
-| `--jwt-secret` | `JWT_SECRET` | built-in default ⚠️ | JWT signing secret |
+| `--jwt-secret` | `JWT_SECRET` | **REQUIRED** 🔥 | JWT signing secret |
 | `--admin-user` | `MOLTENDB_ADMIN_USER` | **REQUIRED** 🔥 | Admin username |
 | `--admin-password` | `MOLTENDB_ADMIN_PASSWORD` | **REQUIRED** 🔥 | Admin password |
+| `--cors-origin` | `CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s). Use `*` for dev only; set to your frontend URL in production (comma-separated for multiple) |
 | `--debug` | `DEBUG` | `false` | Enable verbose debug logging |
 
 ⚠️ = insecure default, must be overridden in production. The server prints a warning at startup for each one that is not set.

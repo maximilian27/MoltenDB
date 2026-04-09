@@ -116,6 +116,7 @@ struct Config {
     /// JWT signing secret [env: JWT_SECRET]
     #[arg(long, env = "JWT_SECRET")]
     jwt_secret: Option<String>,
+    // Note: jwt_secret is Option<String> so we can detect if it's unset and refuse to start.
 
     /// Admin username [env: MOLTENDB_ADMIN_USER]
     #[arg(long, env = "MOLTENDB_ADMIN_USER")]
@@ -178,10 +179,11 @@ async fn main() {
     // but must be overridden before deploying to production.
 
     // JWT_SECRET is used to sign authentication tokens. If it's not set, the
-    // server falls back to a hardcoded string ("dev-secret-change-in-production")
-    // that is publicly known — anyone could forge valid tokens with it.
+    // server refuses to start — a missing secret would fall back to a hardcoded
+    // string that is publicly known, allowing anyone to forge valid tokens.
     if cfg.jwt_secret.is_none() {
-        warn!("⚠️  --jwt-secret not set! Using insecure default. Set it for production!");
+        error!("🔥 CRITICAL: --jwt-secret (JWT_SECRET) not set! This is required for security.");
+        std::process::exit(1);
     }
 
     // ENCRYPTION_KEY is used to derive the at-rest encryption key for the database
