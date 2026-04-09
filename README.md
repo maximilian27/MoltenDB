@@ -70,6 +70,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Passwords hashed with bcrypt / argon2
 - JWT tokens signed with HMAC-SHA256, 24-hour expiry
 - Credentials loaded from environment variables at startup (no hardcoded defaults in production)
+- **Single-user mode only (v1):** MoltenDB supports exactly one admin user. There is no user management API — to change credentials, restart the server with updated `--admin-user` / `--admin-password` values.
 - Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch size (max 1000 keys)
 - Security headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `HSTS`, `CSP`, etc.
 - Graceful shutdown: drains in-flight requests (up to 30 s), then awaits the async writer task to fully flush all buffered log entries before exit
