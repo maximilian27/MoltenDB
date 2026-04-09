@@ -65,7 +65,7 @@ use tokio::signal;
 use tower_http::set_header::SetResponseHeaderLayer;
 // CorsLayer = middleware that adds CORS headers to responses.
 // Any = a CORS policy that allows any origin (⚠️ not suitable for production).
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::{error, info, warn};
 
 use clap::Parser;
@@ -124,6 +124,12 @@ struct Config {
     /// Admin password [env: MOLTENDB_ADMIN_PASSWORD]
     #[arg(long, env = "MOLTENDB_ADMIN_PASSWORD")]
     admin_password: Option<String>,
+
+    /// Allowed CORS origin(s). Use "*" to allow any origin (default, dev only).
+    /// For production, set to your frontend URL, e.g. "https://app.example.com".
+    /// Multiple origins can be separated by commas. [env: CORS_ORIGIN]
+    #[arg(long, default_value = "*", env = "CORS_ORIGIN")]
+    cors_origin: String,
 
     /// Disable at-rest encryption (data stored as plain JSON). NOT recommended for production.
     #[arg(long, default_value = "false", env = "DISABLE_ENCRYPTION")]
@@ -348,12 +354,38 @@ async fn main() {
         .route("/login", post(handle_login))  // Returns a JWT token on valid credentials
         .route("/ws", get(ws_handler));       // WebSocket upgrade endpoint
 
-    // CORS layer — allows any origin to call the API.
-    // ⚠️ In production, replace `Any` with your actual frontend origin.
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    // CORS layer — configured via --cors-origin / CORS_ORIGIN.
+    // Defaults to "*" (any origin) for development convenience.
+    // In production, set CORS_ORIGIN to your frontend URL, e.g. "https://app.example.com".
+    // Multiple origins can be comma-separated: "https://a.com,https://b.com".
+    let cors = {
+        let origin_str = cfg.cors_origin.trim().to_string();
+        if origin_str == "*" {
+            if !cfg.debug {
+                warn!("⚠️  CORS is open to any origin ('*'). Set --cors-origin for production!");
+            }
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        } else {
+            let origins: Vec<HeaderValue> = origin_str
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .filter_map(|s| s.parse::<HeaderValue>().ok())
+                .collect();
+            if origins.is_empty() {
+                error!("🔥 CRITICAL: --cors-origin value '{}' produced no valid origins.", origin_str);
+                std::process::exit(1);
+            }
+            info!("🔒 CORS restricted to: {}", origin_str);
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::list(origins))
+                .allow_methods(Any)
+                .allow_headers(Any)
+        }
+    };
 
     // Build the final application by merging routes and stacking middleware layers.
     // Layers are applied bottom-up: the last `.layer(...)` call wraps the outermost layer.
