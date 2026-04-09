@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // ─── analytics.rs ─────────────────────────────────────────────────────────────
 // This file implements the analytics query engine used by the WASM dashboard.
 //

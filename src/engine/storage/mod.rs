@@ -108,6 +108,7 @@ pub trait StorageBackend: Send + Sync {
     /// The default implementation returns 0 (no size information available).
     /// `OpfsStorage` overrides this with a real `FileSystemSyncAccessHandle.getSize()` call.
     /// Native disk backends don't need this — they use OS-level file metadata instead.
+    #[allow(dead_code)]
     fn get_size(&self) -> Result<u64, DbError> {
         Ok(0)
     }
