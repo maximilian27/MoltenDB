@@ -70,6 +70,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Passwords hashed with bcrypt / argon2
 - JWT tokens signed with HMAC-SHA256, 24-hour expiry
 - Credentials loaded from environment variables at startup (no hardcoded defaults in production)
+- **Single-user mode only (v1):** MoltenDB supports exactly one admin user. There is no user management API — to change credentials, restart the server with updated `--admin-user` / `--admin-password` values.
 - Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch size (max 1000 keys)
 - Security headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `HSTS`, `CSP`, etc.
 - Graceful shutdown: drains in-flight requests (up to 30 s), then awaits the async writer task to fully flush all buffered log entries before exit
@@ -125,6 +126,7 @@ wasm-pack build --target web
 # Set credentials (REQUIRED)
 export MOLTENDB_ADMIN_USER=myuser
 export MOLTENDB_ADMIN_PASSWORD=str0ng-p4ssw0rd
+export JWT_SECRET=another-strong-secret
 
 # Run the app
 cargo run --release
@@ -471,9 +473,11 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--storage-mode` | `STORAGE_MODE` | `standard` | `standard` or `tiered` |
 | `--rate-limit-requests` | `RATE_LIMIT_REQUESTS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `RATE_LIMIT_WINDOW_SECS` | `60` | Window size in seconds |
-| `--jwt-secret` | `JWT_SECRET` | built-in default ⚠️ | JWT signing secret |
+| `--jwt-secret` | `JWT_SECRET` | **REQUIRED** 🔥 | JWT signing secret |
 | `--admin-user` | `MOLTENDB_ADMIN_USER` | **REQUIRED** 🔥 | Admin username |
 | `--admin-password` | `MOLTENDB_ADMIN_PASSWORD` | **REQUIRED** 🔥 | Admin password |
+| `--cors-origin` | `CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s). Use `*` for dev only; set to your frontend URL in production (comma-separated for multiple) |
+| `--max-body-size` | `MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. |
 | `--debug` | `DEBUG` | `false` | Enable verbose debug logging |
 
 ⚠️ = insecure default, must be overridden in production. The server prints a warning at startup for each one that is not set.

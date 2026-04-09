@@ -39,7 +39,7 @@ pub use storage::StorageBackend;
 // On native builds (server), expose the disk and encrypted storage types.
 // On WASM builds (browser), expose the OPFS storage type.
 #[cfg(not(target_arch = "wasm32"))]
-pub use storage::{AsyncDiskStorage, SyncDiskStorage, EncryptedStorage, TieredStorage};
+pub use storage::{EncryptedStorage};
 
 #[cfg(target_arch = "wasm32")]
 pub use storage::OpfsStorage;
@@ -286,13 +286,7 @@ impl Db {
             &self.state,
         );
     }
-
-    /// Manually create an index on `collection.field`.
-    /// If the index already exists, this is a no-op.
-    pub fn create_index(&self, collection: &str, field: &str) -> Result<(), DbError> {
-        indexing::create_index(&self.indexes, &self.storage, &self.state, collection, field)
-    }
-
+    
     /// Compact the log file — rewrite it to contain only the current state.
     ///
     /// This removes all dead entries (superseded INSERTs, DELETE tombstones)

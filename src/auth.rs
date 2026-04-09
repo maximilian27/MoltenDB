@@ -209,13 +209,12 @@ pub async fn auth_middleware(
 use dashmap::DashMap;
 // Arc = thread-safe reference-counted pointer for shared ownership.
 use std::sync::Arc;
-use tracing::warn;
 
-/// In-memory user store mapping usernames to bcrypt password hashes.
+/// In-memory user store holding the single admin user's bcrypt password hash.
 ///
-/// This is intentionally simple — no database, no persistence. Users are
-/// loaded from environment variables at startup. For multi-user support,
-/// extend this to load from a config file or add a POST /admin/users endpoint.
+/// MoltenDB v1 supports exactly one user (the admin). The username and password
+/// are loaded from environment variables at startup. There is no user management
+/// API — adding or removing users requires a server restart with updated credentials.
 #[derive(Clone)]
 pub struct UserStore {
     /// Maps username → bcrypt hash of the password.
@@ -240,16 +239,6 @@ impl UserStore {
         }
 
         store
-    }
-
-    /// Add a new user to the store at runtime.
-    ///
-    /// The password is hashed with bcrypt before storing.
-    /// If the username already exists, its password hash is overwritten.
-    pub fn add_user(&self, username: &str, password: &str) -> Result<(), bcrypt::BcryptError> {
-        let hash = hash_password(password)?;
-        self.users.insert(username.to_string(), hash);
-        Ok(())
     }
 
     /// Verify a username + password pair against the stored hash.

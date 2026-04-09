@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde_json::{Value, json};
 use crate::{engine, validation, analytics};
 
@@ -8,9 +9,9 @@ use crate::{engine, validation, analytics};
 ///
 /// Note: this function exists but is not currently wired to an HTTP route.
 /// It is available for future use or direct calls from other handlers.
-pub fn process_analytics(db: &engine::Db, payload: &Value) -> Value {
+pub fn process_analytics(db: &engine::Db, payload: &Value, max_body_size: usize) -> Value {
     // Validate the request structure first.
-    if let Err(e) = validation::validate_request(payload) {
+    if let Err(e) = validation::validate_request(payload, max_body_size) {
         return json!({ "error": e.to_string() });
     }
 
