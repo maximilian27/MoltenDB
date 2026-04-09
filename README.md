@@ -477,6 +477,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--admin-user` | `MOLTENDB_ADMIN_USER` | **REQUIRED** 🔥 | Admin username |
 | `--admin-password` | `MOLTENDB_ADMIN_PASSWORD` | **REQUIRED** 🔥 | Admin password |
 | `--cors-origin` | `CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s). Use `*` for dev only; set to your frontend URL in production (comma-separated for multiple) |
+| `--max-body-size` | `MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. |
 | `--debug` | `DEBUG` | `false` | Enable verbose debug logging |
 
 ⚠️ = insecure default, must be overridden in production. The server prints a warning at startup for each one that is not set.

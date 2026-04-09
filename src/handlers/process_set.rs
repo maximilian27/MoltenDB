@@ -54,13 +54,13 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
 ///     Keys are provided by the client. Existing documents are overwritten.
 ///   - Array:      { "collection": "users", "data": [ {...}, {...} ] }
 ///     Keys are auto-generated as UUIDv7 strings. Returns the generated IDs.
-pub fn process_set(db: &engine::Db, payload: &Value) -> (u16, Value) {
+pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u16, Value) {
     // Only "collection" and "data" are valid for a set/insert request.
     const SET_ALLOWED: &[&str] = &["collection", "data"];
     if let Err(e) = validation::validate_allowed_properties(payload, SET_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
-    if let Err(e) = validation::validate_request(payload) {
+    if let Err(e) = validation::validate_request(payload, max_body_size) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
 

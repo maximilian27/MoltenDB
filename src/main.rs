@@ -61,6 +61,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 // signal = OS signal handling (Ctrl+C, SIGTERM) for graceful shutdown.
 use tokio::signal;
+// RequestBodyLimitLayer = middleware that rejects request bodies exceeding a size limit.
+use tower_http::limit::RequestBodyLimitLayer;
 // SetResponseHeaderLayer = middleware that adds a fixed header to every response.
 use tower_http::set_header::SetResponseHeaderLayer;
 // CorsLayer = middleware that adds CORS headers to responses.
@@ -125,6 +127,10 @@ struct Config {
     /// Admin password [env: MOLTENDB_ADMIN_PASSWORD]
     #[arg(long, env = "MOLTENDB_ADMIN_PASSWORD")]
     admin_password: Option<String>,
+
+    /// Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. [env: MAX_BODY_SIZE]
+    #[arg(long, default_value = "10485760", env = "MAX_BODY_SIZE")]
+    max_body_size: usize,
 
     /// Allowed CORS origin(s). Use "*" to allow any origin (default, dev only).
     /// For production, set to your frontend URL, e.g. "https://app.example.com".
@@ -334,9 +340,9 @@ async fn main() {
         }
     });
 
-    // The app state is a tuple of (Db, UserStore) injected into every handler via State<...>.
-    // Axum clones this for each request — both types are cheap to clone (Arc-backed).
-    let app_state = (db.clone(), users);
+    // The app state is a tuple of (Db, UserStore, max_body_size) injected into every handler via State<...>.
+    // Axum clones this for each request — Db and UserStore are cheap to clone (Arc-backed).
+    let app_state = (db.clone(), users, cfg.max_body_size);
 
     // Protected routes require a valid JWT token (enforced by auth_middleware).
     // The middleware is applied only to this sub-router, not to public_routes.
@@ -431,6 +437,9 @@ async fn main() {
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("default-src 'self'; script-src 'self'; object-src 'none'"),
         ))
+        // Request body size limit — rejects bodies larger than the configured limit at the HTTP layer
+        // before the application code even sees them, preventing memory exhaustion.
+        .layer(RequestBodyLimitLayer::new(cfg.max_body_size))
         // Rate limiting middleware — checks every request against the per-IP counter.
         .layer(middleware::from_fn(rate_limit::rate_limit_middleware))
         // Insert the RateLimiter into Axum's extension map so the middleware can access it.
@@ -575,7 +584,7 @@ async fn shutdown_signal() {
 /// Returns 401 Unauthorized if credentials are wrong.
 /// Returns 500 Internal Server Error if token creation fails.
 async fn handle_login(
-    State((_, users)): State<(engine::Db, auth::UserStore)>,
+    State((_, users, _)): State<(engine::Db, auth::UserStore, usize)>,
     Json(payload): Json<auth::LoginRequest>,
 ) -> Result<Json<auth::LoginResponse>, (StatusCode, Json<Value>)> {
     // Verify the username and password against the in-memory user store.
@@ -601,10 +610,10 @@ async fn handle_login(
 ///
 /// Body: `{ "collection": "users", "data": { "u1": { "name": "Alice" } } }`
 async fn handle_set(
-    State((db, _)): State<(engine::Db, auth::UserStore)>,
+    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_set(&db, &payload);
+    let (code, body) = handlers::process_set(&db, &payload, max_body_size);
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 
@@ -612,10 +621,10 @@ async fn handle_set(
 ///
 /// Body: `{ "collection": "users", "data": { "u1": { "role": "admin" } } }`
 async fn handle_update(
-    State((db, _)): State<(engine::Db, auth::UserStore)>,
+    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_update(&db, &payload);
+    let (code, body) = handlers::process_update(&db, &payload, max_body_size);
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 
@@ -623,10 +632,10 @@ async fn handle_update(
 ///
 /// Body: `{ "collection": "users", "where": { "role": "admin" }, "fields": ["name"] }`
 async fn handle_get(
-    State((db, _)): State<(engine::Db, auth::UserStore)>,
+    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_get(&db, &payload);
+    let (code, body) = handlers::process_get(&db, &payload, max_body_size);
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 
@@ -636,10 +645,10 @@ async fn handle_get(
 /// Body (batch):    `{ "collection": "users", "keys": ["u1", "u2"] }`
 /// Body (drop all): `{ "collection": "users", "drop": true }`
 async fn handle_delete(
-    State((db, _)): State<(engine::Db, auth::UserStore)>,
+    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_delete(&db, &payload);
+    let (code, body) = handlers::process_delete(&db, &payload, max_body_size);
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 
@@ -648,14 +657,14 @@ async fn handle_delete(
 /// RESTful convenience endpoint. Equivalent to:
 ///   POST /get { "collection": collection, "keys": key }
 async fn handle_rest_get(
-    State((db, _)): State<(engine::Db, auth::UserStore)>,
+    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
     Path((collection, key)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
     let payload = json!({
         "collection": collection,
         "keys": key
     });
-    let (code, body) = handlers::process_get(&db, &payload);
+    let (code, body) = handlers::process_get(&db, &payload, max_body_size);
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 
@@ -668,7 +677,7 @@ async fn handle_rest_get(
 ///   - `limit`  (optional) — maximum number of documents to return.
 ///   - `offset` (optional) — number of documents to skip before returning.
 async fn handle_rest_get_collection(
-    State((db, _)): State<(engine::Db, auth::UserStore)>,
+    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
     Path(collection): Path<String>,
     AxumQuery(params): AxumQuery<QueryMap<String, String>>,
 ) -> (StatusCode, Json<Value>) {
@@ -679,7 +688,7 @@ async fn handle_rest_get_collection(
     if let Some(offset) = params.get("offset").and_then(|v| v.parse::<u64>().ok()) {
         payload["offset"] = json!(offset);
     }
-    let (code, body) = handlers::process_get(&db, &payload);
+    let (code, body) = handlers::process_get(&db, &payload, max_body_size);
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 
@@ -691,7 +700,7 @@ async fn handle_rest_get_collection(
 /// handshake. The actual socket logic runs in `handle_socket`.
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    State((db, _)): State<(engine::Db, auth::UserStore)>,
+    State((db, _, _max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
 ) -> impl axum::response::IntoResponse {
     // `on_upgrade` completes the handshake and calls our handler with the socket.
     ws.on_upgrade(|socket| handle_socket(socket, db))

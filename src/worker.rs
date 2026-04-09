@@ -221,7 +221,7 @@ impl WorkerDb {
     /// Equivalent to POST /get on the server.
     ///   { "collection": "laptops", "where": { "brand": "Apple" }, "fields": ["brand", "model"] }
     fn handle_get(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body) = handlers::process_get::process_get(&self.db, request);
+        let (code, mut body) = handlers::process_get::process_get(&self.db, request, 5 * 1024 * 1024);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), serde_json::json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -230,7 +230,7 @@ impl WorkerDb {
     /// Insert/upsert documents. Equivalent to POST /set on the server.
     ///   { "collection": "laptops", "data": { "lp1": { ... }, "lp2": { ... } } }
     fn handle_set(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body) = handlers::process_set::process_set(&self.db, request);
+        let (code, mut body) = handlers::process_set::process_set(&self.db, request, 5 * 1024 * 1024);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), serde_json::json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         self.maybe_compact();
@@ -240,7 +240,7 @@ impl WorkerDb {
     /// Patch/merge documents. Equivalent to POST /update on the server.
     ///   { "collection": "laptops", "data": { "lp4": { "price": 1749 } } }
     fn handle_update(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body) = handlers::process_update::process_update(&self.db, request);
+        let (code, mut body) = handlers::process_update::process_update(&self.db, request, 5 * 1024 * 1024);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), serde_json::json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         self.maybe_compact();
@@ -250,7 +250,7 @@ impl WorkerDb {
     /// Delete documents or drop a collection. Equivalent to POST /delete on the server.
     ///   { "collection": "laptops", "keys": "lp6" }  or  { "drop": true }
     fn handle_delete(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body) = handlers::process_delete::process_delete(&self.db, request);
+        let (code, mut body) = handlers::process_delete::process_delete(&self.db, request, 5 * 1024 * 1024);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), serde_json::json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         self.maybe_compact();
