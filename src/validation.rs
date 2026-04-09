@@ -319,9 +319,9 @@ pub fn validate_allowed_properties(payload: &Value, allowed: &[&str]) -> Result<
 ///   5. Field name validity (projections, joins, WHERE clause)
 ///
 /// Returns Ok(()) if all checks pass, or the first ValidationError found.
-pub fn validate_request(payload: &Value) -> Result<(), ValidationError> {
+pub fn validate_request(payload: &Value, max_body_size: usize) -> Result<(), ValidationError> {
     // Check 1: Payload size — reject before doing any other work.
-    validate_payload_size(payload, 10 * 1024 * 1024)?; // 10 MB
+    validate_payload_size(payload, max_body_size)?;
 
     // Check 2: JSON depth — prevent stack overflows in recursive processing.
     validate_json_depth(payload, 32)?;
