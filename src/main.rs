@@ -47,7 +47,7 @@ use axum::{
     // middleware = lets us insert async functions between the router and handlers.
     middleware,
     // routing = defines which HTTP methods map to which handlers.
-    routing::{get, post, put},
+    routing::{get, post},
     // Json = deserializes request bodies and serializes response bodies as JSON.
     Json,
     Router,
@@ -261,7 +261,6 @@ async fn main() {
     let encryption_key_storage;
     let encryption_key: Option<&[u8; 32]> = if cfg.disable_encryption {
         warn!("⚠️  Encryption is DISABLED — data will be stored as plain JSON!");
-        encryption_key_storage = None;
         None
     } else {
         let password = cfg.encryption_key

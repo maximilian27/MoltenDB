@@ -270,28 +270,6 @@ pub fn validate_key_count(count: usize, max_keys: usize) -> Result<(), Validatio
     Ok(())
 }
 
-/// Remove characters that are not safe for storage or display.
-///
-/// This is a defence-in-depth measure — the regex validators above should
-/// already reject invalid input. This function is a secondary filter for
-/// string values that bypass the structured validators.
-///
-/// Allowed: alphanumeric, _ - . space @ and any non-ASCII UTF-8 character.
-pub fn sanitize_string(input: &str) -> String {
-    input
-        .chars()
-        .filter(|c| {
-            c.is_alphanumeric()
-            || *c == '_'
-            || *c == '-'
-            || *c == '.'
-            || *c == ' '
-            || *c == '@'
-            || (*c as u32) > 127  // Allow non-ASCII UTF-8 (e.g. accented chars, emoji)
-        })
-        .collect()
-}
-
 /// Check that every top-level key in the payload is in the `allowed` list.
 ///
 /// This prevents clients from sending unrecognised properties that would be

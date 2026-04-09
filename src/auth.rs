@@ -209,7 +209,6 @@ pub async fn auth_middleware(
 use dashmap::DashMap;
 // Arc = thread-safe reference-counted pointer for shared ownership.
 use std::sync::Arc;
-use tracing::warn;
 
 /// In-memory user store holding the single admin user's bcrypt password hash.
 ///

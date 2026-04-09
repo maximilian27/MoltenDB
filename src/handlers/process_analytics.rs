@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde_json::{Value, json};
 use crate::{engine, validation, analytics};
 
