@@ -33,7 +33,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build Release Binary
-        run: cargo build --release
+        run: cargo build --release --package moltendb-server
 
       - name: Rename Binary (Linux & macOS)
         if: matrix.os != 'windows-latest'

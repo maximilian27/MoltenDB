@@ -25,7 +25,7 @@ jobs:
       - name: Extract Version from Cargo.toml
         id: extract
         run: |
-          VERSION=$(grep -m 1 '^version = ' Cargo.toml | tr -d ' "' | sed 's/version=//')
+          VERSION=$(grep -m 1 '^version = ' moltendb-server/Cargo.toml | tr -d ' "' | sed 's/version=//')
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "Detected version: $VERSION"
 
