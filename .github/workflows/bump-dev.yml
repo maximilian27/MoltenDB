@@ -26,34 +26,36 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Parse and Bump Cargo.toml
+      - name: Parse and Bump All Crate Versions
         run: |
-          # 1. Read the current version from Cargo.toml
-          CURRENT_VERSION=$(grep -m 1 '^version = ' Cargo.toml | tr -d ' "' | sed 's/version=//')
+          # Read the current version from moltendb-core (source of truth)
+          CURRENT_VERSION=$(grep -m 1 '^version = ' moltendb-core/Cargo.toml | tr -d ' "' | sed 's/version=//')
           echo "Current version: $CURRENT_VERSION"
-          
-          # 2. Use Regex to split the string (e.g., "0.1.0-beta." and "3")
+
+          # Use Regex to split the string (e.g., "0.2.0-beta." and "3")
           if [[ $CURRENT_VERSION =~ (.*-beta\.)([0-9]+) ]]; then
             BASE="${BASH_REMATCH[1]}"
             NUM="${BASH_REMATCH[2]}"
-          
-            # 3. Increment the number
+
+            # Increment the number
             NEW_NUM=$((NUM + 1))
             NEW_VERSION="${BASE}${NEW_NUM}"
-          
+
             echo "Bumping to: $NEW_VERSION"
-          
-            # 4. Replace the old version with the new version in Cargo.toml
-            sed -i -e "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
-          
-            # 5. Sync Cargo.lock safely
-            # Extract the crate name dynamically and update ONLY this package in the lockfile
-            CRATE_NAME=$(grep -m 1 '^name = ' Cargo.toml | tr -d ' "' | sed 's/name=//')
-            cargo update -p "$CRATE_NAME"
-          
-            # 6. Commit and Push back to the dev branch
-            # Notice we are now adding BOTH files to the commit
-            git add Cargo.toml Cargo.lock
+
+            # Update version in all three crate Cargo.toml files
+            for CRATE_TOML in moltendb-core/Cargo.toml moltendb-server/Cargo.toml moltendb-auth/Cargo.toml; do
+              sed -i -e "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" "$CRATE_TOML"
+              echo "Updated $CRATE_TOML"
+            done
+
+            # Sync Cargo.lock — update all three workspace members
+            cargo update -p moltendb-core
+            cargo update -p moltendb-server
+            cargo update -p moltendb-auth
+
+            # Commit and push all changed files back to the dev branch
+            git add moltendb-core/Cargo.toml moltendb-server/Cargo.toml moltendb-auth/Cargo.toml Cargo.lock
             git commit -m "chore: bump beta version to $NEW_VERSION [skip ci]"
             git push
           else
