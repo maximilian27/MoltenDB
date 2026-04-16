@@ -49,6 +49,11 @@ jobs:
               echo "Updated $CRATE_TOML"
             done
 
+            # Update internal dependency version references
+            sed -i "s/moltendb-core = { version = \"$CURRENT_VERSION\"/moltendb-core = { version = \"$NEW_VERSION\"/g" moltendb-auth/Cargo.toml
+            sed -i "s/moltendb-core = { version = \"$CURRENT_VERSION\"/moltendb-core = { version = \"$NEW_VERSION\"/g" moltendb-server/Cargo.toml
+            sed -i "s/moltendb-auth = { version = \"$CURRENT_VERSION\"/moltendb-auth = { version = \"$NEW_VERSION\"/g" moltendb-server/Cargo.toml
+
             # Sync Cargo.lock — update all three workspace members
             cargo update -p moltendb-core
             cargo update -p moltendb-server
