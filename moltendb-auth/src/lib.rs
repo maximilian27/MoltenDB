@@ -28,8 +28,7 @@
 //   Tokens expire after 24 hours.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Only compile this file for native (non-WASM) builds.
-#![cfg(not(target_arch = "wasm32"))]
+// moltendb-auth is a native-only crate — it is never compiled for WASM targets.
 
 // Axum types for building middleware.
 use axum::{

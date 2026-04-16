@@ -2,5 +2,6 @@
 members = [
     "moltendb-core",
     "moltendb-server",
+    "moltendb-auth",
 ]
 resolver = "2"
