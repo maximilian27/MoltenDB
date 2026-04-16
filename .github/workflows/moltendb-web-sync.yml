@@ -30,12 +30,12 @@ jobs:
 
       - name: Build WASM
         working-directory: ./core-repo
-        run: wasm-pack build --target web
+        run: wasm-pack build moltendb-core --target web
 
       - name: Surgical Artifact Sync
         run: |
           # Define exact paths to prevent typos
-          SRC_PKG="core-repo/pkg"
+          SRC_PKG="core-repo/moltendb-core/pkg"
           DEST_CORE="web-repo/packages/core"
           DEST_WASM="$DEST_CORE/src/wasm"
           
@@ -45,10 +45,10 @@ jobs:
           mkdir -p "$DEST_WASM"
           
           # 2. Copy exactly the 4 code artifacts into /packages/core/dist/
-          cp "$SRC_PKG/moltendb.d.ts" "$DEST_WASM/"
-          cp "$SRC_PKG/moltendb.js" "$DEST_WASM/"
-          cp "$SRC_PKG/moltendb_bg.wasm" "$DEST_WASM/"
-          cp "$SRC_PKG/moltendb_bg.wasm.d.ts" "$DEST_WASM/"
+          cp "$SRC_PKG/moltendb_core.d.ts" "$DEST_WASM/"
+          cp "$SRC_PKG/moltendb_core.js" "$DEST_WASM/"
+          cp "$SRC_PKG/moltendb_core_bg.wasm" "$DEST_WASM/"
+          cp "$SRC_PKG/moltendb_core_bg.wasm.d.ts" "$DEST_WASM/"
           
 
       - name: Commit and Push to Web Monorepo

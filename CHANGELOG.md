@@ -1,9 +1,37 @@
-# [0.1.0-beta.2](https://github.com/maximilian27/MoltenDB/compare/v0.1.0-alpha.25...v0.1.0-beta.2) (2026-04-08)
+# [0.2.0-beta.1] (2026-04-16)
+
+
+### Architecture
+
+* **Cargo Workspace refactor** — MoltenDB is now a 3-crate workspace. The monolithic `src/` has been split into three independent, composable crates:
+  * `moltendb-core` — pure engine with zero HTTP/auth dependencies. Compiles to native `rlib`/`cdylib` for embedding and to WASM via `wasm-pack`. Can be used as a standalone embedded database in any Rust project.
+  * `moltendb-auth` — identity layer (Argon2 password hashing, JWT minting/validation, `UserStore`). Depends only on `moltendb-core`.
+  * `moltendb-server` — network layer (Axum, TLS, CORS, rate limiting, CLI config). Depends on both `moltendb-core` and `moltendb-auth`.
+* Integration tests moved to `moltendb-server/tests/integration.rs`
+* WASM build now targets `moltendb-core` only: `wasm-pack build moltendb-core --target web`
+* Binary install command updated: `cargo install moltendb-server`
+
+
+### Security
+
+* **JWT secret is now mandatory** — the server refuses to start if `--jwt-secret` / `JWT_SECRET` is not set (previously fell back to a hardcoded dev string)
+* **CORS origin is now configurable** — `--cors-origin` / `CORS_ORIGIN` flag added (default `*` for dev; set to your frontend URL in production, comma-separated for multiple origins)
+* **HTTP-layer body size limit** — `RequestBodyLimitLayer` added at the router level; configurable via `--max-body-size` / `MAX_BODY_SIZE` (default 10 MB). Oversized requests are now rejected before application code sees them.
+* **Single-user mode documented** — `add_user` dead code removed from `UserStore`; v1 supports exactly one admin user configured at startup
+
+
+# [0.1.0-beta.1] (2026-04-08)
 
 
 ### Bug Fixes
 
-* async writer data loss on graceful shutdown ([5dd2514](https://github.com/maximilian27/MoltenDB/commit/5dd25141336924d3269965350c841b9b166016a2))
+* **AsyncDiskStorage**: store writer task `JoinHandle` and implement `Drop` to await full queue drain and flush before process exit — fixes data loss on graceful shutdown where buffered log entries were silently discarded
+
+
+### Features
+
+* case-insensitive string matching across all query operators (`$eq`, `$ne`, `$contains`, `$in`, `$nin`)
+* stress tooling: `examples/generate_stress_data.rs`, `examples/stress_insert.rs`, `examples/stress_fetch.rs` for real-world load testing against a live server
 
 
 

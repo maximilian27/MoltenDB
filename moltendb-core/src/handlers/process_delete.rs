@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
-use crate::{engine, validation};
+use crate::validation;
+use crate::engine;
 
 /// Handle a DELETE request.
 ///
@@ -7,8 +8,8 @@ use crate::{engine, validation};
 ///   - Single key:  { "collection": "users", "keys": "u1" }
 ///   - Batch keys:  { "collection": "users", "keys": ["u1", "u2"] }
 ///   - Drop all:    { "collection": "users", "drop": true }
-pub fn process_delete(db: &engine::Db, payload: &Value) -> (u16, Value) {
-    if let Err(e) = validation::validate_request(payload) {
+pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u16, Value) {
+    if let Err(e) = validation::validate_request(payload, max_body_size) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
     // Only "collection", "keys", and "drop" are valid for a delete request.

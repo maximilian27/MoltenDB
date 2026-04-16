@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
-use crate::{engine, validation, query};
+use crate::validation;
+use moltendb_core::{engine, query};
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -47,9 +48,9 @@ fn compare_values(a: Option<&Value>, b: Option<&Value>) -> std::cmp::Ordering {
 ///   - Cross-collection joins: { "joins": [{ "order_details": { "from": "orders", "on": "active_order", "fields": [...] } }] }
 ///   - Pagination:         { "count": 10, "offset": 0 }
 ///   - Sorting:            { "sort": ["age"] }  or  { "sort": [{ "field": "age", "order": "desc" }] }
-pub fn process_get(db: &engine::Db, payload: &Value) -> (u16, Value) {
+pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u16, Value) {
     // Validate the request structure before doing any work.
-    if let Err(e) = validation::validate_request(payload) {
+    if let Err(e) = validation::validate_request(payload, max_body_size) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
     // Reject any unknown top-level properties so typos are caught immediately

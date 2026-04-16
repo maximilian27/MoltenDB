@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
-use crate::{engine, validation};
+use crate::validation;
+use moltendb_core::engine;
 
 /// Handle an UPDATE (partial merge) request.
 ///
@@ -7,13 +8,13 @@ use crate::{engine, validation};
 /// fields that are not mentioned in the update.
 ///
 /// Format: { "collection": "users", "data": { "u1": { "role": "admin" } } }
-pub fn process_update(db: &engine::Db, payload: &Value) -> (u16, Value) {
+pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u16, Value) {
     // Only "collection" and "data" are valid for an update/patch request.
     const UPDATE_ALLOWED: &[&str] = &["collection", "data"];
     if let Err(e) = validation::validate_allowed_properties(payload, UPDATE_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
-    if let Err(e) = validation::validate_request(payload) {
+    if let Err(e) = validation::validate_request(payload, max_body_size) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
 

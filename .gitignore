@@ -4,3 +4,5 @@
 /.idea
 /tests/stress_data.json
 /tests/stress_keys.json
+/my_database.log.snapshot.bin
+/moltendb-core/pkg/

@@ -1,0 +1,16 @@
+[package]
+name = "moltendb-auth"
+version = "0.2.0-beta.4"
+edition = "2024"
+authors = ["Maximilian Both <maximilian.both27@outlook.com>"]
+description = "MoltenDB authentication — JWT, bcrypt password hashing, Axum auth middleware, UserStore."
+license-file = "LICENSE.md"
+repository = "https://github.com/maximilian27/MoltenDB"
+
+[dependencies]
+axum = { version = "0.8.8", features = ["ws"] }
+bcrypt = "0.19.0"
+dashmap = "6.1.0"
+jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"

@@ -1,6 +1,7 @@
 /// MoltenDB integration test suite
 /// Tests all handler operations using an in-memory SyncDiskStorage backed by a temp file.
-use moltendb::{engine, handlers};
+use moltendb_core::engine;
+use moltendb_server::handlers;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -12,9 +13,9 @@ static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// Open a fresh in-memory database backed by a unique temp file.
 fn open_db() -> engine::Db {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = format!("target/test_db_{}.log", id);
+    let path = std::env::temp_dir().join(format!("moltendb_test_{}.log", id));
     let _ = std::fs::remove_file(&path);
-    engine::Db::open(&path, true, false, None).expect("open db")
+    engine::Db::open(path.to_str().unwrap(), true, false, None).expect("open db")
 }
 
 /// Seed the three standard collections used by most tests.
@@ -681,8 +682,9 @@ fn test_unknown_property_get() {
 #[test]
 fn test_persistence_survives_reopen() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = format!("target/test_persist_{}.log", id);
-    let _ = std::fs::remove_file(&path);
+    let path_buf = std::env::temp_dir().join(format!("moltendb_persist_{}.log", id));
+    let path = path_buf.to_str().unwrap();
+    let _ = std::fs::remove_file(path);
     {
         let db = engine::Db::open(&path, true, false, None).unwrap();
         set(&db, json!({
@@ -702,8 +704,9 @@ fn test_persistence_survives_reopen() {
 #[test]
 fn test_compaction_preserves_data() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = format!("target/test_compact_{}.log", id);
-    let _ = std::fs::remove_file(&path);
+    let path_buf = std::env::temp_dir().join(format!("moltendb_compact_{}.log", id));
+    let path = path_buf.to_str().unwrap();
+    let _ = std::fs::remove_file(path);
     let db = engine::Db::open(&path, true, false, None).unwrap();
     seed(&db);
     delete(&db, json!({ "collection": "laptops", "keys": "lp6" }));
@@ -723,8 +726,9 @@ fn test_compaction_preserves_data() {
 fn test_concurrent_writes() {
     use std::thread;
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = format!("target/test_concurrent_{}.log", id);
-    let _ = std::fs::remove_file(&path);
+    let path_buf = std::env::temp_dir().join(format!("moltendb_concurrent_{}.log", id));
+    let path = path_buf.to_str().unwrap();
+    let _ = std::fs::remove_file(path);
     let db = Arc::new(engine::Db::open(&path, true, false, None).unwrap());
     let n_threads = 8;
     let n_docs = 100;
@@ -751,8 +755,9 @@ fn test_concurrent_writes() {
 fn test_concurrent_reads_during_writes() {
     use std::thread;
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = format!("target/test_rw_{}.log", id);
-    let _ = std::fs::remove_file(&path);
+    let path_buf = std::env::temp_dir().join(format!("moltendb_rw_{}.log", id));
+    let path = path_buf.to_str().unwrap();
+    let _ = std::fs::remove_file(path);
     let db = Arc::new(engine::Db::open(&path, true, false, None).unwrap());
     // Pre-seed
     for i in 0..50 {
@@ -809,7 +814,7 @@ fn test_index_accelerated_query() {
 
 #[test]
 fn test_analytics_count() {
-    use moltendb::analytics::{AnalyticsQuery, execute_query};
+    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
     let db = open_db();
     seed(&db);
     let q: AnalyticsQuery = serde_json::from_value(json!({
@@ -822,7 +827,7 @@ fn test_analytics_count() {
 
 #[test]
 fn test_analytics_sum() {
-    use moltendb::analytics::{AnalyticsQuery, execute_query};
+    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
     let db = open_db();
     seed(&db);
     let q: AnalyticsQuery = serde_json::from_value(json!({
@@ -836,7 +841,7 @@ fn test_analytics_sum() {
 
 #[test]
 fn test_analytics_avg() {
-    use moltendb::analytics::{AnalyticsQuery, execute_query};
+    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
     let db = open_db();
     seed(&db);
     let q: AnalyticsQuery = serde_json::from_value(json!({
@@ -850,7 +855,7 @@ fn test_analytics_avg() {
 
 #[test]
 fn test_analytics_min_max() {
-    use moltendb::analytics::{AnalyticsQuery, execute_query};
+    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
     let db = open_db();
     seed(&db);
     let min_q: AnalyticsQuery = serde_json::from_value(json!({
@@ -867,7 +872,7 @@ fn test_analytics_min_max() {
 
 #[test]
 fn test_analytics_with_where() {
-    use moltendb::analytics::{AnalyticsQuery, execute_query};
+    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
     let db = open_db();
     seed(&db);
     let q: AnalyticsQuery = serde_json::from_value(json!({

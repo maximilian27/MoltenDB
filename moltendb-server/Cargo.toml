@@ -1,0 +1,65 @@
+[package]
+name = "moltendb-server"
+version = "0.2.0-beta.4"
+edition = "2024"
+authors = ["Maximilian Both <maximilian.both27@outlook.com>"]
+description = "MoltenDB HTTP server — Axum routing, TLS, auth, rate limiting, CORS."
+license-file = "LICENSE.md"
+repository = "https://github.com/maximilian27/MoltenDB"
+
+[[bin]]
+name = "moltendb"
+path = "src/main.rs"
+test = false
+
+[[example]]
+name = "generate_stress_data"
+path = "examples/generate_stress_data.rs"
+
+[[example]]
+name = "stress_insert"
+path = "examples/stress_insert.rs"
+
+[[example]]
+name = "stress_fetch"
+path = "examples/stress_fetch.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[dev-dependencies]
+indicatif = "0.17"
+colored = "2"
+
+[dependencies]
+moltendb-core = { version = "0.2.0-beta.4", path = "../moltendb-core" }
+moltendb-auth = { version = "0.2.0-beta.4", path = "../moltendb-auth" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+dashmap = "6.1.0"
+uuid = { version = "1.22", features = ["v7", "serde"] }
+tracing = "0.1.44"
+web-time = "1.0.0"
+argon2 = "0.5"
+axum = { version = "0.8.8", features = ["ws"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+base64 = "0.22"
+bincode = "1.3.3"
+chacha20poly1305 = "0.10"
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3.31"
+memmap2 = "0.9"
+rand_core = { version = "0.6", features = ["std"] }
+regex = "1.12.3"
+tokio = { version = "1.49.0", features = ["full"] }
+tokio-tungstenite = "0.28.0"
+tower = "0.5.3"
+tower-http = { version = "0.6.8", features = ["limit", "set-header", "cors"] }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+reqwest = { version = "0.12", features = ["blocking", "json", "native-tls"] }

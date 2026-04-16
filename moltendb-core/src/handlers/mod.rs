@@ -28,4 +28,6 @@ pub use process_set::process_set;
 pub use process_update::process_update;
 pub use process_delete::process_delete;
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(unused_imports)]
 pub use process_analytics::process_analytics;
+
