@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use serde_json::{Value, json};
-use crate::{engine, validation, analytics};
+use crate::validation;
+use crate::{engine, analytics};
 
 /// Handle an analytics query request.
 ///

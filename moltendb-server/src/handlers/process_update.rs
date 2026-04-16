@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
-use crate::{engine, validation};
+use crate::validation;
+use moltendb_core::engine;
 
 /// Handle an UPDATE (partial merge) request.
 ///
