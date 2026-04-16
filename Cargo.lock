@@ -1438,6 +1438,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltendb-auth"
+version = "0.1.0-rc.1"
+dependencies = [
+ "axum",
+ "bcrypt",
+ "dashmap",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "moltendb-core"
 version = "0.1.0-rc.1"
 dependencies = [
@@ -1472,7 +1484,6 @@ dependencies = [
  "axum",
  "axum-server",
  "base64",
- "bcrypt",
  "bincode",
  "chacha20poly1305",
  "clap",
@@ -1480,8 +1491,8 @@ dependencies = [
  "dashmap",
  "futures",
  "indicatif",
- "jsonwebtoken",
  "memmap2",
+ "moltendb-auth",
  "moltendb-core",
  "rand_core 0.6.4",
  "regex",
