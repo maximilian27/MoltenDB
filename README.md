@@ -24,7 +24,57 @@ Same query engine. Same log format. Two environments.
 
 MoltenDB is a JSON document database written in Rust that compiles to both a native server binary and a WebAssembly module. The same query engine runs in your browser (via WASM + OPFS) and on your server (via a Rust binary + disk). Data written in the browser persists across page reloads and can optionally sync to the server.
 
-> **Deployment model:** MoltenDB is currently designed as a standalone HTTP server and a WASM browser package. Embedded Rust library usage is in development and will be stabilized before v1.0.
+---
+
+## Architecture
+
+MoltenDB is structured as a **Cargo Workspace** with three independent crates. Each crate has a single, well-defined responsibility and can be used in isolation.
+
+```
+MoltenDB/
+├── moltendb-core/     — pure engine: no HTTP, no auth, no JWT
+├── moltendb-auth/     — identity layer: JWT, Argon2, UserStore
+└── moltendb-server/   — network layer: Axum, TLS, CORS, CLI config
+```
+
+### `moltendb-core` — The Engine
+
+The heart of MoltenDB. Contains the in-memory `DashMap` store, the append-only WAL, all storage backends (disk, tiered, encrypted, OPFS), the query evaluator (`$in`, `$gt`, joins, field projection), auto-indexing, and the WASM worker entry point.
+
+**Zero knowledge of HTTP, TCP, JWT, or users.** This crate compiles to:
+- A native `rlib` for embedding in other Rust projects
+- A `cdylib` for FFI (mobile, Tauri, etc.)
+- A WASM module via `wasm-pack` for browser deployment
+
+**Use it as an embedded database** — add it to any Rust project with no HTTP overhead:
+
+```toml
+# Cargo.toml
+[dependencies]
+moltendb-core = "0.2.0-beta.1"
+```
+
+```rust
+use moltendb_core::engine::Db;
+
+let db = Db::open("./my_app.log").await?;
+db.set("users", "u1", serde_json::json!({ "name": "Alice" })).await?;
+let user = db.get("users", "u1").await?;
+```
+
+### `moltendb-auth` — The Identity Layer
+
+Handles everything related to identity: Argon2 password hashing, JWT minting and validation (HMAC-SHA256), and the `UserStore`. Depends only on `moltendb-core` — it has no knowledge of HTTP routing or the server binary.
+
+**v1 is single-user only.** One admin user is configured at startup via `--admin-user` / `--admin-password`. There is no user management API — to change credentials, restart the server with updated values.
+
+### `moltendb-server` — The Network Layer
+
+The runnable binary. Owns Axum routing, TLS termination, CORS policy, per-IP rate limiting, HTTP body size enforcement, and the CLI configuration (via `clap`). Parses incoming JSON requests and delegates to `moltendb-core`. Depends on both `moltendb-core` and `moltendb-auth`.
+
+---
+
+> **Deployment model:** Run `moltendb-server` as a standalone HTTPS server, embed `moltendb-core` directly in your Rust application, or compile `moltendb-core` to WASM for browser-side local-first storage.
 
 All data is kept in RAM for the lifetime of the server process — there is no eviction, TTL, or page cache. Once a document is loaded it stays in memory until explicitly deleted or the process exits. This means **RAM is the hard limit on dataset size**. A 100 000-document collection of typical JSON objects occupies roughly 100–200 MB of RAM. The tiered storage mode separates hot and cold logs on disk but both are still fully loaded into the same in-memory `DashMap` on startup — tiered storage improves write throughput, not memory usage.
 
@@ -40,6 +90,8 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Automatic log compaction: count-based (every 500 inserts) and size-based (> 5 MB)
 - **[`@moltendb-web/core` on NPM](https://www.npmjs.com/package/@moltendb-web/core)** — bundles the WASM engine, Web Worker, and main-thread client into a single publishable artifact
 - **[`@moltendb-web/query` on NPM](https://www.npmjs.com/package/@moltendb-web/query)** — type-safe, chainable query builder (CJS + ESM + `.d.ts`)
+- **[`@moltendb-web/angular` on NPM](https://www.npmjs.com/package/@moltendb-web/angular)** — official Angular wrapper for seamless integration
+- **[⚡ Try the Live Angular Demo](https://moltendb-angular.maximilian-both27.workers.dev/laptops)**
 - **[⚡ Try the Live Browser WASM Demo on StackBlitz](https://stackblitz.com/~/github.com/maximilian27/moltendb-wasm-demo)**
 
 ### ✅ Server (Rust binary)
@@ -100,7 +152,16 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 If you just want to run the standalone database server, install it directly from crates.io:
 
 ```bash
-cargo install moltendb
+cargo install moltendb-server
+```
+
+### Use the core engine as an embedded library
+
+Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTTP server, no auth overhead:
+
+```toml
+[dependencies]
+moltendb-core = "0.2.0-beta.1"
 ```
 
 ### Download Pre-built Binaries
@@ -116,8 +177,10 @@ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -node
 
 ### Build the WASM package
 
+The WASM package targets `moltendb-core` only — no HTTP or auth deps are included:
+
 ```bash
-wasm-pack build --target web
+wasm-pack build moltendb-core --target web
 ```
 
 ### Run the server
@@ -128,11 +191,11 @@ export MOLTENDB_ADMIN_USER=myuser
 export MOLTENDB_ADMIN_PASSWORD=str0ng-p4ssw0rd
 export JWT_SECRET=another-strong-secret
 
-# Run the app
-cargo run --release
+# Run the server binary
+cargo run --release -p moltendb-server
 
 # Or with CLI flags (equivalent)
-cargo run --release -- \
+cargo run --release -p moltendb-server -- \
   --admin-user myuser \
   --admin-password str0ng-p4ssw0rd \
   --jwt-secret another-strong-secret \
@@ -140,10 +203,10 @@ cargo run --release -- \
   --port 1538
 
 # Verbose debug logging (optimizer, indexing, compaction details)
-cargo run --release -- --debug
+cargo run --release -p moltendb-server -- --debug
 ```
 
-Run `cargo run -- --help` to see all available flags.
+Run `cargo run -p moltendb-server -- --help` to see all available flags.
 
 
 ### Quick Test with `requests.http`
@@ -251,6 +314,8 @@ Authorization: Bearer <token>
 | `$contains` | `$ct` | Substring check (string, **case-insensitive**) or membership check (array) |
 | `$in` | `$oneOf` | Field value is one of a list (string comparison is **case-insensitive**) |
 | `$nin` | `$notIn` | Field value is not in a list |
+| `$or` | | At least one of the sub-conditions must match (array of `where`-style objects) |
+| `$and` | | All sub-conditions must match (array of `where`-style objects) |
 
 **Query examples:**
 
@@ -285,6 +350,14 @@ Authorization: Bearer <token>
 // $contains on an array field
 ```json
 { "collection": "laptops", "where": { "tags": { "$contains": "gaming" } } }
+```
+// $or — match documents where brand is Apple OR price is below 1000
+```json
+{ "collection": "laptops", "where": { "$or": [{ "brand": "Apple" }, { "price": { "$lt": 1000 } }] } }
+```
+// $and — match documents where brand is Apple AND price is below 2000
+```json
+{ "collection": "laptops", "where": { "$and": [{ "brand": "Apple" }, { "price": { "$lt": 2000 } }] } }
 ```
 
 ### Cross-collection join
@@ -528,13 +601,13 @@ On startup, the log is replayed top-to-bottom to rebuild the in-memory state. Af
 
 ```bash
 # Run the full integration test suite (56 tests)
-cargo test --test integration
+cargo test -p moltendb-server --test integration
 
 # Run with verbose output
-cargo test --test integration -- --nocapture
+cargo test -p moltendb-server --test integration -- --nocapture
 
 # Run the 100 000-entry stress test (insert + log replay verification)
-cargo test --test stress -- --nocapture
+cargo test -p moltendb-server --test stress -- --nocapture
 ```
 
 The test suite covers: SET, GET, field selection, WHERE (all 9 operators, case-insensitive string matching), sort, pagination, joins, update, delete, versioning, extends, validation, persistence, compaction, concurrency (8 threads × 100 docs), auto-indexing, and analytics.
@@ -545,16 +618,16 @@ Three Rust example binaries are provided for real-world load testing against a l
 
 ```bash
 # 1. Generate 100 000 synthetic documents (writes tests/stress_data.json + stress_keys.json)
-cargo run --example generate_stress_data
+cargo run -p moltendb-server --example generate_stress_data
 
 # 2. Bulk-insert the dataset into the running server
-cargo run --example stress_insert
+cargo run -p moltendb-server --example stress_insert
 
 # 3. Fire 10 000 concurrent fetch requests and print a latency report
-cargo run --example stress_fetch
+cargo run -p moltendb-server --example stress_fetch
 
 # Tune concurrency (default 10 000) and collection name via env vars
-STRESS_CONCURRENCY=50000 STRESS_COLLECTION=stress cargo run --example stress_fetch
+STRESS_CONCURRENCY=50000 STRESS_COLLECTION=stress cargo run -p moltendb-server --example stress_fetch
 ```
 
 The fetch report includes min / mean / p50 / p75 / p90 / p95 / p99 / p99.9 / max latency and sustained throughput (req/s). In a typical local debug build, MoltenDB sustains **4 000–8 000 req/s** for pure in-memory reads.
@@ -563,45 +636,58 @@ The fetch report includes min / mean / p50 / p75 / p90 / p95 / p99 / p99.9 / max
 
 ## Project Structure
 
+MoltenDB is a Cargo Workspace. Each crate lives in its own directory:
+
 ```
-src/
-  main.rs                    — server entry point, router, CLI config
-  lib.rs                     — shared library root (WASM + native)
-  auth.rs                    — JWT + bcrypt/argon2 authentication
-  worker.rs                  — WASM entry point (WorkerDb, handle_message)
-  validation.rs              — input validation (collection names, depth, size)
-  rate_limit.rs              — per-IP sliding window rate limiter
-  analytics.rs               — COUNT/SUM/AVG/MIN/MAX analytics engine
-  handlers/
-    mod.rs                   — module declarations
-    process_get.rs           — GET handler (query, field selection, joins, sort, pagination)
-    process_set.rs           — SET handler (insert/upsert, extends resolution)
-    process_update.rs        — UPDATE handler (partial merge)
-    process_delete.rs        — DELETE handler (single, batch, drop)
-    process_analytics.rs     — analytics handler
-  engine/
-    mod.rs                   — Db struct, open() / open_wasm()
-    operations.rs            — insert_batch, update, delete, versioning, WS broadcast
-    indexing.rs              — auto-indexing, query heatmap
-    types.rs                 — LogEntry, DbError
-    storage/
-      mod.rs                 — StorageBackend trait, startup replay
-      disk.rs                — AsyncDiskStorage, SyncDiskStorage, snapshots
-      encrypted.rs           — XChaCha20-Poly1305 encryption wrapper
-      tiered.rs              — TieredStorage, MmapLogReader
-      wasm.rs                — OpfsStorage (browser OPFS backend)
-tests/
-  integration.rs             — 56 integration tests
-  stress.rs                  — 100 000-entry stress test (insert + replay verification)
-  requests.http              — 57+ documented example requests for every endpoint
-  stress_fetch.http          — manual HTTP requests for stress dataset inspection
-examples/
-  generate_stress_data.rs    — generates 100 000 synthetic documents → tests/stress_data.json
-  stress_insert.rs           — bulk-inserts the dataset into a live server via HTTP API
-  stress_fetch.rs            — fires 10 000–100 000 concurrent GET requests, reports latency percentiles
-pkg/                         — generated WASM package (wasm-pack output)
-assets/
-  logo.png                   — project logo
+MoltenDB/
+├── Cargo.toml                        — workspace root
+│
+├── moltendb-core/                    — pure engine crate (no HTTP, no auth)
+│   └── src/
+│       ├── lib.rs                    — crate root
+│       ├── worker.rs                 — WASM entry point (cfg-gated)
+│       ├── analytics.rs              — COUNT/SUM/AVG/MIN/MAX analytics engine
+│       ├── engine/
+│       │   ├── mod.rs                — Db struct, open() / open_wasm()
+│       │   ├── operations.rs         — insert_batch, update, delete, versioning, WS broadcast
+│       │   ├── indexing.rs           — auto-indexing, query heatmap
+│       │   ├── types.rs              — LogEntry, DbError
+│       │   └── storage/
+│       │       ├── mod.rs            — StorageBackend trait, startup replay
+│       │       ├── disk.rs           — AsyncDiskStorage, SyncDiskStorage, snapshots
+│       │       ├── encrypted.rs      — XChaCha20-Poly1305 encryption wrapper
+│       │       ├── tiered.rs         — TieredStorage, MmapLogReader
+│       │       └── wasm.rs           — OpfsStorage (browser OPFS backend)
+│       └── handlers/
+│           ├── mod.rs
+│           ├── process_get.rs        — GET handler (query, field selection, joins, pagination)
+│           ├── process_set.rs        — SET handler (insert/upsert, extends resolution)
+│           ├── process_update.rs     — UPDATE handler (partial merge, $unset)
+│           ├── process_delete.rs     — DELETE handler (single, batch, drop)
+│           └── process_analytics.rs  — analytics handler (reserved for future use)
+│
+├── moltendb-auth/                    — identity crate (JWT, Argon2, UserStore)
+│   └── src/
+│       └── lib.rs                    — JWT minting/validation, password hashing, UserStore
+│
+├── moltendb-server/                  — network crate (Axum, TLS, CLI, rate limiting)
+│   ├── src/
+│   │   ├── main.rs                   — server entry point, router, middleware, CLI config
+│   │   ├── lib.rs                    — library root (re-exports for integration tests)
+│   │   ├── validation.rs             — input validation (collection names, depth, size)
+│   │   └── rate_limit.rs             — per-IP sliding window rate limiter
+│   ├── tests/
+│   │   └── integration.rs            — 56 integration tests
+│   └── examples/
+│       ├── generate_stress_data.rs   — generates 100 000 synthetic documents
+│       ├── stress_insert.rs          — bulk-inserts the dataset into a live server
+│       └── stress_fetch.rs           — fires concurrent GET requests, reports latency percentiles
+│
+├── tests/
+│   └── requests.http                 — 57+ documented example requests for every endpoint
+├── pkg/                              — generated WASM package (wasm-pack output)
+└── assets/
+    └── logo.png
 ```
 
 ---
@@ -613,7 +699,6 @@ MoltenDB is currently in **Beta**. The core engine is stable, fast, and feature-
 Because I am a solo developer and I don't make any money from this project (yet?), my personal life comes first. I am moving at a sustainable pace to ensure the architecture stays clean and I don't burn out. Instead of locking into a rigid feature timeline, development is focused on three major architectural themes. **If you need a specific feature to adopt MoltenDB, please open a GitHub Issue or vote on existing ones so it gets prioritized!**
 
 ### 1. Scaling & Ecosystem
-- **Multi-Tab WASM:** Cross-tab synchronization using the Leader Election pattern so multiple browser tabs can seamlessly share the OPFS engine without locking conflicts.
 - **Mobile Native Modules:** Compiling the exact same Rust core to run natively on iOS and Android (via FFI/JNI). This will bring blazing-fast, local-first embedded databases to React Native and Flutter.
 - **Language Clients:** Official transport drivers for Python, Go, and Swift.
 - **Data Portability:** Built-in, zero-friction utilities to export your entire database to standard JSON and CSV formats. No vendor lock-in.
