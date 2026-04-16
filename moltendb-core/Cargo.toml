@@ -1,6 +1,6 @@
 [package]
 name = "moltendb-core"
-version = "0.2.0-beta.3"
+version = "0.2.0-beta.4"
 edition = "2024"
 authors = ["Maximilian Both <maximilian.both27@outlook.com>"]
 description = "MoltenDB core engine — in-memory DashMap storage, WAL persistence, query evaluation. No HTTP, no auth."
