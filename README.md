@@ -51,7 +51,7 @@ The heart of MoltenDB. Contains the in-memory `DashMap` store, the append-only W
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "0.2.0-beta.1"
+moltendb-core = "0.2.0-beta.2"
 ```
 
 ```rust
@@ -161,7 +161,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "0.2.0-beta.1"
+moltendb-core = "0.2.0-beta.2"
 ```
 
 ### Download Pre-built Binaries
