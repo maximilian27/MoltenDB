@@ -14,7 +14,7 @@ name = "moltendb_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-moltendb-core = { version = "0.2.0-beta.4", path = "../moltendb-core" }
+moltendb-core = { version = "0.3.0-beta.0", path = "../moltendb-core" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
