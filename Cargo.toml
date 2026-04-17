@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "moltendb-core",
+    "moltendb-wasm",
     "moltendb-server",
     "moltendb-auth",
 ]
