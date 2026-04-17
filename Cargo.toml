@@ -1,7 +1,15 @@
 [workspace]
 members = [
     "moltendb-core",
+    "moltendb-wasm",
     "moltendb-server",
     "moltendb-auth",
 ]
 resolver = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

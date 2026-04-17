@@ -1,3 +1,25 @@
+# [0.2.0-beta.4] (2026-04-17)
+
+
+### Architecture
+
+* **`moltendb-wasm` extracted as a dedicated crate** — WASM bindings (`WorkerDb`, `wasm-bindgen` glue) have been moved out of `moltendb-core` into a new `moltendb-wasm` crate. `moltendb-core` is now a pure `rlib` with zero WASM dependencies; `moltendb-wasm` is the thin `cdylib` browser adapter. The workspace now has four members: `moltendb-core`, `moltendb-wasm`, `moltendb-auth`, `moltendb-server`.
+* **Handler and validation deduplication** — `handlers/` and `validation.rs` were duplicated across `moltendb-core` and `moltendb-server`. The server-side copies have been deleted; `moltendb-server` now consumes `moltendb_core::handlers` and `moltendb_core::validation` directly. Single source of truth.
+* **Workspace-level release profile** — `[profile.release]` (`opt-level = "z"`, `lto = true`, `codegen-units = 1`, `strip = true`, `panic = "abort"`) moved to the root `Cargo.toml` so it applies uniformly to all crates including the WASM build.
+
+
+### Bug Fixes
+
+* **WASM async constructor deprecation** — replaced `#[wasm_bindgen(constructor)] async fn new(...)` with `#[wasm_bindgen] async fn create(...)`. Async constructors produce invalid TypeScript bindings and are being removed from `wasm-bindgen`. JS callers update from `await new WorkerDb(name)` to `await WorkerDb.create(name)`.
+
+
+### CI/CD
+
+* **`moltendb-web-sync.yml`** — build command updated to `wasm-pack build moltendb-wasm --target web`; source path updated to `core-repo/moltendb-wasm/pkg`; artifact filenames updated to `moltendb_core.*` / `moltendb_core_bg.*` (preserved via `[lib] name = "moltendb_core"` in `moltendb-wasm/Cargo.toml`).
+* **`changelog-and-auto-tag.yml`** — version now extracted from `moltendb-server/Cargo.toml` (root workspace manifest has no `version` field).
+* **`release.yml`** — build command updated to `cargo build --release --package moltendb-server`.
+
+
 # [0.2.0-beta.1] (2026-04-16)
 
 
