@@ -11,7 +11,7 @@ repository = "https://github.com/maximilian27/MoltenDB"
 # Keep generated JS/WASM filenames identical to the previous moltendb-core build
 # so the web repo and CI sync workflow need zero changes.
 name = "moltendb_core"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 moltendb-core = { version = "0.3.0-beta.0", path = "../moltendb-core" }

@@ -27,6 +27,8 @@
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
+#![cfg(target_arch = "wasm32")]
+
 // wasm_bindgen::prelude::* imports the core WASM-JS interop tools:
 //   - `#[wasm_bindgen]` attribute — marks structs/functions as callable from JS.
 //   - `JsValue` — a generic JavaScript value (string, number, object, null, etc.).
