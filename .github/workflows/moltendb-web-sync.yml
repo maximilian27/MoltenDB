@@ -30,12 +30,12 @@ jobs:
 
       - name: Build WASM
         working-directory: ./core-repo
-        run: wasm-pack build moltendb-core --target web
+        run: wasm-pack build moltendb-wasm --target web
 
       - name: Surgical Artifact Sync
         run: |
           # Define exact paths to prevent typos
-          SRC_PKG="core-repo/moltendb-core/pkg"
+          SRC_PKG="core-repo/moltendb-wasm/pkg"
           DEST_CORE="web-repo/packages/core"
           DEST_WASM="$DEST_CORE/src/wasm"
           
