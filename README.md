@@ -28,23 +28,38 @@ MoltenDB is a JSON document database written in Rust that compiles to both a nat
 
 ## Architecture
 
-MoltenDB is structured as a **Cargo Workspace** with three independent crates. Each crate has a single, well-defined responsibility and can be used in isolation.
+MoltenDB is structured as a **Cargo Workspace** with four independent crates. Each crate has a single, well-defined responsibility and can be used in isolation.
 
 ```
 MoltenDB/
-├── moltendb-core/     — pure engine: no HTTP, no auth, no JWT
+├── moltendb-core/     — pure engine: no HTTP, no auth, no JWT, no WASM bindings
+├── moltendb-wasm/     — browser adapter: wasm-bindgen glue, WorkerDb, OPFS
 ├── moltendb-auth/     — identity layer: JWT, Argon2, UserStore
 └── moltendb-server/   — network layer: Axum, TLS, CORS, CLI config
 ```
 
 ### `moltendb-core` — The Engine
 
-The heart of MoltenDB. Contains the in-memory `DashMap` store, the append-only WAL, all storage backends (disk, tiered, encrypted, OPFS), the query evaluator (`$in`, `$gt`, joins, field projection), auto-indexing, and the WASM worker entry point.
+The heart of MoltenDB. Contains the in-memory `DashMap` store, the append-only WAL, all storage backends (disk, tiered, encrypted, OPFS), the query evaluator (`$in`, `$gt`, joins, field projection), auto-indexing, and all handler and validation logic shared between the server and the WASM adapter.
 
-**Zero knowledge of HTTP, TCP, JWT, or users.** This crate compiles to:
+**Zero knowledge of HTTP, TCP, JWT, users, or WASM bindings.** This crate compiles to:
 - A native `rlib` for embedding in other Rust projects
 - A `cdylib` for FFI (mobile, Tauri, etc.)
-- A WASM module via `wasm-pack` for browser deployment
+
+### `moltendb-wasm` — The Browser Adapter
+
+A thin `cdylib` crate that wraps `moltendb-core` and exposes it to JavaScript via `wasm-bindgen`. Contains `WorkerDb` — the WASM entry point used by the Web Worker — and all browser-specific glue (`web-sys`, `js-sys`, OPFS access). Built with `wasm-pack build moltendb-wasm --target web`.
+
+**JS initialisation** uses a named static factory (not an async constructor, which produces invalid TypeScript):
+```js
+// ✅ correct
+const db = await WorkerDb.create("my_database");
+
+// ❌ deprecated — do not use
+const db = await new WorkerDb("my_database");
+```
+
+Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-server` have a clean, WASM-free dependency tree.
 
 **Use it as an embedded database** — add it to any Rust project with no HTTP overhead:
 
@@ -287,17 +302,17 @@ Authorization: Bearer <token>
 
 **All query properties:**
 
-| Property | Type | Description |
-|---|---|---|
-| `collection` | string | **Required.** The collection to query. |
-| `keys` | string \| string[] | Fetch one or more documents by key. Returns the document directly for a single string; returns an array for an array of keys. |
-| `where` | object | Filter documents. All conditions at the top level are ANDed together. |
+| Property | Type | Description                                                                                                                                |
+|---|---|--------------------------------------------------------------------------------------------------------------------------------------------|
+| `collection` | string | **Required.** The collection to query.                                                                                                     |
+| `keys` | string \| string[] | Fetch one or more documents by key. Returns the document directly for a single string; returns an array for an array of keys.              |
+| `where` | object | Filter documents. All conditions at the top level are ANDed together.                                                                      |
 | `fields` | string[] | **GraphQL-style field selection.** Return only these fields. Dot-notation selects nested fields. Mutually exclusive with `excludedFields`. |
-| `excludedFields` | string[] | Return everything *except* these fields. Mutually exclusive with `fields`. |
-| `joins` | object[] | Cross-collection joins. Each element is `{ "alias": "<name>", "from": "<collection>", "on": "<foreign_key_field>", "fields": [...] }`. |
-| `sort` | object[] | Sort results. Each spec is `{ "field": "<name>", "order": "asc" \| "desc" }`. Multiple specs applied in priority order. |
-| `count` | number | Maximum number of results to return (applied after filtering and sorting). |
-| `offset` | number | Number of results to skip (for stable pagination, applied after sorting). |
+| `excludedFields` | string[] | Return everything *except* these fields. Mutually exclusive with `fields`.                                                                 |
+| `joins` | object[] | Cross-collection joins. Each element is `{ "<name>": { "from": "<collection>", "on": "<foreign_key_field>", "fields": [...] } }`.          |
+| `sort` | object[] | Sort results. Each spec is `{ "field": "<name>", "order": "asc" \| "desc" }`. Multiple specs applied in priority order.                    |
+| `count` | number | Maximum number of results to return (applied after filtering and sorting).                                                                 |
+| `offset` | number | Number of results to skip (for stable pagination, applied after sorting).                                                                  |
 
 > **Response shape:** All multi-document queries return a **JSON array** where each element includes a `_key` field with the document ID. The only exception is a single-key lookup (`"keys": "lp2"`) which returns the document directly.
 
@@ -371,8 +386,20 @@ Authorization: Bearer <token>
   "collection": "laptops",
   "fields": ["brand", "model", "price"],
   "joins": [
-    { "alias": "ram",    "from": "memory",  "on": "memory_id",  "fields": ["capacity_gb", "type"] },
-    { "alias": "screen", "from": "display", "on": "display_id", "fields": ["size_inch", "panel", "refresh_hz"] }
+    {  
+      "ram": { 
+        "from": "memory", 
+        "on": "memory_id", 
+        "fields": ["capacity_gb", "type"] 
+      }
+    },
+    { 
+      "screen": { 
+        "from": "display",
+        "on": "display_id", 
+        "fields": ["size_inch", "panel", "refresh_hz"]
+      }
+    }
   ]
 }
 ```
@@ -477,7 +504,11 @@ const results = await client.collection('laptops')
   .get()
   .where({ brand: 'Apple', in_stock: true })
   .fields(['brand', 'model', 'price'])
-  .joins([{ alias: 'screen', from: 'display', on: 'display_id', fields: ['panel', 'refresh_hz'] }])
+  .joins([{ 
+    screen: { 
+      from: 'display', on: 'display_id', fields: ['panel', 'refresh_hz'] 
+    }
+  }])
   .sort([{ field: 'price', order: 'asc' }])
   .count(5)
   .exec();
@@ -646,7 +677,7 @@ MoltenDB/
 │   └── src/
 │       ├── lib.rs                    — crate root
 │       ├── worker.rs                 — WASM entry point (cfg-gated)
-│       ├── analytics.rs              — COUNT/SUM/AVG/MIN/MAX analytics engine
+│       ├── analytics.rs              — COUNT/SUM/AVG/MIN/MAX analytics engine (⚠️ under development)
 │       ├── engine/
 │       │   ├── mod.rs                — Db struct, open() / open_wasm()
 │       │   ├── operations.rs         — insert_batch, update, delete, versioning, WS broadcast
@@ -664,7 +695,7 @@ MoltenDB/
 │           ├── process_set.rs        — SET handler (insert/upsert, extends resolution)
 │           ├── process_update.rs     — UPDATE handler (partial merge, $unset)
 │           ├── process_delete.rs     — DELETE handler (single, batch, drop)
-│           └── process_analytics.rs  — analytics handler (reserved for future use)
+│           └── process_analytics.rs  — analytics handler (⚠️ under development, not ready for use)
 │
 ├── moltendb-auth/                    — identity crate (JWT, Argon2, UserStore)
 │   └── src/
@@ -706,7 +737,7 @@ Because I am a solo developer and I don't make any money from this project (yet?
 ### 2. Distributed Systems & Core
 - **Robust Sync:** Two-way browser ↔ server delta sync with automatic conflict resolution (server-wins on `_v` collision).
 - **Transactions:** ACID multi-key writes with optimistic locking (`BEGIN`, `COMMIT`, `ROLLBACK`).
-- **Hardened Analytics:** Expanding and rigorously testing the `COUNT/SUM/AVG` analytics engine, accompanied by a comprehensive, interactive live demo.
+- **Hardened Analytics:** The `COUNT/SUM/AVG/MIN/MAX` analytics engine exists in the codebase but is **currently under development and not ready for production use**. Expanding and rigorously testing it, accompanied by a comprehensive, interactive live demo, is a key roadmap item.
 
 ### 3. Security, Tooling & Polish
 - **Schema Validation:** Optional, opt-in per-collection type constraints (enforcing strings, numbers, required fields).

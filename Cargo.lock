@@ -416,7 +416,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1439,7 +1439,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-auth"
-version = "0.2.0-beta.4"
+version = "0.3.0-beta.4"
 dependencies = [
  "axum",
  "bcrypt",
@@ -1451,21 +1451,18 @@ dependencies = [
 
 [[package]]
 name = "moltendb-core"
-version = "0.2.0-beta.4"
+version = "0.3.0-beta.4"
 dependencies = [
  "argon2",
  "base64",
  "bincode",
  "chacha20poly1305",
- "console_error_panic_hook",
  "dashmap",
- "getrandom 0.2.17",
  "js-sys",
  "memmap2",
  "rand_core 0.6.4",
  "regex",
  "serde",
- "serde-wasm-bindgen",
  "serde_json",
  "tokio",
  "tracing",
@@ -1478,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-server"
-version = "0.2.0-beta.4"
+version = "0.3.0-beta.4"
 dependencies = [
  "argon2",
  "axum",
@@ -1507,6 +1504,22 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "web-time",
+]
+
+[[package]]
+name = "moltendb-wasm"
+version = "0.3.0-beta.4"
+dependencies = [
+ "console_error_panic_hook",
+ "getrandom 0.2.17",
+ "js-sys",
+ "moltendb-core",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
