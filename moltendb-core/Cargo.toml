@@ -9,6 +9,7 @@ repository = "https://github.com/maximilian27/MoltenDB"
 keywords = ["nosql", "embedded", "local-first", "wasm", "json"]
 categories = ["database-implementations", "wasm", "data-structures"]
 
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

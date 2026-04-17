@@ -24,13 +24,6 @@ path = "examples/stress_insert.rs"
 name = "stress_fetch"
 path = "examples/stress_fetch.rs"
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-panic = "abort"
-
 [dev-dependencies]
 indicatif = "0.17"
 colored = "2"

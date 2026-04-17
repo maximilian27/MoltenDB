@@ -21,9 +21,8 @@
 // Declare the modules that make up the server.
 // Each `mod X` tells Rust to look for src/X.rs and compile it as part of this crate.
 use moltendb_auth as auth; // JWT authentication, user store, auth middleware
-mod handlers;    // Business logic for each API endpoint (process_set, process_get, etc.)
+use moltendb_core::handlers;   // Business logic for each API endpoint (process_set, process_get, etc.)
 mod rate_limit;  // Per-IP sliding-window rate limiter
-mod validation;  // Input validation (collection names, key names, payload size, etc.)
 
 // Core engine — imported from the moltendb-core crate
 use moltendb_core::engine;
