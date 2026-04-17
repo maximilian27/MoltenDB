@@ -28,23 +28,38 @@ MoltenDB is a JSON document database written in Rust that compiles to both a nat
 
 ## Architecture
 
-MoltenDB is structured as a **Cargo Workspace** with three independent crates. Each crate has a single, well-defined responsibility and can be used in isolation.
+MoltenDB is structured as a **Cargo Workspace** with four independent crates. Each crate has a single, well-defined responsibility and can be used in isolation.
 
 ```
 MoltenDB/
-├── moltendb-core/     — pure engine: no HTTP, no auth, no JWT
+├── moltendb-core/     — pure engine: no HTTP, no auth, no JWT, no WASM bindings
+├── moltendb-wasm/     — browser adapter: wasm-bindgen glue, WorkerDb, OPFS
 ├── moltendb-auth/     — identity layer: JWT, Argon2, UserStore
 └── moltendb-server/   — network layer: Axum, TLS, CORS, CLI config
 ```
 
 ### `moltendb-core` — The Engine
 
-The heart of MoltenDB. Contains the in-memory `DashMap` store, the append-only WAL, all storage backends (disk, tiered, encrypted, OPFS), the query evaluator (`$in`, `$gt`, joins, field projection), auto-indexing, and the WASM worker entry point.
+The heart of MoltenDB. Contains the in-memory `DashMap` store, the append-only WAL, all storage backends (disk, tiered, encrypted, OPFS), the query evaluator (`$in`, `$gt`, joins, field projection), auto-indexing, and all handler and validation logic shared between the server and the WASM adapter.
 
-**Zero knowledge of HTTP, TCP, JWT, or users.** This crate compiles to:
+**Zero knowledge of HTTP, TCP, JWT, users, or WASM bindings.** This crate compiles to:
 - A native `rlib` for embedding in other Rust projects
 - A `cdylib` for FFI (mobile, Tauri, etc.)
-- A WASM module via `wasm-pack` for browser deployment
+
+### `moltendb-wasm` — The Browser Adapter
+
+A thin `cdylib` crate that wraps `moltendb-core` and exposes it to JavaScript via `wasm-bindgen`. Contains `WorkerDb` — the WASM entry point used by the Web Worker — and all browser-specific glue (`web-sys`, `js-sys`, OPFS access). Built with `wasm-pack build moltendb-wasm --target web`.
+
+**JS initialisation** uses a named static factory (not an async constructor, which produces invalid TypeScript):
+```js
+// ✅ correct
+const db = await WorkerDb.create("my_database");
+
+// ❌ deprecated — do not use
+const db = await new WorkerDb("my_database");
+```
+
+Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-server` have a clean, WASM-free dependency tree.
 
 **Use it as an embedded database** — add it to any Rust project with no HTTP overhead:
 
