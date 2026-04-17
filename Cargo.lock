@@ -1439,7 +1439,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-auth"
-version = "0.3.0-beta.0"
+version = "0.3.0-beta.1"
 dependencies = [
  "axum",
  "bcrypt",
@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-core"
-version = "0.3.0-beta.0"
+version = "0.3.0-beta.1"
 dependencies = [
  "argon2",
  "base64",
@@ -1475,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-server"
-version = "0.3.0-beta.0"
+version = "0.3.0-beta.1"
 dependencies = [
  "argon2",
  "axum",
@@ -1508,7 +1508,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-wasm"
-version = "0.3.0-beta.0"
+version = "0.3.0-beta.1"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.17",
