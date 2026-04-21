@@ -17,8 +17,7 @@
 //      Supports: $eq, $ne, $gt, $gte, $lt, $lte, $contains, $or, $and, and implicit equality.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Value = dynamically-typed JSON value.
-// Map = serde_json's ordered map type (used for JSON objects).
+use crate::engine::DbError;
 use serde_json::{Value, Map};
 
 /// Select only the specified fields from a document (field projection).
@@ -177,11 +176,12 @@ fn remove_nested_value(target: &mut Map<String, Value>, parts: &[&str]) {
 ///   String:     $contains / $ct
 ///   Logical:    $or (array of sub-queries, any must match)
 ///               $and (array of sub-queries, all must match)
-pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
+pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
     // If the query is not an object (e.g. null or a string), it passes automatically.
     let query_obj = match query.as_object() {
         Some(obj) => obj,
-        None => return true, // No conditions = everything matches
+        // No conditions = everything matches
+        None => return Ok(true),
     };
 
     // Every condition in the query object must pass (implicit AND at the top level).
@@ -191,18 +191,27 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
         if key == "$or" {
             let sub_queries = match condition.as_array() {
                 Some(arr) => arr,
-                None => return false,
+                None => return Err(DbError::InvalidQuery("$or expects an array".to_string())),
             };
-            if !sub_queries.iter().any(|sub| evaluate_where(doc, sub)) { return false; }
+            let mut any_passed = false;
+            for sub in sub_queries {
+                if evaluate_where(doc, sub)? {
+                    any_passed = true;
+                    break;
+                }
+            }
+            if !any_passed { return Ok(false); }
             continue;
         }
 
         if key == "$and" {
             let sub_queries = match condition.as_array() {
                 Some(arr) => arr,
-                None => return false,
+                None => return Err(DbError::InvalidQuery("$and expects an array".to_string())),
             };
-            if !sub_queries.iter().all(|sub| evaluate_where(doc, sub)) { return false; }
+            for sub in sub_queries {
+                if !evaluate_where(doc, sub)? { return Ok(false); }
+            }
             continue;
         }
 
@@ -222,10 +231,10 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
                     (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
                     _ => dv == condition,
                 };
-                if !matches { return false; }
+                if !matches { return Ok(false); }
             } else {
                 // The field doesn't exist in the document — condition fails.
-                return false;
+                return Ok(false);
             }
             continue;
         }
@@ -233,12 +242,14 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
         // ── Operator matching ─────────────────────────────────────────────────
         // { "age": { "$gt": 18, "$lt": 65 } }
         // All operators in the condition object must pass.
-        let cond_obj = condition.as_object().unwrap();
+        let cond_obj = condition.as_object().ok_or_else(|| {
+            DbError::InvalidQuery(format!("Field condition for '{}' must be an object or plain value", key))
+        })?;
         // Use Null as the document value if the field doesn't exist.
         let doc_val_ref = doc_val_opt.as_ref().unwrap_or(&Value::Null);
 
         for (op, op_val) in cond_obj {
-            let passed = match op.as_str() {
+            let passed: bool = match op.as_str() {
                 // ── Equality operators ────────────────────────────────────────
                 // Both shorthand ($eq) and verbose ($equals) are supported.
                 "$eq" | "$equals" => match (doc_val_ref, op_val) {
@@ -272,17 +283,6 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
 
                 // ── Contains operator ─────────────────────────────────────────
                 // Works on both strings (substring check) AND arrays (membership check).
-                //
-                // String example:
-                //   { "role": { "$contains": "admin" } }
-                //   → true if role is "superadmin", "admin", etc.
-                //
-                // Array example:
-                //   { "colors": { "$contains": "red" } }
-                //   → true if the colors array contains the value "red"
-                //   → O(n) scan over the array elements (use object-map pattern for O(1))
-                //
-                // Both shorthand ($ct) and verbose ($contains) are supported.
                 "$contains" | "$ct" => {
                     match doc_val_ref {
                         // String case: check if the document string contains the needle string.
@@ -294,9 +294,7 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
                             }
                         }
                         // Array case: check if any element in the array equals the target value.
-                        // `arr.contains(op_val)` does a deep equality check on each element.
-                        // Works for any JSON value type: strings, numbers, booleans, objects.
-                        Value::Array(arr) => arr.contains(op_val),
+                        Value::Array(arr) => arr.contains(&op_val),
                         // Any other type (number, object, null) — condition fails.
                         _ => false,
                     }
@@ -305,61 +303,115 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> bool {
 
 
                 // ── In operator ───────────────────────────────────────────────────
-                // Checks if the document field value is one of the values in a list.
-                //
-                // Example:
-                //   { "role": { "$in": ["admin", "superadmin"] } }
-                //   → true if role is "admin" OR "superadmin"
-                //
-                // Works for any JSON value type: strings, numbers, booleans.
-                // The operator value must be an array — if it's not, the condition fails.
-                //
                 // Both shorthand ($in) and verbose ($oneOf) are supported.
                 "$in" | "$oneOf" => {
                     if let Some(allowed) = op_val.as_array() {
                         // Check if the document value matches any element in the list.
-                        // String comparisons are case-insensitive.
                         allowed.iter().any(|v| match (doc_val_ref, v) {
                             (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
                             _ => doc_val_ref == v,
                         })
                     } else {
-                        // The operator value is not an array — condition fails.
-                        false
+                        // The operator value is not an array — fail.
+                        return Err(DbError::InvalidQuery(format!("{} expects an array", op)));
                     }
                 },
 
                 // ── Not-in operator ───────────────────────────────────────────────────
-                // The inverse of $in — true if the field value is NOT in the list.
-                //
-                // Example:
-                //   { "role": { "$nin": ["banned", "suspended"] } }
-                //   → true if role is anything except "banned" or "suspended"
-                //
                 // Both shorthand ($nin) and verbose ($notIn) are supported.
                 "$nin" | "$notIn" => {
                     if let Some(excluded) = op_val.as_array() {
                         // True only if the document value is NOT in the exclusion list.
-                        // String comparisons are case-insensitive.
                         !excluded.iter().any(|v| match (doc_val_ref, v) {
                             (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
                             _ => doc_val_ref == v,
                         })
                     } else {
-                        // The operator value is not an array — condition fails.
-                        false
+                        // The operator value is not an array — fail.
+                        return Err(DbError::InvalidQuery(format!("{} expects an array", op)));
                     }
                 },
 
                 // Unknown operator — fail the condition rather than silently passing.
-                _ => false,
+                _ => return Err(DbError::InvalidQuery(format!("Unknown operator: {}", op))),
             };
 
             // If any operator in the condition object fails, the whole condition fails.
-            if !passed { return false; }
+            if !passed { return Ok(false); }
         }
     }
 
     // All conditions passed.
-    true
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_evaluate_where_basic() {
+        let doc = json!({ "name": "Alice", "age": 30 });
+        
+        // Simple equality
+        assert!(evaluate_where(&doc, &json!({ "name": "Alice" })).unwrap());
+        assert!(!evaluate_where(&doc, &json!({ "name": "Bob" })).unwrap());
+        
+        // Explicit $eq
+        assert!(evaluate_where(&doc, &json!({ "name": { "$eq": "Alice" } })).unwrap());
+        
+        // Case-insensitivity for strings
+        assert!(evaluate_where(&doc, &json!({ "name": "alice" })).unwrap());
+    }
+
+    #[test]
+    fn test_evaluate_where_numeric() {
+        let doc = json!({ "age": 30 });
+        
+        assert!(evaluate_where(&doc, &json!({ "age": { "$gt": 20 } })).unwrap());
+        assert!(evaluate_where(&doc, &json!({ "age": { "$gte": 30 } })).unwrap());
+        assert!(evaluate_where(&doc, &json!({ "age": { "$lt": 40 } })).unwrap());
+        assert!(evaluate_where(&doc, &json!({ "age": { "$lte": 30 } })).unwrap());
+        
+        assert!(!evaluate_where(&doc, &json!({ "age": { "$gt": 30 } })).unwrap());
+    }
+
+    #[test]
+    fn test_evaluate_where_invalid_ops() {
+        let doc = json!({ "name": "Alice" });
+        
+        let res = evaluate_where(&doc, &json!({ "name": { "$invalid": "val" } }));
+        assert!(res.is_err());
+        if let Err(DbError::InvalidQuery(msg)) = res {
+            assert!(msg.contains("Unknown operator"));
+        } else {
+            panic!("Expected InvalidQuery error");
+        }
+    }
+
+    #[test]
+    fn test_evaluate_where_logical() {
+        let doc = json!({ "name": "Alice", "age": 30 });
+        
+        // $or
+        assert!(evaluate_where(&doc, &json!({ "$or": [{ "name": "Alice" }, { "name": "Bob" }] })).unwrap());
+        assert!(evaluate_where(&doc, &json!({ "$or": [{ "name": "Bob" }, { "age": 30 }] })).unwrap());
+        assert!(!evaluate_where(&doc, &json!({ "$or": [{ "name": "Bob" }, { "age": 20 }] })).unwrap());
+        
+        // $and
+        assert!(evaluate_where(&doc, &json!({ "$and": [{ "name": "Alice" }, { "age": 30 }] })).unwrap());
+        assert!(!evaluate_where(&doc, &json!({ "$and": [{ "name": "Alice" }, { "age": 20 }] })).unwrap());
+    }
+
+    #[test]
+    fn test_evaluate_where_in_nin() {
+        let doc = json!({ "role": "admin" });
+        
+        assert!(evaluate_where(&doc, &json!({ "role": { "$in": ["admin", "user"] } })).unwrap());
+        assert!(!evaluate_where(&doc, &json!({ "role": { "$in": ["guest", "user"] } })).unwrap());
+        
+        assert!(evaluate_where(&doc, &json!({ "role": { "$nin": ["guest", "user"] } })).unwrap());
+        assert!(!evaluate_where(&doc, &json!({ "role": { "$nin": ["admin", "user"] } })).unwrap());
+    }
 }
