@@ -283,7 +283,10 @@ impl WorkerDb {
         };
 
         // Execute the analytics query against the in-memory database.
-        let result = analytics::execute_query(&self.db, &query);
+        let result = match analytics::execute_query(&self.db, &query) {
+            Ok(res) => res,
+            Err(e) => return json!({ "error": format!("Analytics failed: {}", e) }).to_string(),
+        };
 
         // Serialize the result to a JSON string.
         // We manually construct the output shape to match what the dashboard expects.

@@ -67,7 +67,8 @@ pub fn index_doc(
         if index_name.starts_with(&format!("{}:", collection)) {
             // Extract the field name from the index name (part after the colon).
             // e.g. "users:role" → "role", "users:meta.logins" → "meta.logins"
-            let field_name = index_name.split(':').nth(1).unwrap();
+            let field_name = index_name.split(':').nth(1).unwrap_or("");
+            if field_name.is_empty() { continue; }
 
             // Use dot-notation to extract the field value from the document.
             // e.g. field "meta.logins" on { meta: { logins: 10 } } → 10

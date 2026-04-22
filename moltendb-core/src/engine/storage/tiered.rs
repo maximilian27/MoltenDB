@@ -181,10 +181,10 @@ impl MmapLogReader {
 /// beyond HOT_TIER_MAX_BYTES, compact() promotes it to the cold tier.
 ///
 /// # File layout on disk
-/// ```
-/// my_database.log          ← hot tier (active writes, small)
-/// my_database.cold.log     ← cold tier (archived, read-only after promotion)
-/// my_database.log.snapshot.bin  ← binary snapshot of the hot tier
+/// ```text
+/// my_database.log          <- hot tier (active writes, small)
+/// my_database.cold.log     <- cold tier (archived, read-only after promotion)
+/// my_database.log.snapshot.bin  <- binary snapshot of the hot tier
 /// ```
 pub struct TieredStorage {
     /// The hot-tier writer. All new writes go here via AsyncDiskStorage's

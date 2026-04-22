@@ -23,7 +23,10 @@ pub fn process_analytics(db: &engine::Db, payload: &Value, max_body_size: usize)
     };
 
     // Execute the analytics query (COUNT, SUM, AVG, etc.) against the database.
-    let result = analytics::execute_query(db, &query);
+    let result = match analytics::execute_query(db, &query) {
+        Ok(res) => res,
+        Err(e)  => return json!({ "error": format!("Analytics execution failed: {}", e) }),
+    };
 
     // Return the result along with execution metadata for performance monitoring.
     json!({

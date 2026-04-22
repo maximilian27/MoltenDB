@@ -82,6 +82,13 @@ pub enum DbError {
     /// error — for example, when the MPSC channel is closed (server shutting
     /// down) or when an OPFS browser API call fails (returns a JS error).
     WriteError,
+
+    /// An invalid query operator or structure was encountered.
+    InvalidQuery(String),
+
+    /// A query attempted an operation on an incompatible data type
+    /// (e.g. $gt on a string that isn't a number).
+    TypeMismatch(String),
 }
 
 /// Implement Display so DbError can be printed with `{}` formatting.
@@ -94,6 +101,8 @@ impl fmt::Display for DbError {
             DbError::Serialization(err) => write!(f, "Data Serialization Error: {}", err),
             DbError::LockPoisoned => write!(f, "Internal thread lock was poisoned"),
             DbError::WriteError => write!(f, "Failed to send data to storage backend"),
+            DbError::InvalidQuery(msg) => write!(f, "Invalid Query: {}", msg),
+            DbError::TypeMismatch(msg) => write!(f, "Type Mismatch: {}", msg),
         }
     }
 }

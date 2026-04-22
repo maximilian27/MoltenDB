@@ -821,7 +821,7 @@ fn test_analytics_count() {
         "collection": "laptops",
         "metric": { "type": "COUNT" }
     })).unwrap();
-    let result = execute_query(&db, &q);
+    let result = execute_query(&db, &q).unwrap();
     assert_eq!(result.result, serde_json::json!(6));
 }
 
@@ -834,7 +834,7 @@ fn test_analytics_sum() {
         "collection": "laptops",
         "metric": { "type": "SUM", "field": "price" }
     })).unwrap();
-    let result = execute_query(&db, &q);
+    let result = execute_query(&db, &q).unwrap();
     // 1499+3499+1699+1899+2499+849 = 11944
     assert_eq!(result.result, serde_json::json!(11944.0));
 }
@@ -848,7 +848,7 @@ fn test_analytics_avg() {
         "collection": "laptops",
         "metric": { "type": "AVG", "field": "price" }
     })).unwrap();
-    let result = execute_query(&db, &q);
+    let result = execute_query(&db, &q).unwrap();
     let avg = result.result.as_f64().unwrap();
     assert!((avg - 11944.0 / 6.0).abs() < 0.01);
 }
@@ -866,8 +866,8 @@ fn test_analytics_min_max() {
         "collection": "laptops",
         "metric": { "type": "MAX", "field": "price" }
     })).unwrap();
-    assert_eq!(execute_query(&db, &min_q).result, json!(849.0));
-    assert_eq!(execute_query(&db, &max_q).result, json!(3499.0));
+    assert_eq!(execute_query(&db, &min_q).unwrap().result, json!(849.0));
+    assert_eq!(execute_query(&db, &max_q).unwrap().result, json!(3499.0));
 }
 
 #[test]
@@ -880,6 +880,6 @@ fn test_analytics_with_where() {
         "metric": { "type": "COUNT" },
         "where": { "in_stock": true }
     })).unwrap();
-    let result = execute_query(&db, &q);
+    let result = execute_query(&db, &q).unwrap();
     assert_eq!(result.result, json!(5)); // all except lp4
 }
