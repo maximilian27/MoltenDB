@@ -413,4 +413,28 @@ impl StorageBackend for TieredStorage {
 
         Ok(total)
     }
+
+    /// Read exactly `length` bytes from the log at `offset`.
+    ///
+    /// In TieredStorage, we first check if the offset belongs to the cold log.
+    /// If not, we fall back to the hot log.
+    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
+        use std::io::{Read, Seek, SeekFrom};
+        
+        let cold_size = std::fs::metadata(&self.cold_path).map(|m| m.len()).unwrap_or(0);
+
+        if offset < cold_size {
+            // Document is in the cold tier.
+            let mut file = File::open(&self.cold_path)?;
+            file.seek(SeekFrom::Start(offset))?;
+            let mut buffer = vec![0u8; length as usize];
+            file.read_exact(&mut buffer)?;
+            Ok(buffer)
+        } else {
+            // Document is in the hot tier.
+            // Note: The offset passed to this function is cumulative (cold + hot).
+            // We must subtract the cold size to get the relative offset in the hot file.
+            self.hot.read_at(offset - cold_size, length)
+        }
+    }
 }

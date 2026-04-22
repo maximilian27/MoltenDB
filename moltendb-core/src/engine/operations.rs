@@ -53,16 +53,32 @@ fn now_iso() -> String {
 ///
 /// Returns `Some(value)` if the document exists, `None` if the collection or
 /// key doesn't exist. This is an O(1) hash map lookup.
+///
+/// In the hybrid Bitcask model, if the document is "Cold", it is fetched from
+/// storage, deserialized, and returned.
 pub fn get(
-    // The full in-memory state: collection name → (key → document value).
-    state: &DashMap<String, DashMap<String, Value>>,
+    // The full in-memory state: collection name → (key → document state).
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    storage: &Arc<dyn StorageBackend>,
     collection: &str,
     key: &str,
 ) -> Option<Value> {
-    // state.get(collection) returns None if the collection doesn't exist.
-    // The `?` operator propagates None immediately (short-circuit).
-    // .map(|v| v.clone()) clones the value out of the DashMap reference guard.
-    state.get(collection)?.get(key).map(|v| v.clone())
+    let col = state.get(collection)?;
+    let doc_state = col.get(key)?;
+    
+    match doc_state.value() {
+        crate::engine::types::DocumentState::Hot(v) => Some(v.clone()),
+        crate::engine::types::DocumentState::Cold(ptr) => {
+            // Fetch from disk.
+            if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length) {
+                // The bytes in the log are a full LogEntry JSON.
+                if let Ok(entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
+                    return Some(entry.value);
+                }
+            }
+            None
+        }
+    }
 }
 
 /// Retrieve all documents in a collection as a HashMap.
@@ -70,15 +86,26 @@ pub fn get(
 /// Returns an empty HashMap if the collection doesn't exist.
 /// This is O(n) in the number of documents — it copies every document.
 pub fn get_all(
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    storage: &Arc<dyn StorageBackend>,
     collection: &str,
 ) -> HashMap<String, Value> {
     let mut results = HashMap::new();
     if let Some(col) = state.get(collection) {
-        // Iterate all key-value pairs in the collection's inner DashMap.
-        // entry.key() and entry.value() return references — we clone to own.
         for entry in col.iter() {
-            results.insert(entry.key().clone(), entry.value().clone());
+            let key = entry.key();
+            match entry.value() {
+                crate::engine::types::DocumentState::Hot(v) => {
+                    results.insert(key.clone(), v.clone());
+                }
+                crate::engine::types::DocumentState::Cold(ptr) => {
+                    if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length) {
+                        if let Ok(log_entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
+                            results.insert(key.clone(), log_entry.value);
+                        }
+                    }
+                }
+            }
         }
     }
     results
@@ -89,16 +116,27 @@ pub fn get_all(
 /// Only returns documents that actually exist — missing keys are silently
 /// skipped. Returns an empty HashMap if the collection doesn't exist.
 pub fn get_batch(
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    storage: &Arc<dyn StorageBackend>,
     collection: &str,
     keys: Vec<String>,
 ) -> HashMap<String, Value> {
     let mut results = HashMap::new();
     if let Some(col) = state.get(collection) {
         for key in keys {
-            // Only insert if the key exists — missing keys are ignored.
-            if let Some(val) = col.get(&key) {
-                results.insert(key, val.clone());
+            if let Some(entry) = col.get(&key) {
+                match entry.value() {
+                    crate::engine::types::DocumentState::Hot(v) => {
+                        results.insert(key, v.clone());
+                    }
+                    crate::engine::types::DocumentState::Cold(ptr) => {
+                        if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length) {
+                            if let Ok(log_entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
+                                results.insert(key, log_entry.value);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -118,81 +156,60 @@ pub fn get_batch(
 /// acceptable because the log is the source of truth and the in-memory state
 /// is rebuilt from it on the next startup.
 pub fn insert_batch(
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-    // The storage backend — could be AsyncDiskStorage, SyncDiskStorage,
-    // EncryptedStorage, or OpfsStorage depending on configuration.
     storage: &Arc<dyn StorageBackend>,
-    // Broadcast channel sender — used to notify WebSocket subscribers of changes.
-    // The `_` prefix on the error means we intentionally ignore send failures
-    // (it's fine if there are no subscribers).
     tx: &tokio::sync::broadcast::Sender<String>,
     collection: &str,
-    items: Vec<(String, Value)>, // list of (key, document) pairs to insert
+    items: Vec<(String, Value)>,
 ) -> Result<(), DbError> {
-    // Get or create the collection's inner DashMap.
-    // entry().or_insert_with() is atomic — safe to call from multiple threads.
     let col = state
         .entry(collection.to_string())
         .or_insert_with(DashMap::new);
 
     for (key, mut value) in items {
-        // ── Versioning + conflict resolution ─────────────────────────────────
-        //
-        // Every document automatically carries three engine-managed fields:
-        //
-        //   _v         — u64 version counter. Starts at 1 on first insert,
-        //                incremented on every subsequent write. Never decreases.
-        //
-        //   createdAt  — ISO 8601 timestamp of the very first insert.
-        //                Immutable — never changed after the document is created.
-        //
-        //   modifiedAt — ISO 8601 timestamp of the most recent write.
-        //                Updated on every insert_batch and update() call.
-        //
-        // Conflict rule (last-write-wins by version):
-        //   If the stored document already has _v >= the incoming _v, we skip
-        //   the write entirely. This prevents an older offline client from
-        //   silently overwriting a newer server-side version when syncing.
-        //
-        //   If the incoming document has no _v field (raw insert from a legacy
-        //   client or requests.http), we always allow the write — no version
-        //   means no conflict check.
         let now = now_iso();
-        if let Some(existing) = col.get(&key) {
-            // Document already exists — check for version conflict.
+        
+        // We need to check the existing document for versioning.
+        // If it's Cold, we MUST fetch it to check _v and createdAt.
+        let mut existing_val = None;
+        if let Some(doc_state) = col.get(&key) {
+            match doc_state.value() {
+                crate::engine::types::DocumentState::Hot(v) => {
+                    existing_val = Some(v.clone());
+                }
+                crate::engine::types::DocumentState::Cold(ptr) => {
+                    if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length) {
+                        if let Ok(entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
+                            existing_val = Some(entry.value);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(existing) = existing_val {
             let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
             let incoming_v = value.get("_v").and_then(|v| v.as_u64());
 
             if let Some(iv) = incoming_v {
                 if iv <= existing_v {
-                    // Incoming version is not newer — server wins, skip this key.
-                    debug!(
-                        "⚡ Conflict skip: {}/{} incoming _v={} <= stored _v={}",
-                        collection, key, iv, existing_v
-                    );
+                    debug!("⚡ Conflict skip: {}/{} incoming _v={} <= stored _v={}", collection, key, iv, existing_v);
                     continue;
                 }
             }
 
-            // Preserve the original createdAt — it must never change.
-            let orig_created = existing
-                .get("createdAt")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&now)
-                .to_string();
-
-            // Bump the version counter and refresh modifiedAt.
+            let orig_created = existing.get("createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string();
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("_v".to_string(), serde_json::json!(new_v));
                 obj.insert("createdAt".to_string(), serde_json::json!(orig_created));
                 obj.insert("modifiedAt".to_string(), serde_json::json!(now));
             }
+
+            // Unindex the OLD value before overwriting.
+            indexing::unindex_doc(indexes, collection, &key, &existing);
         } else {
-            // New document — initialise version and timestamps.
-            // If the doc already carries _v (e.g. seeded from server sync),
-            // we keep it so the version history is preserved.
             if let Some(obj) = value.as_object_mut() {
                 if obj.get("_v").is_none() {
                     obj.insert("_v".to_string(), serde_json::json!(1u64));
@@ -202,16 +219,13 @@ pub fn insert_batch(
             }
         }
 
-        // Step 1: Insert/overwrite the document in memory.
-        col.insert(key.clone(), value.clone());
+        // Step 1: Insert/overwrite in memory (always Hot for new writes).
+        col.insert(key.clone(), crate::engine::types::DocumentState::Hot(value.clone()));
 
-        // Step 2: Update indexes. index_doc() finds all indexes for this
-        // collection and adds this key to the appropriate index entries.
+        // Step 2: Update indexes.
         indexing::index_doc(indexes, collection, &key, &value);
 
-        // Step 3: Build the LogEntry and persist it.
-        // "INSERT" is used for both inserts and overwrites — on replay, the
-        // last INSERT for a key wins (later entries overwrite earlier ones).
+        // Step 3: Persist.
         let entry = LogEntry {
             cmd: "INSERT".to_string(),
             collection: collection.to_string(),
@@ -221,7 +235,6 @@ pub fn insert_batch(
         storage.write_entry(&entry)?;
 
         // Step 4: Broadcast a lean change event to WebSocket subscribers.
-        // send() returns Err if there are no active receivers — we ignore that.
         let new_v = value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
         let _ = tx.send(
             json!({
@@ -233,7 +246,6 @@ pub fn insert_batch(
             .to_string(),
         );
     }
-
     Ok(())
 }
 
@@ -248,7 +260,7 @@ pub fn insert_batch(
 /// Example: document { name: "Alice", role: "user" } + update { role: "admin" }
 ///          → result: { name: "Alice", role: "admin" }
 pub fn update(
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
@@ -257,9 +269,17 @@ pub fn update(
     updates: Value, // the partial update — only these fields will be changed
 ) -> Result<bool, DbError> {
     if let Some(col) = state.get(collection) {
-        // col.get_mut(key) returns a mutable reference guard to the document.
-        // While this guard is held, no other thread can write to this key.
-        if let Some(mut doc) = col.get_mut(key) {
+        if let Some(doc_state) = col.get(key) {
+            // Fetch the full document value first.
+            let mut doc = match doc_state.value() {
+                crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                crate::engine::types::DocumentState::Cold(ptr) => {
+                    let bytes = storage.read_at(ptr.offset, ptr.length)?;
+                    let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
+                    entry.value
+                }
+            };
+
             // Step 1: Remove the document from indexes BEFORE modifying it,
             // so the old field values are removed from the index entries.
             indexing::unindex_doc(indexes, collection, key, &doc);
@@ -284,21 +304,16 @@ pub fn update(
                 }
             }
 
-            // Step 3: Clone the updated document before dropping the guard.
-            // We need the new value for indexing and logging.
+            // Step 3: Clone the updated document.
             let new_value = doc.clone();
 
             // Step 4: Re-add the document to indexes with its new field values.
             indexing::index_doc(indexes, collection, key, &new_value);
 
-            // Explicitly drop the mutable guard before writing to storage,
-            // to avoid holding the lock longer than necessary.
-            drop(doc);
+            // Step 5: Update state (now Hot).
+            col.insert(key.to_string(), crate::engine::types::DocumentState::Hot(new_value.clone()));
 
-            // Step 5: Write the full updated document as an INSERT entry.
-            // Note: we write "INSERT" not "UPDATE" — the log format doesn't
-            // have a separate UPDATE command. On replay, this INSERT will
-            // overwrite the previous version of the document.
+            // Step 6: Write the full updated document as an INSERT entry.
             let entry = LogEntry {
                 cmd: "INSERT".to_string(),
                 collection: collection.to_string(),
@@ -307,7 +322,7 @@ pub fn update(
             };
             storage.write_entry(&entry)?;
 
-            // Step 6: Broadcast a lean change event to WebSocket subscribers.
+            // Step 7: Broadcast a lean change event to WebSocket subscribers.
             let new_v = new_value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
             let _ = tx.send(
                 json!({
@@ -330,7 +345,7 @@ pub fn update(
 /// A DELETE LogEntry is always written to the log, even if the document
 /// didn't exist in memory — this ensures the log is consistent.
 pub fn delete(
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
@@ -339,9 +354,16 @@ pub fn delete(
 ) -> Result<(), DbError> {
     if let Some(col) = state.get(collection) {
         // Remove the document from indexes before removing it from state.
-        // We need the old value to know which index entries to clean up.
-        if let Some(old_val) = col.get(key) {
-            indexing::unindex_doc(indexes, collection, key, old_val.value());
+        if let Some(doc_state) = col.get(key) {
+            let val = match doc_state.value() {
+                crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                crate::engine::types::DocumentState::Cold(ptr) => {
+                    let bytes = storage.read_at(ptr.offset, ptr.length)?;
+                    let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
+                    entry.value
+                }
+            };
+            indexing::unindex_doc(indexes, collection, key, &val);
         }
         // Remove the document from the in-memory collection.
         col.remove(key);
@@ -376,7 +398,7 @@ pub fn delete(
 /// separate DELETE LogEntry is written for each key. If the collection
 /// doesn't exist, this is a no-op.
 pub fn delete_batch(
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
@@ -386,8 +408,16 @@ pub fn delete_batch(
     if let Some(col) = state.get(collection) {
         for key in keys {
             // Remove from indexes before removing from state.
-            if let Some(old_val) = col.get(&key) {
-                indexing::unindex_doc(indexes, collection, &key, old_val.value());
+            if let Some(doc_state) = col.get(&key) {
+                let val = match doc_state.value() {
+                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                    crate::engine::types::DocumentState::Cold(ptr) => {
+                        let bytes = storage.read_at(ptr.offset, ptr.length)?;
+                        let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
+                        entry.value
+                    }
+                };
+                indexing::unindex_doc(indexes, collection, &key, &val);
             }
 
             // Remove the document from the in-memory collection.
@@ -427,22 +457,18 @@ pub fn delete_batch(
 ///   - All indexes for this collection are removed.
 ///   - The DROP entry in the log ensures the collection stays gone on restart.
 pub fn delete_collection(
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
     collection: &str,
 ) -> Result<(), DbError> {
-    // Remove the entire collection from the in-memory state map.
+    // Step 1: Remove from memory.
     state.remove(collection);
-
-    // Remove all indexes that belong to this collection.
-    // retain() keeps only entries where the closure returns true.
-    // We remove any index whose name starts with "collection:" (e.g. "users:role").
+    // Step 2: Remove all indexes for this collection.
     indexes.retain(|k, _| !k.starts_with(&format!("{}:", collection)));
 
-    // Write a DROP entry to the log.
-    // The `key` field is "*" as a convention meaning "all keys".
+    // Step 3: Persist the DROP command.
     let entry = LogEntry {
         cmd: "DROP".to_string(),
         collection: collection.to_string(),
@@ -451,7 +477,7 @@ pub fn delete_collection(
     };
     storage.write_entry(&entry)?;
 
-    // Broadcast a lean drop event to WebSocket subscribers.
+    // Step 4: Broadcast a lean drop event.
     let event = json!({
         "event": "change",
         "collection": collection,
@@ -460,6 +486,5 @@ pub fn delete_collection(
     })
     .to_string();
     let _ = tx.send(event);
-
     Ok(())
 }

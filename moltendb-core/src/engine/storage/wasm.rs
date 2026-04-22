@@ -171,6 +171,21 @@ impl StorageBackend for OpfsStorage {
         Ok(())
     }
 
+    /// Read exactly `length` bytes from the log at `offset`.
+    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
+        let handle = self.handle.lock().unwrap();
+
+        let mut buf = vec![0u8; length as usize];
+        let mut opts = web_sys::FileSystemReadWriteOptions::new();
+        opts.set_at(offset as f64);
+
+        handle
+            .read_with_u8_array_and_options(&mut buf, &opts)
+            .map_err(|_| DbError::WriteError)?;
+
+        Ok(buf)
+    }
+
     /// Read the entire OPFS file and parse all log entries.
     ///
     /// The whole file is read into a byte buffer, converted to a string,

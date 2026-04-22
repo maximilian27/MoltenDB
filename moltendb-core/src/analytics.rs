@@ -162,7 +162,7 @@ pub fn execute_query(db: &Db, query: &AnalyticsQuery) -> Result<AnalyticsResult,
 
     // Fetch all documents in the collection as a HashMap<String, Value>.
     // This is an O(n) operation — it copies every document out of the DashMap.
-    // For large collections, this is the main performance bottleneck.
+    // In the hybrid Bitcask model, this may involve many disk reads if documents are Cold.
     let all_docs = db.get_all(&query.collection);
 
     // Apply the WHERE filter (if any) to narrow down the documents.

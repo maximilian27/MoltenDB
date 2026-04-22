@@ -274,4 +274,23 @@ impl StorageBackend for EncryptedStorage {
         // Delegate the actual file writing to the inner backend's compact().
         self.inner.compact(encrypted?)
     }
+
+    /// Read exactly `length` bytes from the inner backend and decrypt the entry.
+    ///
+    /// Note: in the encrypted Bitcask model, the pointer refers to the offset
+    /// and length of the ENCRYPTED entry in the log.
+    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
+        // 1. Read the encrypted bytes from the inner storage.
+        let raw_bytes = self.inner.read_at(offset, length)?;
+
+        // 2. Deserialize the ENC LogEntry.
+        let enc_entry: LogEntry = serde_json::from_slice(&raw_bytes).map_err(DbError::Serialization)?;
+
+        // 3. Decrypt the entry.
+        let decrypted = self.decrypt_entry(&enc_entry)?;
+
+        // 4. Return the original plaintext LogEntry serialized as JSON.
+        // This matches the format expected by the engine (e.g. operations::get).
+        Ok(serde_json::to_vec(&decrypted).map_err(DbError::Serialization)?)
+    }
 }

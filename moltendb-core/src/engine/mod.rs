@@ -67,9 +67,9 @@ use tokio::sync::broadcast;
 pub struct Db {
     /// The main document store.
     /// Outer map: collection name (e.g. "users") → inner map.
-    /// Inner map: document key (e.g. "u1") → JSON document value.
+    /// Inner map: document key (e.g. "u1") → Hybrid Hot/Cold document state.
     /// DashMap allows concurrent reads and writes from multiple threads.
-    state: Arc<DashMap<String, DashMap<String, Value>>>,
+    state: Arc<DashMap<String, DashMap<String, crate::engine::types::DocumentState>>>,
 
     /// The storage backend — handles persistence to disk or OPFS.
     /// `pub` so handlers can access it directly if needed (e.g. for compaction).
@@ -197,17 +197,17 @@ impl Db {
 
     /// Retrieve a single document by key. Returns None if not found.
     pub fn get(&self, collection: &str, key: &str) -> Option<Value> {
-        operations::get(&self.state, collection, key)
+        operations::get(&self.state, &self.storage, collection, key)
     }
 
     /// Retrieve all documents in a collection as a HashMap.
     pub fn get_all(&self, collection: &str) -> HashMap<String, Value> {
-        operations::get_all(&self.state, collection)
+        operations::get_all(&self.state, &self.storage, collection)
     }
 
     /// Retrieve a specific set of documents by their keys.
     pub fn get_batch(&self, collection: &str, keys: Vec<String>) -> HashMap<String, Value> {
-        operations::get_batch(&self.state, collection, keys)
+        operations::get_batch(&self.state, &self.storage, collection, keys)
     }
 
     /// Insert or overwrite multiple documents in one call.
@@ -305,11 +305,20 @@ impl Db {
         for col_ref in self.state.iter() {
             let col_name = col_ref.key();
             for item_ref in col_ref.value().iter() {
+                // To compact, we need the full Value. If it's Cold, we fetch it from storage.
+                let value = match item_ref.value() {
+                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                    crate::engine::types::DocumentState::Cold(ptr) => {
+                        let bytes = self.storage.read_at(ptr.offset, ptr.length)?;
+                        let log_entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
+                        log_entry.value
+                    }
+                };
                 entries.push(types::LogEntry {
                     cmd: "INSERT".to_string(),
                     collection: col_name.clone(),
                     key: item_ref.key().clone(),
-                    value: item_ref.value().clone(),
+                    value,
                 });
             }
         }
@@ -333,5 +342,47 @@ impl Db {
 
         info!("✅ Log Compaction Finished!");
         Ok(())
+    }
+
+    /// Evict documents from RAM to disk for a collection if it exceeds the threshold.
+    ///
+    /// This converts `Hot(Value)` entries into `Cold(RecordPointer)` entries.
+    /// In this v1, it re-scans the log to find the exact byte offsets for the documents.
+    pub fn evict_collection(&self, collection: &str, limit: usize) -> Result<usize, DbError> {
+        let col = self.state.get(collection).ok_or(DbError::CollectionNotFound)?;
+        if col.len() <= limit {
+            return Ok(0);
+        }
+
+        let mut evicted_count = 0;
+        let mut offset = 0u64;
+        let to_evict = col.len() - limit;
+
+        // To evict properly, we need the pointers. Since we don't store them for
+        // Hot documents, we re-scan the log to find them.
+        self.storage.stream_log_into(&mut |entry| {
+            if entry.collection == collection {
+                let json = serde_json::to_vec(&entry).unwrap_or_default();
+                let length = json.len() as u32;
+
+                if evicted_count < to_evict {
+                    if let Some(mut doc_state) = col.get_mut(&entry.key) {
+                        if let crate::engine::types::DocumentState::Hot(_) = *doc_state {
+                            *doc_state = crate::engine::types::DocumentState::Cold(crate::engine::types::RecordPointer {
+                                offset,
+                                length,
+                            });
+                            evicted_count += 1;
+                        }
+                    }
+                }
+                offset += (length + 1) as u64;
+            } else {
+                let json = serde_json::to_vec(&entry).unwrap_or_default();
+                offset += (json.len() + 1) as u64;
+            }
+        })?;
+
+        Ok(evicted_count)
     }
 }
