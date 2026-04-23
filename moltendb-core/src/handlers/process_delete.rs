@@ -33,7 +33,7 @@ pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize) ->
         // Single key delete.
         Some(Value::String(k)) => {
             // Check collection size for auto-eviction (Hybrid Bitcask).
-            if let Ok(count) = db.evict_collection(col, 50_000) {
+            if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
                 if count > 0 {
                     debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
                 }
@@ -53,8 +53,8 @@ pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize) ->
             let count = keys.len();
             // ── Check collection size for auto-eviction ──────────────────────────────
             // If the collection is getting large, evict old documents to disk.
-            // Default limit: 50,000 documents per collection.
-            if let Ok(count) = db.evict_collection(col, 50_000) {
+            // Configurable limit: db.hot_threshold documents per collection.
+            if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
                 if count > 0 {
                     debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
                 }

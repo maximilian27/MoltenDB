@@ -31,7 +31,7 @@ pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize) ->
             }
         }
         // Check collection size for auto-eviction (Hybrid Bitcask).
-        if let Ok(count) = db.evict_collection(col, 50_000) {
+        if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
             if count > 0 {
                 debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
             }

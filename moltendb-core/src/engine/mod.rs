@@ -366,14 +366,19 @@ impl Db {
     /// This converts `Hot(Value)` entries into `Cold(RecordPointer)` entries.
     /// In this v1, it re-scans the log to find the exact byte offsets for the documents.
     pub fn evict_collection(&self, collection: &str, limit: usize) -> Result<usize, DbError> {
-        let col = self.state.get(collection).ok_or(DbError::CollectionNotFound)?;
-        if col.len() <= limit {
+        let col_len = if let Some(col) = self.state.get(collection) {
+            col.len()
+        } else {
+            return Err(DbError::CollectionNotFound);
+        };
+
+        if col_len <= limit {
             return Ok(0);
         }
 
         let mut evicted_count = 0;
         let mut offset = 0u64;
-        let to_evict = col.len() - limit;
+        let to_evict = col_len - limit;
 
         // To evict properly, we need the pointers. Since we don't store them for
         // Hot documents, we re-scan the log to find them.
@@ -383,13 +388,15 @@ impl Db {
                 let length = json.len() as u32;
 
                 if evicted_count < to_evict {
-                    if let Some(mut doc_state) = col.get_mut(&entry.key) {
-                        if let crate::engine::types::DocumentState::Hot(_) = *doc_state {
-                            *doc_state = crate::engine::types::DocumentState::Cold(crate::engine::types::RecordPointer {
-                                offset,
-                                length,
-                            });
-                            evicted_count += 1;
+                    if let Some(col) = self.state.get(collection) {
+                        if let Some(mut doc_state) = col.get_mut(&entry.key) {
+                            if let crate::engine::types::DocumentState::Hot(_) = *doc_state {
+                                *doc_state = crate::engine::types::DocumentState::Cold(crate::engine::types::RecordPointer {
+                                    offset,
+                                    length,
+                                });
+                                evicted_count += 1;
+                            }
                         }
                     }
                 }

@@ -269,16 +269,22 @@ pub fn update(
     updates: Value, // the partial update — only these fields will be changed
 ) -> Result<bool, DbError> {
     if let Some(col) = state.get(collection) {
-        if let Some(doc_state) = col.get(key) {
-            // Fetch the full document value first.
-            let mut doc = match doc_state.value() {
-                crate::engine::types::DocumentState::Hot(v) => v.clone(),
-                crate::engine::types::DocumentState::Cold(ptr) => {
-                    let bytes = storage.read_at(ptr.offset, ptr.length)?;
-                    let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
-                    entry.value
-                }
-            };
+        if let Some(doc) = {
+            if let Some(doc_state) = col.get(key) {
+                // Fetch the full document value first.
+                Some(match doc_state.value() {
+                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                    crate::engine::types::DocumentState::Cold(ptr) => {
+                        let bytes = storage.read_at(ptr.offset, ptr.length)?;
+                        let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
+                        entry.value
+                    }
+                })
+            } else {
+                None
+            }
+        } {
+            let mut doc = doc;
 
             // Step 1: Remove the document from indexes BEFORE modifying it,
             // so the old field values are removed from the index entries.
@@ -353,16 +359,20 @@ pub fn delete(
     key: &str,
 ) -> Result<(), DbError> {
     if let Some(col) = state.get(collection) {
-        // Remove the document from indexes before removing it from state.
-        if let Some(doc_state) = col.get(key) {
-            let val = match doc_state.value() {
-                crate::engine::types::DocumentState::Hot(v) => v.clone(),
-                crate::engine::types::DocumentState::Cold(ptr) => {
-                    let bytes = storage.read_at(ptr.offset, ptr.length)?;
-                    let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
-                    entry.value
-                }
-            };
+        if let Some(val) = {
+            if let Some(doc_state) = col.get(key) {
+                Some(match doc_state.value() {
+                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                    crate::engine::types::DocumentState::Cold(ptr) => {
+                        let bytes = storage.read_at(ptr.offset, ptr.length)?;
+                        let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
+                        entry.value
+                    }
+                })
+            } else {
+                None
+            }
+        } {
             indexing::unindex_doc(indexes, collection, key, &val);
         }
         // Remove the document from the in-memory collection.
@@ -408,15 +418,20 @@ pub fn delete_batch(
     if let Some(col) = state.get(collection) {
         for key in keys {
             // Remove from indexes before removing from state.
-            if let Some(doc_state) = col.get(&key) {
-                let val = match doc_state.value() {
-                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
-                    crate::engine::types::DocumentState::Cold(ptr) => {
-                        let bytes = storage.read_at(ptr.offset, ptr.length)?;
-                        let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
-                        entry.value
-                    }
-                };
+            if let Some(val) = {
+                if let Some(doc_state) = col.get(&key) {
+                    Some(match doc_state.value() {
+                        crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                        crate::engine::types::DocumentState::Cold(ptr) => {
+                            let bytes = storage.read_at(ptr.offset, ptr.length)?;
+                            let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
+                            entry.value
+                        }
+                    })
+                } else {
+                    None
+                }
+            } {
                 indexing::unindex_doc(indexes, collection, &key, &val);
             }
 
