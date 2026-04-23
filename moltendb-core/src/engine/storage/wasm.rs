@@ -59,6 +59,8 @@ pub struct OpfsStorage {
     /// and getSize() — all synchronous (blocking) operations safe to call from
     /// a Web Worker.
     handle: Mutex<web_sys::FileSystemSyncAccessHandle>,
+    /// If true, call flush() after every write.
+    sync_mode: bool,
 }
 
 impl OpfsStorage {
@@ -70,7 +72,7 @@ impl OpfsStorage {
     ///   1. Get the OPFS root directory from navigator.storage.getDirectory()
     ///   2. Get (or create) a file handle for `db_name`
     ///   3. Open a synchronous access handle on that file
-    pub async fn new(db_name: &str) -> Result<Self, DbError> {
+    pub async fn new(db_name: &str, sync_mode: bool) -> Result<Self, DbError> {
         // Get the WorkerGlobalScope — this confirms we're running in a Web Worker.
         // If we're on the main thread, dyn_into() fails and we return WriteError.
         let global = js_sys::global()
@@ -79,7 +81,7 @@ impl OpfsStorage {
 
         // Access the StorageManager via navigator.storage.
         // This is the entry point to the OPFS API.
-        let navigator = global.navigator();
+        let navigator: web_sys::WorkerNavigator = global.navigator();
         let storage = navigator.storage();
 
         // Step 1: Get the OPFS root directory.
@@ -94,7 +96,7 @@ impl OpfsStorage {
 
         // Step 2: Get (or create) a file handle for our database file.
         // FileSystemGetFileOptions with create:true means "create if not exists".
-        let mut opts = web_sys::FileSystemGetFileOptions::new();
+        let opts = web_sys::FileSystemGetFileOptions::new();
         opts.set_create(true);
 
         let file_val: JsValue = JsFuture::from(
@@ -114,7 +116,10 @@ impl OpfsStorage {
             .map_err(|_| DbError::WriteError)?;
         let sync_handle: web_sys::FileSystemSyncAccessHandle = sync_val.unchecked_into();
 
-        Ok(Self { handle: Mutex::new(sync_handle) })
+        Ok(Self {
+            handle: Mutex::new(sync_handle),
+            sync_mode,
+        })
     }
 }
 
@@ -156,7 +161,7 @@ impl StorageBackend for OpfsStorage {
         let size = handle.get_size().map_err(|_| DbError::WriteError)? as f64;
 
         // Set the write position to the end of the file (append mode).
-        let mut opts = web_sys::FileSystemReadWriteOptions::new();
+        let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(size);
 
         // Convert the string to bytes and write them.
@@ -167,8 +172,25 @@ impl StorageBackend for OpfsStorage {
 
         // Flush to ensure the data is persisted to the OPFS file.
         // Without flush(), the data might only be in an OS buffer.
-        handle.flush().map_err(|_| DbError::WriteError)?;
+        if self.sync_mode {
+            handle.flush().map_err(|_| DbError::WriteError)?;
+        }
         Ok(())
+    }
+
+    /// Read exactly `length` bytes from the log at `offset`.
+    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
+        let handle = self.handle.lock().unwrap();
+
+        let mut buf = vec![0u8; length as usize];
+        let opts = web_sys::FileSystemReadWriteOptions::new();
+        opts.set_at(offset as f64);
+
+        handle
+            .read_with_u8_array_and_options(&mut buf, &opts)
+            .map_err(|_| DbError::WriteError)?;
+
+        Ok(buf)
     }
 
     /// Read the entire OPFS file and parse all log entries.
@@ -189,7 +211,7 @@ impl StorageBackend for OpfsStorage {
         let mut buf = vec![0u8; size];
 
         // Set the read position to the beginning of the file.
-        let mut opts = web_sys::FileSystemReadWriteOptions::new();
+        let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(0.0);
 
         // Read the entire file into the buffer in one call.
@@ -241,7 +263,7 @@ impl StorageBackend for OpfsStorage {
 
         // Write all the compacted entries starting at byte 0.
         let mut bytes = all_data.into_bytes();
-        let mut opts = web_sys::FileSystemReadWriteOptions::new();
+        let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(0.0);
 
         handle

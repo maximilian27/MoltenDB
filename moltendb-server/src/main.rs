@@ -108,7 +108,7 @@ struct Config {
 
     /// Maximum requests per IP per rate-limit window [env: RATE_LIMIT_REQUESTS]
     #[arg(long, default_value = "100", env = "RATE_LIMIT_REQUESTS")]
-    rate_limit_requests: usize,
+    rate_limit_requests: u32,
 
     /// Rate limit sliding window size in seconds [env: RATE_LIMIT_WINDOW_SECS]
     #[arg(long, default_value = "60", env = "RATE_LIMIT_WINDOW_SECS")]
@@ -144,6 +144,12 @@ struct Config {
     /// Enable verbose debug logging (optimizer, indexing, compaction). [env: DEBUG]
     #[arg(long, default_value = "false", env = "DEBUG")]
     debug: bool,
+
+    /// Maximum documents per collection to keep in RAM (Hot threshold). [env: MOLTEN_HOT_THRESHOLD]
+    /// If a collection exceeds this, older documents are moved to the Cold tier (disk).
+    /// Higher values use more RAM but provide sub-microsecond speeds for more documents.
+    #[arg(long, default_value = "50000", env = "MOLTEN_HOT_THRESHOLD")]
+    hot_threshold: usize,
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -274,7 +280,16 @@ async fn main() {
     //   2. Wraps it in EncryptedStorage if encryption_key is Some.
     //   3. Streams the log file line-by-line, replaying entries into RAM.
     //   4. Returns a Db handle (cheap to clone — it's Arc-backed internally).
-    let db = match engine::Db::open(&db_path, is_sync_mode, is_tiered_mode, encryption_key) {
+    let db = match engine::Db::open(
+        &db_path,
+        is_sync_mode,
+        is_tiered_mode,
+        cfg.hot_threshold,
+        rate_limit_requests,
+        rate_limit_window,
+        cfg.max_body_size,
+        encryption_key,
+    ) {
         Ok(database) => database,
         Err(e) => {
             error!("🔥 CRITICAL: Failed to start MoltenDB! Details: {}", e);
@@ -323,7 +338,7 @@ async fn main() {
     info!("👤 User authentication initialized");
 
     // Initialize the rate limiter with the configured limits.
-    let rate_limiter = rate_limit::RateLimiter::new(rate_limit_requests, rate_limit_window);
+    let rate_limiter = rate_limit::RateLimiter::new(rate_limit_requests as usize, rate_limit_window);
     info!("🚦 Rate limiting: {} requests per {} seconds", rate_limit_requests, rate_limit_window);
 
     // Spawn a background task to periodically clean up stale rate-limit entries.

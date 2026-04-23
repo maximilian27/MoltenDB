@@ -72,7 +72,8 @@ await init();
 
 // 2. Open (or create) the OPFS database file
 //    ✅ Use the static factory — NOT `new WorkerDb(name)` (deprecated)
-const db = await WorkerDb.create("my_database");
+//    Optional second parameter: hot_threshold (default: 50,000 documents per collection)
+const db = await WorkerDb.create("my_database", 100000);
 
 // 3. Subscribe to real-time mutation events
 db.subscribe((eventStr) => {
@@ -124,7 +125,7 @@ The generated `moltendb_core.d.ts` declares `WorkerDb` with the static factory:
 
 ```ts
 export class WorkerDb {
-  static create(dbName: string): Promise<WorkerDb>;
+  static create(dbName: string, hot_threshold?: number): Promise<WorkerDb>;
   handle_message(msg: { action: string; [key: string]: unknown }): unknown;
   subscribe(callback: (eventStr: string) => void): void;
   /** ⚠️ Under development — not ready for production use */

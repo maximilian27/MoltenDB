@@ -1,3 +1,4 @@
+use tracing::debug;
 use serde_json::{Value, json};
 use crate::validation;
 use crate::engine;
@@ -79,7 +80,15 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
             }
 
             match db.insert_batch(col, items) {
-                Ok(_) => (200, json!({ "status": "ok", "count": data_map.len() })),
+                Ok(_) => {
+                    // Check collection size for auto-eviction (Hybrid Bitcask).
+                    if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
+                        if count > 0 {
+                            debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
+                        }
+                    }
+                    (200, json!({ "status": "ok", "count": data_map.len() }))
+                },
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))
             }
         },
@@ -103,11 +112,19 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
             }
 
             match db.insert_batch(col, items) {
-                Ok(_) => (200, json!({
-                    "status": "ok",
-                    "count": data_arr.len(),
-                    "ids": generated_ids
-                })),
+                Ok(_) => {
+                    // Check collection size for auto-eviction (Hybrid Bitcask).
+                    if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
+                        if count > 0 {
+                            debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
+                        }
+                    }
+                    (200, json!({
+                        "status": "ok",
+                        "count": data_arr.len(),
+                        "ids": generated_ids
+                    }))
+                },
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))
             }
         },

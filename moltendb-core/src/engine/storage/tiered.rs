@@ -141,7 +141,7 @@ impl MmapLogReader {
     /// so we only replay the delta portion of the file.
     pub fn stream_entries<F>(&self, skip_lines: u64, mut f: F)
     where
-        F: FnMut(LogEntry),
+        F: FnMut(LogEntry, u32),
     {
         // Wrap the mmap byte slice in a Cursor so we can use BufRead::lines().
         // Cursor<&[u8]> implements Read, and BufReader adds line-buffering.
@@ -156,9 +156,10 @@ impl MmapLogReader {
             }
             // Ignore I/O errors (shouldn't happen with mmap, but be safe).
             if let Ok(json_str) = line {
+                let length = json_str.len() as u32;
                 // Ignore lines that fail to parse (partial writes on crash).
                 if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str) {
-                    f(entry);
+                    f(entry, length);
                 }
             }
         }
@@ -294,7 +295,7 @@ impl StorageBackend for TieredStorage {
 
         // Read cold tier first (older data).
         if let Some(reader) = MmapLogReader::open(&self.cold_path) {
-            reader.stream_entries(0, |e| entries.push(e));
+            reader.stream_entries(0, |e, _| entries.push(e));
         }
 
         // Read hot tier on top (newer data overwrites cold on replay).
@@ -380,7 +381,7 @@ impl StorageBackend for TieredStorage {
     ///
     /// Hot entries applied in step 2/3 overwrite cold entries from step 1
     /// for the same key, giving the correct final state.
-    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry)) -> Result<u64, DbError> {
+    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32)) -> Result<u64, DbError> {
         let mut total = 0u64;
 
         // ── Step 1: Replay cold tier via mmap ────────────────────────────────
@@ -393,8 +394,8 @@ impl StorageBackend for TieredStorage {
                 cold_line_count
             );
             // Stream all cold entries — skip_lines=0 means read from the start.
-            cold_reader.stream_entries(0, |e| {
-                f(e);
+            cold_reader.stream_entries(0, |e, l| {
+                f(e, l);
                 total += 1;
             });
         }
@@ -412,5 +413,29 @@ impl StorageBackend for TieredStorage {
         );
 
         Ok(total)
+    }
+
+    /// Read exactly `length` bytes from the log at `offset`.
+    ///
+    /// In TieredStorage, we first check if the offset belongs to the cold log.
+    /// If not, we fall back to the hot log.
+    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
+        use std::io::{Read, Seek, SeekFrom};
+        
+        let cold_size = std::fs::metadata(&self.cold_path).map(|m| m.len()).unwrap_or(0);
+
+        if offset < cold_size {
+            // Document is in the cold tier.
+            let mut file = File::open(&self.cold_path)?;
+            file.seek(SeekFrom::Start(offset))?;
+            let mut buffer = vec![0u8; length as usize];
+            file.read_exact(&mut buffer)?;
+            Ok(buffer)
+        } else {
+            // Document is in the hot tier.
+            // Note: The offset passed to this function is cumulative (cold + hot).
+            // We must subtract the cold size to get the relative offset in the hot file.
+            self.hot.read_at(offset - cold_size, length)
+        }
     }
 }

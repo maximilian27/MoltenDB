@@ -3,10 +3,10 @@
 
 # MoltenDB
 
-### 🌋 A Local-First Embedded Database in Pure Rust
+### 🌋 A Universal Local-First Database in Pure Rust
 
 **Runs in the browser (WASM + OPFS) and on the server (Rust + disk).**  
-Same query engine. Same log format. Two environments.
+Same query engine. Same Bitcask-inspired hybrid storage. Two environments.
 
 **Request only the fields you need — like GraphQL, but over a plain JSON API.**
 
@@ -91,7 +91,9 @@ The runnable binary. Owns Axum routing, TLS termination, CORS policy, per-IP rat
 
 > **Deployment model:** Run `moltendb-server` as a standalone HTTPS server, embed `moltendb-core` directly in your Rust application, or compile `moltendb-core` to WASM for browser-side local-first storage.
 
-All data is kept in RAM for the lifetime of the server process — there is no eviction, TTL, or page cache. Once a document is loaded it stays in memory until explicitly deleted or the process exits. This means **RAM is the hard limit on dataset size**. A 100 000-document collection of typical JSON objects occupies roughly 100–200 MB of RAM. The tiered storage mode separates hot and cold logs on disk but both are still fully loaded into the same in-memory `DashMap` on startup — tiered storage improves write throughput, not memory usage.
+MoltenDB uses a **Hybrid Bitcask-inspired Storage Model**. Frequently accessed data is kept in RAM (`Hot`) as parsed JSON for sub-microsecond reads. Less frequently used data is paged out to disk (`Cold`) as byte-offsets, freeing up memory. This allows MoltenDB to handle datasets much larger than the available RAM while maintaining high performance for the active working set.
+
+By default, any collection exceeding **50,000 documents** will automatically evict the oldest documents to the `Cold` tier (disk/OPFS). Cold documents are fetched and deserialized on-demand, which typically takes ~50µs. This limit is configurable via `--hot-threshold` (server) or as an argument to `WorkerDb.create` (WASM).
 
 One of MoltenDB's core features is **GraphQL-style field selection**: every query lets you specify exactly which fields (including deeply nested ones) you want back. You never receive more data than you asked for — no over-fetching, no under-fetching, no separate schema to maintain.
 
@@ -583,6 +585,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--cors-origin` | `CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s). Use `*` for dev only; set to your frontend URL in production (comma-separated for multiple) |
 | `--max-body-size` | `MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. |
 | `--debug` | `DEBUG` | `false` | Enable verbose debug logging |
+| `--hot-threshold` | `MOLTEN_HOT_THRESHOLD` | `50000` | Max documents per collection to keep in RAM |
 
 ⚠️ = insecure default, must be overridden in production. The server prints a warning at startup for each one that is not set.
 

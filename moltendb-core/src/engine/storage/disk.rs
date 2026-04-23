@@ -169,7 +169,7 @@ pub(super) fn load_snapshot(log_path: &str) -> Option<(Vec<LogEntry>, u64)> {
 /// because the in-memory state is rebuilt from what we can read.
 pub fn stream_log_entries<F>(path: &str, skip_lines: u64, mut f: F) -> Result<(), DbError>
 where
-    F: FnMut(LogEntry), // closure called once per valid entry
+    F: FnMut(LogEntry, u32), // closure called once per valid entry + raw byte length
 {
     // If the file doesn't exist yet (first run), just do nothing.
     if let Ok(file) = File::open(path) {
@@ -183,9 +183,10 @@ where
             }
             // Ignore lines that fail to read (e.g. I/O error mid-line).
             if let Ok(json_str) = line {
+                let length = json_str.len() as u32;
                 // Ignore lines that fail to parse (e.g. partial write on crash).
                 if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str) {
-                    f(entry); // hand the entry to the caller's closure
+                    f(entry, length); // hand the entry and its raw length to the caller
                 }
             }
         }
@@ -221,7 +222,7 @@ pub fn read_log_from_disk(path: &str) -> Result<Vec<LogEntry>, DbError> {
     let mut entries = Vec::new();
     // skip_lines = 0 means read from the very beginning (no snapshot skip here,
     // because EncryptedStorage handles its own snapshot logic via read_log).
-    stream_log_entries(path, 0, |e| entries.push(e))?;
+    stream_log_entries(path, 0, |e, _| entries.push(e))?;
     Ok(entries)
 }
 
@@ -426,6 +427,16 @@ impl StorageBackend for AsyncDiskStorage {
         Ok(())
     }
 
+    /// Read exactly `length` bytes from the log at `offset`.
+    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = File::open(&self.path)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut buffer = vec![0u8; length as usize];
+        file.read_exact(&mut buffer)?;
+        Ok(buffer)
+    }
+
     /// Stream log entries into state using snapshot + delta replay.
     ///
     /// Fast path (after first compaction):
@@ -436,7 +447,7 @@ impl StorageBackend for AsyncDiskStorage {
     ///   Stream the entire log file line-by-line. No full Vec in RAM.
     fn stream_log_into(
         &self,
-        f: &mut dyn FnMut(LogEntry),
+        f: &mut dyn FnMut(LogEntry, u32),
     ) -> Result<u64, DbError> {
         // Attempt to load the binary snapshot for fast startup.
         if let Some((snapshot_entries, seq)) = load_snapshot(&self.path) {
@@ -445,21 +456,23 @@ impl StorageBackend for AsyncDiskStorage {
                 snapshot_entries.len(),
                 seq
             );
-            // Apply all entries from the snapshot first.
             for entry in snapshot_entries {
-                f(entry);
+                // For snapshots, we re-serialize because they aren't in the log file
+                let json = serde_json::to_vec(&entry).unwrap_or_default();
+                let length = json.len() as u32;
+                f(entry, length);
             }
             // Then replay only the log lines that came after the snapshot.
             // `seq` is the number of lines to skip (already in the snapshot).
-            stream_log_entries(&self.path, seq, |e| f(e))?;
+            stream_log_entries(&self.path, seq, |e, l| f(e, l))?;
             let total = count_log_lines(&self.path);
             return Ok(total);
         }
 
         // No snapshot found — stream the full log from the beginning.
         let mut count = 0u64;
-        stream_log_entries(&self.path, 0, |e| {
-            f(e);
+        stream_log_entries(&self.path, 0, |e, l| {
+            f(e, l);
             count += 1;
         })?;
         Ok(count)
@@ -548,11 +561,21 @@ impl StorageBackend for SyncDiskStorage {
         Ok(())
     }
 
+    /// Read exactly `length` bytes from the log at `offset`.
+    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = File::open(&self.path)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut buffer = vec![0u8; length as usize];
+        file.read_exact(&mut buffer)?;
+        Ok(buffer)
+    }
+
     /// Stream log entries into state using snapshot + delta replay.
     /// Same logic as AsyncDiskStorage::stream_log_into — see that method for details.
     fn stream_log_into(
         &self,
-        f: &mut dyn FnMut(LogEntry),
+        f: &mut dyn FnMut(LogEntry, u32),
     ) -> Result<u64, DbError> {
         // Fast path: load snapshot and replay only the delta.
         if let Some((snapshot_entries, seq)) = load_snapshot(&self.path) {
@@ -562,17 +585,20 @@ impl StorageBackend for SyncDiskStorage {
                 seq
             );
             for entry in snapshot_entries {
-                f(entry);
+                // For snapshots, we re-serialize because they aren't in the log file
+                let json = serde_json::to_vec(&entry).unwrap_or_default();
+                let length = json.len() as u32;
+                f(entry, length);
             }
-            stream_log_entries(&self.path, seq, |e| f(e))?;
+            stream_log_entries(&self.path, seq, |e, l| f(e, l))?;
             let total = count_log_lines(&self.path);
             return Ok(total);
         }
 
         // Slow path: stream the full log line-by-line.
         let mut count = 0u64;
-        stream_log_entries(&self.path, 0, |e| {
-            f(e);
+        stream_log_entries(&self.path, 0, |e, l| {
+            f(e, l);
             count += 1;
         })?;
         Ok(count)

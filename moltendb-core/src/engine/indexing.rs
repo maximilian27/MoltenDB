@@ -145,7 +145,7 @@ pub fn track_query(
     // The storage backend — needed to persist the INDEX entry if we create one.
     storage: &Arc<dyn StorageBackend>,
     // The full in-memory state — needed to build the index from existing documents.
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
 ) -> Result<(), DbError> {
     let index_key = format!("{}:{}", collection, field);
 
@@ -181,7 +181,7 @@ pub fn track_query(
 pub fn create_index(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     collection: &str,
     field: &str,
 ) -> Result<(), DbError> {
@@ -197,9 +197,21 @@ pub fn create_index(
     let field_index = DashMap::new();
     if let Some(col) = state.get(collection) {
         for entry in col.iter() {
+            // In the hybrid Bitcask model, if a document is Cold, we must fetch
+            // it from disk to build the index. This makes auto-indexing slow
+            // for very large collections, but it only happens once.
+            let doc_value = match entry.value() {
+                crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                crate::engine::types::DocumentState::Cold(ptr) => {
+                    let bytes = storage.read_at(ptr.offset, ptr.length)?;
+                    let log_entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
+                    log_entry.value
+                }
+            };
+
             // Extract the field value using dot-notation (supports nested fields).
             if let Some(val) = crate::query::get_nested_value(
-                entry.value(),
+                &doc_value,
                 &field.split('.').collect::<Vec<_>>(),
             ) {
                 // Add this document key to the index entry for this field value.

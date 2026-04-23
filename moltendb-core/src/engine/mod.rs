@@ -33,16 +33,7 @@ mod operations; // get, get_all, insert_batch, update, delete, etc.
 pub use types::DbError;
 // Re-export the StorageBackend trait so callers can use it without knowing
 // the internal module structure.
-pub use storage::StorageBackend;
-
-// Conditionally re-export concrete storage types based on compile target.
-// On native builds (server), expose the disk and encrypted storage types.
-// On WASM builds (browser), expose the OPFS storage type.
-#[cfg(not(target_arch = "wasm32"))]
-pub use storage::{EncryptedStorage};
-
-#[cfg(target_arch = "wasm32")]
-pub use storage::OpfsStorage;
+pub use storage::{StorageBackend, EncryptedStorage};
 
 // DashMap = concurrent hash map. DashSet = concurrent hash set.
 use dashmap::{DashMap, DashSet};
@@ -67,9 +58,9 @@ use tokio::sync::broadcast;
 pub struct Db {
     /// The main document store.
     /// Outer map: collection name (e.g. "users") → inner map.
-    /// Inner map: document key (e.g. "u1") → JSON document value.
+    /// Inner map: document key (e.g. "u1") → Hybrid Hot/Cold document state.
     /// DashMap allows concurrent reads and writes from multiple threads.
-    state: Arc<DashMap<String, DashMap<String, Value>>>,
+    state: Arc<DashMap<String, DashMap<String, crate::engine::types::DocumentState>>>,
 
     /// The storage backend — handles persistence to disk or OPFS.
     /// `pub` so handlers can access it directly if needed (e.g. for compaction).
@@ -93,6 +84,20 @@ pub struct Db {
     /// Key: "collection:field". Value: number of times queried.
     /// When a field reaches 3 queries, an index is auto-created.
     pub query_heatmap: Arc<DashMap<String, u32>>,
+
+    /// The maximum number of documents per collection to keep in RAM (Hot).
+    /// If a collection exceeds this, older documents are paged out to disk (Cold).
+    /// Default is 50,000.
+    pub hot_threshold: usize,
+
+    /// Max requests per window.
+    pub rate_limit_requests: u32,
+
+    /// Window size in seconds.
+    pub rate_limit_window: u64,
+
+    /// Maximum request body size in bytes.
+    pub max_body_size: usize,
 }
 
 impl Db {
@@ -109,7 +114,16 @@ impl Db {
     /// `encryption_key` — if Some, wrap the storage in EncryptedStorage.
     ///                    if None, data is stored in plaintext (not recommended).
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn open(path: &str, sync_mode: bool, tiered_mode: bool, encryption_key: Option<&[u8; 32]>) -> Result<Self, DbError> {
+    pub fn open(
+        path: &str,
+        sync_mode: bool,
+        tiered_mode: bool,
+        hot_threshold: usize,
+        rate_limit_requests: u32,
+        rate_limit_window: u64,
+        max_body_size: usize,
+        encryption_key: Option<&[u8; 32]>,
+    ) -> Result<Self, DbError> {
         // Create the shared in-memory state containers.
         let state = Arc::new(DashMap::new());
         // Create the broadcast channel with a buffer of 100 messages.
@@ -157,6 +171,10 @@ impl Db {
             tx,
             indexes,
             query_heatmap,
+            hot_threshold,
+            rate_limit_requests,
+            rate_limit_window,
+            max_body_size,
         })
     }
 
@@ -165,7 +183,15 @@ impl Db {
     ///
     /// `db_name` — the filename in the OPFS root directory (e.g. "analytics_db").
     #[cfg(target_arch = "wasm32")]
-    pub async fn open_wasm(db_name: &str) -> Result<Self, DbError> {
+    pub async fn open_wasm(
+        db_name: &str,
+        hot_threshold: usize,
+        rate_limit_requests: u32,
+        rate_limit_window: u64,
+        max_body_size: usize,
+        encryption_key: Option<&[u8; 32]>,
+        sync_mode: bool,
+    ) -> Result<Self, DbError> {
         let state = Arc::new(DashMap::new());
         let (tx, _rx) = broadcast::channel(100);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
@@ -174,7 +200,13 @@ impl Db {
 
         // Open the OPFS file. This is async because the browser's OPFS API
         // uses Promises which we must await.
-        let storage: Arc<dyn StorageBackend> = Arc::new(storage::OpfsStorage::new(db_name).await?);
+        let mut storage: Arc<dyn StorageBackend> =
+            Arc::new(storage::OpfsStorage::new(db_name, sync_mode).await?);
+
+        // Apply encryption wrapper if a key is provided.
+        if let Some(key) = encryption_key {
+            storage = Arc::new(storage::EncryptedStorage::new(storage, key));
+        }
 
         // Replay the log into the in-memory state.
         storage::stream_into_state(&*storage, &state, &indexes)?;
@@ -185,6 +217,10 @@ impl Db {
             tx,
             indexes,
             query_heatmap,
+            hot_threshold,
+            rate_limit_requests,
+            rate_limit_window,
+            max_body_size,
         })
     }
 
@@ -197,17 +233,17 @@ impl Db {
 
     /// Retrieve a single document by key. Returns None if not found.
     pub fn get(&self, collection: &str, key: &str) -> Option<Value> {
-        operations::get(&self.state, collection, key)
+        operations::get(&self.state, &self.storage, collection, key)
     }
 
     /// Retrieve all documents in a collection as a HashMap.
     pub fn get_all(&self, collection: &str) -> HashMap<String, Value> {
-        operations::get_all(&self.state, collection)
+        operations::get_all(&self.state, &self.storage, collection)
     }
 
     /// Retrieve a specific set of documents by their keys.
     pub fn get_batch(&self, collection: &str, keys: Vec<String>) -> HashMap<String, Value> {
-        operations::get_batch(&self.state, collection, keys)
+        operations::get_batch(&self.state, &self.storage, collection, keys)
     }
 
     /// Insert or overwrite multiple documents in one call.
@@ -220,13 +256,17 @@ impl Db {
             &self.tx,
             collection,
             items,
-        )
+        )?;
+
+        // Auto-evict if the collection exceeds the threshold.
+        let _ = self.evict_collection(collection, self.hot_threshold);
+        Ok(())
     }
 
     /// Partially update a document — merges `updates` into the existing document.
     /// Returns true if the document was found and updated, false if not found.
     pub fn update(&self, collection: &str, key: &str, updates: Value) -> Result<bool, DbError> {
-        operations::update(
+        let updated = operations::update(
             &self.state,
             &self.indexes,
             &self.storage,
@@ -234,7 +274,13 @@ impl Db {
             collection,
             key,
             updates,
-        )
+        )?;
+
+        if updated {
+            // Auto-evict if the collection exceeds the threshold.
+            let _ = self.evict_collection(collection, self.hot_threshold);
+        }
+        Ok(updated)
     }
 
     /// Delete a single document by key.
@@ -305,11 +351,20 @@ impl Db {
         for col_ref in self.state.iter() {
             let col_name = col_ref.key();
             for item_ref in col_ref.value().iter() {
+                // To compact, we need the full Value. If it's Cold, we fetch it from storage.
+                let value = match item_ref.value() {
+                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                    crate::engine::types::DocumentState::Cold(ptr) => {
+                        let bytes = self.storage.read_at(ptr.offset, ptr.length)?;
+                        let log_entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
+                        log_entry.value
+                    }
+                };
                 entries.push(types::LogEntry {
                     cmd: "INSERT".to_string(),
                     collection: col_name.clone(),
                     key: item_ref.key().clone(),
-                    value: item_ref.value().clone(),
+                    value,
                 });
             }
         }
@@ -333,5 +388,50 @@ impl Db {
 
         info!("✅ Log Compaction Finished!");
         Ok(())
+    }
+
+    /// Evict documents from RAM to disk for a collection if it exceeds the threshold.
+    ///
+    /// This converts `Hot(Value)` entries into `Cold(RecordPointer)` entries.
+    /// In this v1, it re-scans the log to find the exact byte offsets for the documents.
+    pub fn evict_collection(&self, collection: &str, limit: usize) -> Result<usize, DbError> {
+        let col_len = if let Some(col) = self.state.get(collection) {
+            col.len()
+        } else {
+            return Err(DbError::CollectionNotFound);
+        };
+
+        if col_len <= limit {
+            return Ok(0);
+        }
+
+        let mut evicted_count = 0;
+        let mut offset = 0u64;
+        let to_evict = col_len - limit;
+
+        // To evict properly, we need the pointers. Since we don't store them for
+        // Hot documents, we re-scan the log to find them.
+        self.storage.stream_log_into(&mut |entry, length| {
+            if entry.collection == collection {
+                if evicted_count < to_evict {
+                    if let Some(col) = self.state.get(collection) {
+                        if let Some(mut doc_state) = col.get_mut(&entry.key) {
+                            if let crate::engine::types::DocumentState::Hot(_) = *doc_state {
+                                *doc_state = crate::engine::types::DocumentState::Cold(crate::engine::types::RecordPointer {
+                                    offset,
+                                    length,
+                                });
+                                evicted_count += 1;
+                            }
+                        }
+                    }
+                }
+                offset += (length + 1) as u64;
+            } else {
+                offset += (length + 1) as u64;
+            }
+        })?;
+
+        Ok(evicted_count)
     }
 }
