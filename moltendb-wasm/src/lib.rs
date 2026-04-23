@@ -99,17 +99,20 @@ impl WorkerDb {
     /// # Arguments
     /// * `db_name` — The name of the OPFS file to open (e.g. "click_analytics_db").
     ///   Each unique name is a separate database file in the browser's OPFS storage.
+    /// * `hot_threshold` — Optional maximum documents per collection to keep in RAM (default: 50,000).
     #[wasm_bindgen]
-    pub async fn create(db_name: &str) -> Result<WorkerDb, JsValue> {
+    pub async fn create(db_name: &str, hot_threshold: Option<usize>) -> Result<WorkerDb, JsValue> {
         // Install a panic hook that converts Rust panics into readable JS error messages.
         // Without this, a Rust panic in WASM produces an unhelpful "unreachable" error.
         // `set_once` ensures it's only installed once even if new() is called multiple times.
         console_error_panic_hook::set_once();
 
+        let threshold = hot_threshold.unwrap_or(50000);
+
         // Open the database. `Db::open_wasm` creates an OpfsStorage backend,
         // reads the existing OPFS file (if any), and replays the log into memory.
         // `.map_err(...)` converts a DbError into a JsValue string for JavaScript.
-        let db = Db::open_wasm(db_name)
+        let db = Db::open_wasm(db_name, threshold)
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to open database: {}", e)))?;
 

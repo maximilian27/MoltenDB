@@ -93,6 +93,11 @@ pub struct Db {
     /// Key: "collection:field". Value: number of times queried.
     /// When a field reaches 3 queries, an index is auto-created.
     pub query_heatmap: Arc<DashMap<String, u32>>,
+
+    /// The maximum number of documents per collection to keep in RAM (Hot).
+    /// If a collection exceeds this, older documents are paged out to disk (Cold).
+    /// Default is 50,000.
+    pub hot_threshold: usize,
 }
 
 impl Db {
@@ -109,7 +114,7 @@ impl Db {
     /// `encryption_key` — if Some, wrap the storage in EncryptedStorage.
     ///                    if None, data is stored in plaintext (not recommended).
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn open(path: &str, sync_mode: bool, tiered_mode: bool, encryption_key: Option<&[u8; 32]>) -> Result<Self, DbError> {
+    pub fn open(path: &str, sync_mode: bool, tiered_mode: bool, hot_threshold: usize, encryption_key: Option<&[u8; 32]>) -> Result<Self, DbError> {
         // Create the shared in-memory state containers.
         let state = Arc::new(DashMap::new());
         // Create the broadcast channel with a buffer of 100 messages.
@@ -157,6 +162,7 @@ impl Db {
             tx,
             indexes,
             query_heatmap,
+            hot_threshold,
         })
     }
 
@@ -165,7 +171,7 @@ impl Db {
     ///
     /// `db_name` — the filename in the OPFS root directory (e.g. "analytics_db").
     #[cfg(target_arch = "wasm32")]
-    pub async fn open_wasm(db_name: &str) -> Result<Self, DbError> {
+    pub async fn open_wasm(db_name: &str, hot_threshold: usize) -> Result<Self, DbError> {
         let state = Arc::new(DashMap::new());
         let (tx, _rx) = broadcast::channel(100);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
@@ -185,6 +191,7 @@ impl Db {
             tx,
             indexes,
             query_heatmap,
+            hot_threshold,
         })
     }
 
@@ -220,13 +227,17 @@ impl Db {
             &self.tx,
             collection,
             items,
-        )
+        )?;
+
+        // Auto-evict if the collection exceeds the threshold.
+        let _ = self.evict_collection(collection, self.hot_threshold);
+        Ok(())
     }
 
     /// Partially update a document — merges `updates` into the existing document.
     /// Returns true if the document was found and updated, false if not found.
     pub fn update(&self, collection: &str, key: &str, updates: Value) -> Result<bool, DbError> {
-        operations::update(
+        let updated = operations::update(
             &self.state,
             &self.indexes,
             &self.storage,
@@ -234,7 +245,13 @@ impl Db {
             collection,
             key,
             updates,
-        )
+        )?;
+
+        if updated {
+            // Auto-evict if the collection exceeds the threshold.
+            let _ = self.evict_collection(collection, self.hot_threshold);
+        }
+        Ok(updated)
     }
 
     /// Delete a single document by key.

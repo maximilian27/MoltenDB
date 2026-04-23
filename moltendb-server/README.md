@@ -87,6 +87,7 @@ cargo run --package moltendb-server --bin moltendb -- \
 | `--rate-limit-requests` | `RATE_LIMIT_REQUESTS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `RATE_LIMIT_WINDOW_SECS` | `60` | Rate limit sliding window in seconds |
 | `--max-body-size` | `MAX_BODY_SIZE` | `10485760` | Max request body size in bytes (default 10 MB) |
+| `--hot-threshold` | `MOLTEN_HOT_THRESHOLD` | `50000` | Number of documents per collection kept in RAM before paging out to disk |
 | `--disable-encryption` | — | — | Disable at-rest encryption |
 
 ---

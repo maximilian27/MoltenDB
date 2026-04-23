@@ -144,6 +144,12 @@ struct Config {
     /// Enable verbose debug logging (optimizer, indexing, compaction). [env: DEBUG]
     #[arg(long, default_value = "false", env = "DEBUG")]
     debug: bool,
+
+    /// Maximum documents per collection to keep in RAM (Hot threshold). [env: MOLTEN_HOT_THRESHOLD]
+    /// If a collection exceeds this, older documents are moved to the Cold tier (disk).
+    /// Higher values use more RAM but provide sub-microsecond speeds for more documents.
+    #[arg(long, default_value = "50000", env = "MOLTEN_HOT_THRESHOLD")]
+    hot_threshold: usize,
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -274,7 +280,7 @@ async fn main() {
     //   2. Wraps it in EncryptedStorage if encryption_key is Some.
     //   3. Streams the log file line-by-line, replaying entries into RAM.
     //   4. Returns a Db handle (cheap to clone — it's Arc-backed internally).
-    let db = match engine::Db::open(&db_path, is_sync_mode, is_tiered_mode, encryption_key) {
+    let db = match engine::Db::open(&db_path, is_sync_mode, is_tiered_mode, cfg.hot_threshold, encryption_key) {
         Ok(database) => database,
         Err(e) => {
             error!("🔥 CRITICAL: Failed to start MoltenDB! Details: {}", e);

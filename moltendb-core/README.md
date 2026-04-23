@@ -48,7 +48,7 @@ WASM-specific code (`OpfsStorage`, `Db::open_wasm`) is gated behind `#[cfg(targe
 
 ```toml
 [dependencies]
-moltendb-core = "0.3.0-beta.2"
+moltendb-core = "0.3.0-beta.5"
 ```
 
 ### Minimal example
@@ -96,6 +96,14 @@ println!("{} — {}", status_code, result);
 
 ---
 
+## Hybrid Bitcask Storage
+
+MoltenDB uses a **Hybrid Bitcask-inspired Storage Model**. Frequently accessed data is kept in RAM (`Hot`) as parsed JSON for sub-microsecond reads. Less frequently used data is paged out to disk (`Cold`) as byte-offsets, freeing up memory. This allows MoltenDB to handle datasets much larger than the available RAM while maintaining high performance for the active working set.
+
+By default, any collection exceeding **50,000 documents** will automatically evict the oldest documents to the `Cold` tier (disk/OPFS). This limit is configurable when opening the database.
+
+---
+
 ## Module overview
 
 | Module | Responsibility |
@@ -123,7 +131,7 @@ println!("{} — {}", status_code, result);
 
 ## Design constraints
 
-- **RAM is the hard limit.** All documents are kept in memory for the lifetime of the process. There is no eviction, TTL, or page cache. A 100 000-document collection of typical JSON objects occupies roughly 100–200 MB of RAM.
+- **No longer limited by RAM.** While MoltenDB is "Memory-First," the Hybrid Bitcask model allows it to page out documents to disk while keeping only the keys and offsets in RAM. A 10GB database can now comfortably run on a machine with 512MB of RAM.
 - **No HTTP, no auth, no JWT.** This crate has zero knowledge of the network layer. It is safe to embed in any Rust application without pulling in Axum, Tokio TLS, or any auth dependency.
 - **Single writer, many readers.** The `DashMap` store is safe for concurrent reads. Writes are serialised through the storage backend.
 
