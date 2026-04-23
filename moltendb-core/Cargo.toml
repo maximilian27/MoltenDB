@@ -53,3 +53,6 @@ memmap2 = "0.9"
 tokio = { version = "1.49.0", features = ["full"] }
 uuid = { version = "1.22", features = ["v4", "v7", "serde"] }
 
+
+[dev-dependencies]
+tempfile = "3.10"

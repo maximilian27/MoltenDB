@@ -135,6 +135,10 @@ pub enum DbError {
 
     /// The requested collection does not exist.
     CollectionNotFound,
+
+    /// An optimistic concurrency control (OCC) conflict occurred.
+    /// The document version provided by the client is outdated.
+    Conflict,
 }
 
 /// Implement Display so DbError can be printed with `{}` formatting.
@@ -150,6 +154,7 @@ impl fmt::Display for DbError {
             DbError::InvalidQuery(msg) => write!(f, "Invalid Query: {}", msg),
             DbError::TypeMismatch(msg) => write!(f, "Type Mismatch: {}", msg),
             DbError::CollectionNotFound => write!(f, "Collection Not Found"),
+            DbError::Conflict => write!(f, "Conflict: Document version is outdated"),
         }
     }
 }

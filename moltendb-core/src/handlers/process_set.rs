@@ -89,6 +89,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
                     }
                     (200, json!({ "status": "ok", "count": data_map.len() }))
                 },
+                Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))
             }
         },
@@ -125,6 +126,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
                         "ids": generated_ids
                     }))
                 },
+                Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))
             }
         },

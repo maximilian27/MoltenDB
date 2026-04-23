@@ -27,6 +27,7 @@ pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize) ->
             match db.update(col, k, v.clone()) {
                 Ok(true)  => updated_count += 1,  // Document found and updated
                 Ok(false) => {},                   // Document not found — skip
+                Err(engine::DbError::Conflict) => return (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
                 Err(e) => return (500, json!({ "error": "Database update failed", "details": e.to_string(), "statusCode": 500 }))
             }
         }
