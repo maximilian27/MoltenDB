@@ -160,6 +160,7 @@ pub fn insert_batch(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
+    schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
     collection: &str,
     items: Vec<(String, Value)>,
 ) -> Result<(), DbError> {
@@ -198,6 +199,7 @@ pub fn insert_batch(
         }
 
         if let Some(existing) = existing_val {
+            // ... (existing logic) ...
             let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
             let incoming_v = value.get("_v").and_then(|v| v.as_u64());
 
@@ -216,6 +218,9 @@ pub fn insert_batch(
                 obj.insert("modifiedAt".to_string(), serde_json::json!(now));
             }
 
+            // Schema Validation: Check the document BEFORE index update and WAL write.
+            crate::engine::schema::validate_document(schemas, collection, &value)?;
+
             // Unindex the OLD value before overwriting.
             indexing::unindex_doc(indexes, collection, &key, &existing);
         } else {
@@ -226,6 +231,9 @@ pub fn insert_batch(
                 obj.insert("createdAt".to_string(), serde_json::json!(now.clone()));
                 obj.insert("modifiedAt".to_string(), serde_json::json!(now));
             }
+
+            // Schema Validation: Check the document BEFORE index update and WAL write.
+            crate::engine::schema::validate_document(schemas, collection, &value)?;
         }
 
         // Step 1: Insert/overwrite in memory (always Hot for new writes).
@@ -282,6 +290,7 @@ pub fn update(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
+    schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
     collection: &str,
     key: &str,
     updates: Value, // the partial update — only these fields will be changed
@@ -337,8 +346,9 @@ pub fn update(
                 }
             }
 
-            // Step 3: Clone the updated document.
+            // Step 3: Clone the updated document and validate against schema.
             let new_value = doc.clone();
+            crate::engine::schema::validate_document(schemas, collection, &new_value)?;
 
             // Step 4: Re-add the document to indexes with its new field values.
             indexing::index_doc(indexes, collection, key, &new_value);

@@ -52,6 +52,7 @@ pub use wasm::OpfsStorage;
 // ── Shared imports ────────────────────────────────────────────────────────────
 // These are used by both the trait definition and the replay functions below.
 use crate::engine::types::{DbError, LogEntry};
+use serde_json::Value;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
 // multiple threads simultaneously without a global lock.
 // DashSet is the set equivalent.
@@ -164,6 +165,7 @@ pub fn stream_into_state(
     storage: &dyn StorageBackend,
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
+    schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
     let mut offset = 0u64;
@@ -187,7 +189,7 @@ pub fn stream_into_state(
                 if active_tx.as_ref() == Some(&entry.key) {
                     // Flush buffer to DashMap
                     for (e, p) in tx_buffer.drain(..) {
-                        apply_entry(&e, state, indexes, Some(p));
+                        apply_entry(&e, state, indexes, schemas, Some(p));
                     }
                     active_tx = None;
                 }
@@ -198,7 +200,7 @@ pub fn stream_into_state(
                     tx_buffer.push((entry, pointer));
                 } else {
                     // Standard non-transactional entry
-                    apply_entry(&entry, state, indexes, Some(pointer));
+                    apply_entry(&entry, state, indexes, schemas, Some(pointer));
                 }
             }
         }
@@ -221,6 +223,7 @@ fn apply_entry(
     entry: &LogEntry,
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
+    schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     pointer: Option<crate::engine::types::RecordPointer>,
 ) {
     match entry.cmd.as_str() {
@@ -279,6 +282,12 @@ fn apply_entry(
                 format!("{}:{}", entry.collection, entry.key),
                 DashMap::new(),
             );
+        }
+        "SCHEMA" => {
+            // Re-compile and register the schema during replay.
+            if let Ok(validator) = jsonschema::validator_for(&entry.value) {
+                schemas.insert(entry.collection.clone(), std::sync::Arc::new((entry.value.clone(), validator)));
+            }
         }
         // Unknown command types are silently ignored for forward compatibility.
         // If a future version of MoltenDB adds a new command, older versions

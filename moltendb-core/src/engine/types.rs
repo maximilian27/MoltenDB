@@ -82,8 +82,8 @@ impl DocumentState {
 ///   "TX_BEGIN" — marks the start of an atomic batch transaction.
 ///                `key` = transaction ID (e.g. UUID).
 ///
-///   "TX_COMMIT"— marks the successful completion of a transaction.
-///                `key` = transaction ID (matching the TX_BEGIN).
+///   "SCHEMA"   — register a JSON schema for a collection.
+///                `collection` = which collection, `value` = the schema JSON.
 ///
 ///   "ENC"      — a sentinel used by EncryptedStorage. The real LogEntry is
 ///                encrypted inside `value` as a base64 string. The engine
@@ -136,6 +136,9 @@ pub enum DbError {
     /// The requested collection does not exist.
     CollectionNotFound,
 
+    /// A document failed JSON schema validation.
+    SchemaValidationError(String),
+
     /// An optimistic concurrency control (OCC) conflict occurred.
     /// The document version provided by the client is outdated.
     Conflict,
@@ -154,6 +157,7 @@ impl fmt::Display for DbError {
             DbError::InvalidQuery(msg) => write!(f, "Invalid Query: {}", msg),
             DbError::TypeMismatch(msg) => write!(f, "Type Mismatch: {}", msg),
             DbError::CollectionNotFound => write!(f, "Collection Not Found"),
+            DbError::SchemaValidationError(msg) => write!(f, "Schema Validation Error: {}", msg),
             DbError::Conflict => write!(f, "Conflict: Document version is outdated"),
         }
     }

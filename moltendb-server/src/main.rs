@@ -363,6 +363,7 @@ async fn main() {
         .route("/set", post(handle_set))           // Insert/upsert documents
         .route("/update", post(handle_update))     // Patch/merge documents
         .route("/delete", post(handle_delete))     // Delete documents or drop collection
+        .route("/schema", post(handle_schema))     // Register/update JSON schema
         .route("/get", post(handle_get))           // Query documents (with WHERE, fields, joins, etc.)
         .route("/collections/{collection}", get(handle_rest_get_collection))       // GET all docs (paginated)
         .route("/collections/{collection}/docs/{key}", get(handle_rest_get))       // GET single doc
@@ -662,6 +663,14 @@ async fn handle_delete(
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let (code, body) = handlers::process_delete(&db, &payload, max_body_size);
+    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+}
+
+async fn handle_schema(
+    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
+    Json(payload): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    let (code, body) = handlers::process_schema(&db, &payload, max_body_size);
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 
