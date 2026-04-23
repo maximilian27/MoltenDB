@@ -47,6 +47,7 @@ pub enum DocumentState {
 impl DocumentState {
     /// Helper to get the underlying Value. If Cold, it must be fetched from storage.
     /// This is used by query evaluators and analytics.
+    #[allow(dead_code)]
     pub fn value(&self) -> Option<&Value> {
         match self {
             DocumentState::Hot(v) => Some(v),

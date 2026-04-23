@@ -33,16 +33,7 @@ mod operations; // get, get_all, insert_batch, update, delete, etc.
 pub use types::DbError;
 // Re-export the StorageBackend trait so callers can use it without knowing
 // the internal module structure.
-pub use storage::StorageBackend;
-
-// Conditionally re-export concrete storage types based on compile target.
-// On native builds (server), expose the disk and encrypted storage types.
-// On WASM builds (browser), expose the OPFS storage type.
-#[cfg(not(target_arch = "wasm32"))]
-pub use storage::{EncryptedStorage};
-
-#[cfg(target_arch = "wasm32")]
-pub use storage::OpfsStorage;
+pub use storage::{StorageBackend, EncryptedStorage};
 
 // DashMap = concurrent hash map. DashSet = concurrent hash set.
 use dashmap::{DashMap, DashSet};

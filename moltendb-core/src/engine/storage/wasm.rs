@@ -81,7 +81,7 @@ impl OpfsStorage {
 
         // Access the StorageManager via navigator.storage.
         // This is the entry point to the OPFS API.
-        let navigator = global.navigator();
+        let navigator: web_sys::WorkerNavigator = global.navigator();
         let storage = navigator.storage();
 
         // Step 1: Get the OPFS root directory.
@@ -96,7 +96,7 @@ impl OpfsStorage {
 
         // Step 2: Get (or create) a file handle for our database file.
         // FileSystemGetFileOptions with create:true means "create if not exists".
-        let mut opts = web_sys::FileSystemGetFileOptions::new();
+        let opts = web_sys::FileSystemGetFileOptions::new();
         opts.set_create(true);
 
         let file_val: JsValue = JsFuture::from(
@@ -161,7 +161,7 @@ impl StorageBackend for OpfsStorage {
         let size = handle.get_size().map_err(|_| DbError::WriteError)? as f64;
 
         // Set the write position to the end of the file (append mode).
-        let mut opts = web_sys::FileSystemReadWriteOptions::new();
+        let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(size);
 
         // Convert the string to bytes and write them.
@@ -183,7 +183,7 @@ impl StorageBackend for OpfsStorage {
         let handle = self.handle.lock().unwrap();
 
         let mut buf = vec![0u8; length as usize];
-        let mut opts = web_sys::FileSystemReadWriteOptions::new();
+        let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(offset as f64);
 
         handle
@@ -211,7 +211,7 @@ impl StorageBackend for OpfsStorage {
         let mut buf = vec![0u8; size];
 
         // Set the read position to the beginning of the file.
-        let mut opts = web_sys::FileSystemReadWriteOptions::new();
+        let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(0.0);
 
         // Read the entire file into the buffer in one call.
@@ -263,7 +263,7 @@ impl StorageBackend for OpfsStorage {
 
         // Write all the compacted entries starting at byte 0.
         let mut bytes = all_data.into_bytes();
-        let mut opts = web_sys::FileSystemReadWriteOptions::new();
+        let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(0.0);
 
         handle

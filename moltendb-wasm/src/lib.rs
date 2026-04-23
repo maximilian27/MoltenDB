@@ -127,7 +127,7 @@ impl WorkerDb {
         let body_size = max_body_size.unwrap_or(10 * 1024 * 1024);
 
         let master_key = encryption_key.map(|pw| {
-            moltendb_core::engine::storage::EncryptedStorage::derive_key(&pw, db_name)
+            moltendb_core::engine::EncryptedStorage::derive_key(&pw, db_name)
         });
 
         // Open the database. `Db::open_wasm` creates an OpfsStorage backend,
