@@ -7,6 +7,8 @@
 * **Configurable Hot/Cold threshold** — Added `--hot-threshold` CLI flag and `MOLTEN_HOT_THRESHOLD` environment variable to control the number of documents per collection kept in RAM. Default is 50,000.
 * **Auto-eviction on writes** — The engine now automatically checks collection size during `insert_batch` and `update` operations, moving documents to the `Cold` (disk) tier if the threshold is exceeded.
 * **Isomorphic WASM Support** — The hybrid model works identically in the browser via OPFS, allowing large-scale local-first applications to run in memory-constrained browser tabs.
+* **Web Package Configuration** — Updated `@moltendb-web/core` to expose `hotThreshold`, `encryptionKey`, `writeMode`, `rateLimitRequests`, `rateLimitWindow`, and `maxBodySize` in the `MoltenDb` constructor, bringing feature parity between the server and web environments.
+* **WASM At-Rest Encryption** — Enabled transparent data encryption for browser-side storage using the `encryptionKey` option, powered by `XChaCha20-Poly1305`.
 
 
 ### Architecture

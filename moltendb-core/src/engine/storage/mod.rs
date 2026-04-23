@@ -126,14 +126,18 @@ pub trait StorageBackend: Send + Sync {
     /// compatibility (used by WASM/EncryptedStorage which don't have snapshots).
     ///
     /// Returns the total number of entries processed.
-    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry)) -> Result<u64, DbError> {
+    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32)) -> Result<u64, DbError> {
         // Default: load everything into a Vec, then iterate.
         // Concrete implementations (AsyncDiskStorage, SyncDiskStorage) override
         // this with a more efficient snapshot + streaming approach.
         let entries = self.read_log()?;
         let count = entries.len() as u64;
         for entry in entries {
-            f(entry);
+            // Default re-serializes to get length. 
+            // Better implementations override this.
+            let json = serde_json::to_vec(&entry).unwrap_or_default();
+            let length = json.len() as u32;
+            f(entry, length);
         }
         Ok(count)
     }
@@ -166,15 +170,9 @@ pub fn stream_into_state(
     let mut count = 0u64;
     let mut offset = 0u64;
 
-    // stream_log_into calls our closure once per LogEntry.
-    storage.stream_log_into(&mut |entry| {
-        // We need the raw bytes length to track the offset.
-        // Since LogEntry is serialized as JSON in the log, we re-serialize it here
-        // to determine its length. In a future optimization, stream_log_into
-        // could provide the byte length directly.
-        let json = serde_json::to_vec(&entry).unwrap_or_default();
-        let length = json.len() as u32;
-
+    // stream_log_into calls our closure once per LogEntry, providing the 
+    // LogEntry and its raw byte length in the log file.
+    storage.stream_log_into(&mut |entry, length| {
         apply_entry(&entry, state, indexes, Some(crate::engine::types::RecordPointer {
             offset,
             length,

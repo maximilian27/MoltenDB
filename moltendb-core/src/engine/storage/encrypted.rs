@@ -38,8 +38,8 @@
 //   where <base64> = base64( nonce[24 bytes] || ciphertext )
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Only compile this file when targeting native (not WebAssembly).
-#![cfg(not(target_arch = "wasm32"))]
+// Encryption works on both native and WASM.
+// #![cfg(not(target_arch = "wasm32"))]
 
 // The StorageBackend trait that EncryptedStorage implements.
 use super::StorageBackend;
@@ -257,6 +257,34 @@ impl StorageBackend for EncryptedStorage {
         }
 
         Ok(decrypted)
+    }
+
+    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32)) -> Result<u64, DbError> {
+        let mut count = 0u64;
+        // EncryptedStorage wraps the inner backend. Since it doesn't have a 
+        // specialized streaming implementation yet, we fall back to read_log 
+        // BUT we need the ENCRYPTED length for the pointers.
+        
+        // Use inner.stream_log_into to get the encrypted entries and their lengths.
+        self.inner.stream_log_into(&mut |enc_entry, length| {
+            if enc_entry.cmd == "ENC" {
+                match self.decrypt_entry(&enc_entry) {
+                    Ok(real_entry) => {
+                        f(real_entry, length);
+                        count += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!("⚠️  Skipping undecryptable log entry during streaming: {}", e);
+                    }
+                }
+            } else {
+                // Pass through plaintext entry with its original length
+                f(enc_entry, length);
+                count += 1;
+            }
+        })?;
+        
+        Ok(count)
     }
 
     /// Re-encrypt all entries during compaction so the compacted file is fully

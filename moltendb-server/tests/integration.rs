@@ -15,7 +15,7 @@ fn open_db() -> engine::Db {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!("moltendb_test_{}.log", id));
     let _ = std::fs::remove_file(&path);
-    engine::Db::open(path.to_str().unwrap(), true, false, 50000, None).expect("open db")
+    engine::Db::open(path.to_str().unwrap(), true, false, 50000, 100, 60, 10485760, None).expect("open db")
 }
 
 /// Seed the three standard collections used by most tests.
@@ -686,14 +686,14 @@ fn test_persistence_survives_reopen() {
     let path = path_buf.to_str().unwrap();
     let _ = std::fs::remove_file(path);
     {
-        let db = engine::Db::open(&path, true, false, 50000, None).unwrap();
+        let db = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
         set(&db, json!({
             "collection": "items",
             "data": { "k1": { "value": 42 } }
         }));
     }
     // Reopen and verify data is still there
-    let db2 = engine::Db::open(&path, true, false, 50000, None).unwrap();
+    let db2 = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
     let r = get(&db2, json!({ "collection": "items", "keys": "k1" }));
     assert_eq!(r["value"], 42);
     let _ = std::fs::remove_file(&path);
@@ -707,12 +707,12 @@ fn test_compaction_preserves_data() {
     let path_buf = std::env::temp_dir().join(format!("moltendb_compact_{}.log", id));
     let path = path_buf.to_str().unwrap();
     let _ = std::fs::remove_file(path);
-    let db = engine::Db::open(&path, true, false, 50000, None).unwrap();
+    let db = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
     seed(&db);
     delete(&db, json!({ "collection": "laptops", "keys": "lp6" }));
     db.compact().expect("compact");
     // Reopen after compaction
-    let db2 = engine::Db::open(&path, true, false, 50000, None).unwrap();
+    let db2 = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
     let all = get(&db2, json!({ "collection": "laptops" }));
     assert_eq!(arr(&all).len(), 5); // lp6 deleted
     let r = get(&db2, json!({ "collection": "laptops", "keys": "lp2" }));
@@ -729,7 +729,7 @@ fn test_concurrent_writes() {
     let path_buf = std::env::temp_dir().join(format!("moltendb_concurrent_{}.log", id));
     let path = path_buf.to_str().unwrap();
     let _ = std::fs::remove_file(path);
-    let db = Arc::new(engine::Db::open(&path, true, false, 50000, None).unwrap());
+    let db = Arc::new(engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap());
     let n_threads = 8;
     let n_docs = 100;
     let mut handles = vec![];
@@ -758,7 +758,7 @@ fn test_concurrent_reads_during_writes() {
     let path_buf = std::env::temp_dir().join(format!("moltendb_rw_{}.log", id));
     let path = path_buf.to_str().unwrap();
     let _ = std::fs::remove_file(path);
-    let db = Arc::new(engine::Db::open(&path, true, false, 50000, None).unwrap());
+    let db = Arc::new(engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap());
     // Pre-seed
     for i in 0..50 {
         set(&db, json!({

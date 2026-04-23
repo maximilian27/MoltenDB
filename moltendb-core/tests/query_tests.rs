@@ -11,7 +11,7 @@ fn open_db() -> Db {
     if path.exists() {
         let _ = std::fs::remove_file(&path);
     }
-    Db::open(path.to_str().unwrap(), true, false, 50000, None).expect("Failed to open db")
+    Db::open(path.to_str().unwrap(), true, false, 50000, 100, 60, 10485760, None).expect("Failed to open db")
 }
 
 fn seed_data(db: &Db) {

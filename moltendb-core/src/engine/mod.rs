@@ -98,6 +98,15 @@ pub struct Db {
     /// If a collection exceeds this, older documents are paged out to disk (Cold).
     /// Default is 50,000.
     pub hot_threshold: usize,
+
+    /// Max requests per window.
+    pub rate_limit_requests: u32,
+
+    /// Window size in seconds.
+    pub rate_limit_window: u64,
+
+    /// Maximum request body size in bytes.
+    pub max_body_size: usize,
 }
 
 impl Db {
@@ -114,7 +123,16 @@ impl Db {
     /// `encryption_key` — if Some, wrap the storage in EncryptedStorage.
     ///                    if None, data is stored in plaintext (not recommended).
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn open(path: &str, sync_mode: bool, tiered_mode: bool, hot_threshold: usize, encryption_key: Option<&[u8; 32]>) -> Result<Self, DbError> {
+    pub fn open(
+        path: &str,
+        sync_mode: bool,
+        tiered_mode: bool,
+        hot_threshold: usize,
+        rate_limit_requests: u32,
+        rate_limit_window: u64,
+        max_body_size: usize,
+        encryption_key: Option<&[u8; 32]>,
+    ) -> Result<Self, DbError> {
         // Create the shared in-memory state containers.
         let state = Arc::new(DashMap::new());
         // Create the broadcast channel with a buffer of 100 messages.
@@ -163,6 +181,9 @@ impl Db {
             indexes,
             query_heatmap,
             hot_threshold,
+            rate_limit_requests,
+            rate_limit_window,
+            max_body_size,
         })
     }
 
@@ -171,7 +192,15 @@ impl Db {
     ///
     /// `db_name` — the filename in the OPFS root directory (e.g. "analytics_db").
     #[cfg(target_arch = "wasm32")]
-    pub async fn open_wasm(db_name: &str, hot_threshold: usize) -> Result<Self, DbError> {
+    pub async fn open_wasm(
+        db_name: &str,
+        hot_threshold: usize,
+        rate_limit_requests: u32,
+        rate_limit_window: u64,
+        max_body_size: usize,
+        encryption_key: Option<&[u8; 32]>,
+        sync_mode: bool,
+    ) -> Result<Self, DbError> {
         let state = Arc::new(DashMap::new());
         let (tx, _rx) = broadcast::channel(100);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
@@ -180,7 +209,13 @@ impl Db {
 
         // Open the OPFS file. This is async because the browser's OPFS API
         // uses Promises which we must await.
-        let storage: Arc<dyn StorageBackend> = Arc::new(storage::OpfsStorage::new(db_name).await?);
+        let mut storage: Arc<dyn StorageBackend> =
+            Arc::new(storage::OpfsStorage::new(db_name, sync_mode).await?);
+
+        // Apply encryption wrapper if a key is provided.
+        if let Some(key) = encryption_key {
+            storage = Arc::new(storage::EncryptedStorage::new(storage, key));
+        }
 
         // Replay the log into the in-memory state.
         storage::stream_into_state(&*storage, &state, &indexes)?;
@@ -192,6 +227,9 @@ impl Db {
             indexes,
             query_heatmap,
             hot_threshold,
+            rate_limit_requests,
+            rate_limit_window,
+            max_body_size,
         })
     }
 
@@ -382,11 +420,8 @@ impl Db {
 
         // To evict properly, we need the pointers. Since we don't store them for
         // Hot documents, we re-scan the log to find them.
-        self.storage.stream_log_into(&mut |entry| {
+        self.storage.stream_log_into(&mut |entry, length| {
             if entry.collection == collection {
-                let json = serde_json::to_vec(&entry).unwrap_or_default();
-                let length = json.len() as u32;
-
                 if evicted_count < to_evict {
                     if let Some(col) = self.state.get(collection) {
                         if let Some(mut doc_state) = col.get_mut(&entry.key) {
@@ -402,8 +437,7 @@ impl Db {
                 }
                 offset += (length + 1) as u64;
             } else {
-                let json = serde_json::to_vec(&entry).unwrap_or_default();
-                offset += (json.len() + 1) as u64;
+                offset += (length + 1) as u64;
             }
         })?;
 
