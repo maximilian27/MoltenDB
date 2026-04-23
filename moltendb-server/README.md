@@ -77,7 +77,7 @@ cargo run --package moltendb-server --bin moltendb -- \
 | `--db-path` | `DB_PATH` | `my_database.log` | Path to the WAL log file |
 | `--cert` | `TLS_CERT` | `cert.pem` | TLS certificate PEM file |
 | `--key` | `TLS_KEY` | `key.pem` | TLS private key PEM file |
-| `--write-mode` | `WRITE_MODE` | `async` | `async` (high throughput) or `sync` (zero data loss) |
+| `--write-mode` | `WRITE_MODE` | `async` | `async` (blazing fast, buffered) or `sync` (durable, flushed to disk). `async` is recommended for most web use-cases, while `sync` is better for mission-critical data. |
 | `--storage-mode` | `STORAGE_MODE` | `standard` | `standard` or `tiered` (hot + cold log, recommended for 100k+ docs) |
 | `--encryption-key` | `ENCRYPTION_KEY` | — | At-rest encryption password (ChaCha20-Poly1305) |
 | `--jwt-secret` | `JWT_SECRET` | **required** | JWT signing secret — server refuses to start without it |

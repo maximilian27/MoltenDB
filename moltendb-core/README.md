@@ -48,7 +48,7 @@ WASM-specific code (`OpfsStorage`, `Db::open_wasm`) is gated behind `#[cfg(targe
 
 ```toml
 [dependencies]
-moltendb-core = "0.3.0-beta.5"
+moltendb-core = "0.4.0"
 ```
 
 ### Minimal example
@@ -121,8 +121,8 @@ By default, any collection exceeding **50,000 documents** will automatically evi
 
 | Mode | Use case |
 |---|---|
-| `DiskStorage` (sync) | Low-latency writes, small datasets |
-| `DiskStorage` (async) | High-throughput writes, background flush |
+| `DiskStorage` (sync) | Durable writes. Each write is flushed to disk before returning. Slower but safer for mission-critical data. |
+| `DiskStorage` (async) | Blazing fast, high-throughput writes. Data is buffered and flushed in the background. Recommended for most web use-cases. |
 | `TieredStorage` | 100k+ documents — separates hot and cold log files |
 | `EncryptedStorage` | At-rest encryption with ChaCha20-Poly1305 |
 | `OpfsStorage` | Browser WASM — Origin Private File System |
