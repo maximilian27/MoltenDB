@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 // Db = the main database handle (holds in-memory state + storage backend).
 // query = the query module with helper functions like evaluate_where and get_nested_value.
-use crate::{engine::Db, query};
+use crate::{engine::Db, engine::DbError, query};
 
 // ─── AnalyticsQuery ───────────────────────────────────────────────────────────
 
@@ -155,32 +155,29 @@ pub struct ResultMetadata {
 /// # Arguments
 /// * `db`    — The database handle. Used to call `db.get_all(collection)`.
 /// * `query` — The parsed analytics query (collection + metric + optional filter).
-pub fn execute_query(db: &Db, query: &AnalyticsQuery) -> AnalyticsResult {
+pub fn execute_query(db: &Db, query: &AnalyticsQuery) -> Result<AnalyticsResult, DbError> {
     // Record the start time. `web_time::Instant` is used instead of
     // `std::time::Instant` because `std::time` is not available in WASM.
     let start = web_time::Instant::now();
 
     // Fetch all documents in the collection as a HashMap<String, Value>.
     // This is an O(n) operation — it copies every document out of the DashMap.
-    // For large collections, this is the main performance bottleneck.
+    // In the hybrid Bitcask model, this may involve many disk reads if documents are Cold.
     let all_docs = db.get_all(&query.collection);
 
     // Apply the WHERE filter (if any) to narrow down the documents.
     // `filter()` is a lazy iterator adapter — it doesn't allocate until `.collect()`.
     // `evaluate_where(doc, filter)` returns true if the document matches all conditions.
-    let filtered_docs: Vec<&Value> = all_docs
-        .values()
-        .filter(|doc| {
-            if let Some(filter) = &query.filter {
-                // Pass the document and the WHERE clause to the query evaluator.
-                // This handles $gt, $lt, $eq, $contains, etc.
-                query::evaluate_where(doc, filter)
-            } else {
-                // No filter — include every document.
-                true
+    let mut filtered_docs = Vec::new();
+    for doc in all_docs.values() {
+        if let Some(filter) = &query.filter {
+            if query::evaluate_where(doc, filter)? {
+                filtered_docs.push(doc);
             }
-        })
-        .collect();
+        } else {
+            filtered_docs.push(doc);
+        }
+    }
 
     // Record how many documents passed the filter (used in metadata).
     let rows_scanned = filtered_docs.len();
@@ -232,7 +229,7 @@ pub fn execute_query(db: &Db, query: &AnalyticsQuery) -> AnalyticsResult {
             let min = filtered_docs
                 .iter()
                 .filter_map(|doc| extract_number(doc, field))
-                .min_by(|a, b| a.partial_cmp(b).unwrap());
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
             // `map(|v| json!(v))` converts Some(f64) to Some(Value::Number).
             // `.unwrap_or(Value::Null)` returns null if no documents had the field.
@@ -244,7 +241,7 @@ pub fn execute_query(db: &Db, query: &AnalyticsQuery) -> AnalyticsResult {
             let max = filtered_docs
                 .iter()
                 .filter_map(|doc| extract_number(doc, field))
-                .max_by(|a, b| a.partial_cmp(b).unwrap());
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
             max.map(|v| json!(v)).unwrap_or(Value::Null)
         }
@@ -254,13 +251,13 @@ pub fn execute_query(db: &Db, query: &AnalyticsQuery) -> AnalyticsResult {
     // `.as_millis()` returns u128; we cast to u64 (safe for any realistic query time).
     let execution_time_ms = start.elapsed().as_millis() as u64;
 
-    AnalyticsResult {
+    Ok(AnalyticsResult {
         result,
         metadata: ResultMetadata {
             execution_time_ms,
             rows_scanned,
         },
-    }
+    })
 }
 
 // ─── extract_number ───────────────────────────────────────────────────────────

@@ -19,6 +19,43 @@ use serde_json::Value;
 // fmt is used to implement the Display trait (human-readable error messages).
 use std::fmt;
 
+/// A pointer to a document's location in the persistent log file.
+/// Used in the "Cold" state of the hybrid storage model.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RecordPointer {
+    /// Byte offset from the start of the log file.
+    pub offset: u64,
+    /// Length of the JSON-encoded document in bytes.
+    pub length: u32,
+}
+
+/// The state of a document in the database's in-memory index.
+///
+/// MoltenDB uses a hybrid "Hot/Cold" model to balance speed and memory usage:
+///
+///   Hot(Value)    — The full JSON document is in RAM. Reads are sub-microsecond.
+///   Cold(Pointer) — Only the document's location on disk is in RAM.
+///                   Reads require a single disk I/O and JSON parsing (~50µs).
+#[derive(Clone, Debug)]
+pub enum DocumentState {
+    /// Document is fully cached in memory.
+    Hot(Value),
+    /// Document is on disk; only its offset/length are in memory.
+    Cold(RecordPointer),
+}
+
+impl DocumentState {
+    /// Helper to get the underlying Value. If Cold, it must be fetched from storage.
+    /// This is used by query evaluators and analytics.
+    #[allow(dead_code)]
+    pub fn value(&self) -> Option<&Value> {
+        match self {
+            DocumentState::Hot(v) => Some(v),
+            DocumentState::Cold(_) => None,
+        }
+    }
+}
+
 /// The atomic unit of data in MoltenDB's append-only log.
 ///
 /// Every mutation to the database is recorded as a LogEntry appended to the
@@ -82,6 +119,16 @@ pub enum DbError {
     /// error — for example, when the MPSC channel is closed (server shutting
     /// down) or when an OPFS browser API call fails (returns a JS error).
     WriteError,
+
+    /// An invalid query operator or structure was encountered.
+    InvalidQuery(String),
+
+    /// A query attempted an operation on an incompatible data type
+    /// (e.g. $gt on a string that isn't a number).
+    TypeMismatch(String),
+
+    /// The requested collection does not exist.
+    CollectionNotFound,
 }
 
 /// Implement Display so DbError can be printed with `{}` formatting.
@@ -94,6 +141,9 @@ impl fmt::Display for DbError {
             DbError::Serialization(err) => write!(f, "Data Serialization Error: {}", err),
             DbError::LockPoisoned => write!(f, "Internal thread lock was poisoned"),
             DbError::WriteError => write!(f, "Failed to send data to storage backend"),
+            DbError::InvalidQuery(msg) => write!(f, "Invalid Query: {}", msg),
+            DbError::TypeMismatch(msg) => write!(f, "Type Mismatch: {}", msg),
+            DbError::CollectionNotFound => write!(f, "Collection Not Found"),
         }
     }
 }

@@ -38,8 +38,8 @@
 //   where <base64> = base64( nonce[24 bytes] || ciphertext )
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Only compile this file when targeting native (not WebAssembly).
-#![cfg(not(target_arch = "wasm32"))]
+// Encryption works on both native and WASM.
+// #![cfg(not(target_arch = "wasm32"))]
 
 // The StorageBackend trait that EncryptedStorage implements.
 use super::StorageBackend;
@@ -259,6 +259,34 @@ impl StorageBackend for EncryptedStorage {
         Ok(decrypted)
     }
 
+    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32)) -> Result<u64, DbError> {
+        let mut count = 0u64;
+        // EncryptedStorage wraps the inner backend. Since it doesn't have a 
+        // specialized streaming implementation yet, we fall back to read_log 
+        // BUT we need the ENCRYPTED length for the pointers.
+        
+        // Use inner.stream_log_into to get the encrypted entries and their lengths.
+        self.inner.stream_log_into(&mut |enc_entry, length| {
+            if enc_entry.cmd == "ENC" {
+                match self.decrypt_entry(&enc_entry) {
+                    Ok(real_entry) => {
+                        f(real_entry, length);
+                        count += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!("⚠️  Skipping undecryptable log entry during streaming: {}", e);
+                    }
+                }
+            } else {
+                // Pass through plaintext entry with its original length
+                f(enc_entry, length);
+                count += 1;
+            }
+        })?;
+        
+        Ok(count)
+    }
+
     /// Re-encrypt all entries during compaction so the compacted file is fully
     /// encrypted with no plaintext remnants from a migration.
     ///
@@ -273,5 +301,24 @@ impl StorageBackend for EncryptedStorage {
             entries.iter().map(|e| self.encrypt_entry(e)).collect();
         // Delegate the actual file writing to the inner backend's compact().
         self.inner.compact(encrypted?)
+    }
+
+    /// Read exactly `length` bytes from the inner backend and decrypt the entry.
+    ///
+    /// Note: in the encrypted Bitcask model, the pointer refers to the offset
+    /// and length of the ENCRYPTED entry in the log.
+    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
+        // 1. Read the encrypted bytes from the inner storage.
+        let raw_bytes = self.inner.read_at(offset, length)?;
+
+        // 2. Deserialize the ENC LogEntry.
+        let enc_entry: LogEntry = serde_json::from_slice(&raw_bytes).map_err(DbError::Serialization)?;
+
+        // 3. Decrypt the entry.
+        let decrypted = self.decrypt_entry(&enc_entry)?;
+
+        // 4. Return the original plaintext LogEntry serialized as JSON.
+        // This matches the format expected by the engine (e.g. operations::get).
+        Ok(serde_json::to_vec(&decrypted).map_err(DbError::Serialization)?)
     }
 }

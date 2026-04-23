@@ -286,7 +286,11 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
         // The index narrows the candidate set but doesn't guarantee all conditions
         // are met (e.g. a compound WHERE with multiple fields).
         if let Some(clause) = where_clause {
-            if !query::evaluate_where(&doc, clause) { continue; }
+            let matches = match query::evaluate_where(&doc, clause) {
+                Ok(m) => m,
+                Err(e) => return (400, json!({ "error": e.to_string(), "statusCode": 400 })),
+            };
+            if !matches { continue; }
         }
 
         // ── Field projection / exclusion ──────────────────────────────────────

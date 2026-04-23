@@ -86,7 +86,7 @@ impl WorkerDb {
     /// Initialize the database and open (or create) the OPFS storage file.
     ///
     /// Called from JavaScript as:
-    ///   `const db = await WorkerDb.create("click_analytics_db")`
+    ///   `const db = await WorkerDb.create("click_analytics_db", 50000, "my-secret-key")`
     ///
     /// A named static factory function is used instead of an async constructor
     /// because `#[wasm_bindgen(constructor)]` with `async fn` produces invalid
@@ -99,19 +99,51 @@ impl WorkerDb {
     /// # Arguments
     /// * `db_name` — The name of the OPFS file to open (e.g. "click_analytics_db").
     ///   Each unique name is a separate database file in the browser's OPFS storage.
+    /// * `hot_threshold` — Optional maximum documents per collection to keep in RAM (default: 50,000).
+    /// * `encryption_key` — Optional password for at-rest encryption.
+    /// * `write_mode` — Optional write mode: "async" (default) or "sync".
+    /// * `rate_limit_requests` — Optional max requests per window (default: 100).
+    /// * `rate_limit_window` — Optional window size in seconds (default: 60).
+    /// * `max_body_size` — Optional maximum request body size in bytes (default: 10MB).
     #[wasm_bindgen]
-    pub async fn create(db_name: &str) -> Result<WorkerDb, JsValue> {
+    pub async fn create(
+        db_name: &str,
+        hot_threshold: Option<usize>,
+        encryption_key: Option<String>,
+        write_mode: Option<String>,
+        rate_limit_requests: Option<u32>,
+        rate_limit_window: Option<u64>,
+        max_body_size: Option<usize>,
+    ) -> Result<WorkerDb, JsValue> {
         // Install a panic hook that converts Rust panics into readable JS error messages.
         // Without this, a Rust panic in WASM produces an unhelpful "unreachable" error.
         // `set_once` ensures it's only installed once even if new() is called multiple times.
         console_error_panic_hook::set_once();
 
+        let threshold = hot_threshold.unwrap_or(50000);
+        let sync_mode = write_mode.map(|m| m == "sync").unwrap_or(false);
+        let limit_reqs = rate_limit_requests.unwrap_or(100);
+        let limit_window = rate_limit_window.unwrap_or(60);
+        let body_size = max_body_size.unwrap_or(10 * 1024 * 1024);
+
+        let master_key = encryption_key.map(|pw| {
+            moltendb_core::engine::EncryptedStorage::derive_key(&pw, db_name)
+        });
+
         // Open the database. `Db::open_wasm` creates an OpfsStorage backend,
         // reads the existing OPFS file (if any), and replays the log into memory.
         // `.map_err(...)` converts a DbError into a JsValue string for JavaScript.
-        let db = Db::open_wasm(db_name)
-            .await
-            .map_err(|e| JsValue::from_str(&format!("Failed to open database: {}", e)))?;
+        let db = Db::open_wasm(
+            db_name,
+            threshold,
+            limit_reqs,
+            limit_window,
+            body_size,
+            master_key.as_ref(),
+            sync_mode,
+        )
+        .await
+        .map_err(|e| JsValue::from_str(&format!("Failed to open database: {}", e)))?;
 
         // Log a success message to the browser's DevTools console.
         web_sys::console::log_1(&JsValue::from_str("✅ MoltenDB initialized in worker"));
@@ -218,7 +250,7 @@ impl WorkerDb {
     /// Equivalent to POST /get on the server.
     ///   { "collection": "laptops", "where": { "brand": "Apple" }, "fields": ["brand", "model"] }
     fn handle_get(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_get::process_get(&self.db, request, 5 * 1024 * 1024);
+        let (code, mut body): (u16, Value) = handlers::process_get::process_get(&self.db, request, self.db.max_body_size);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -227,7 +259,7 @@ impl WorkerDb {
     /// Insert/upsert documents. Equivalent to POST /set on the server.
     ///   { "collection": "laptops", "data": { "lp1": { ... }, "lp2": { ... } } }
     fn handle_set(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_set::process_set(&self.db, request, 5 * 1024 * 1024);
+        let (code, mut body): (u16, Value) = handlers::process_set::process_set(&self.db, request, self.db.max_body_size);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         self.maybe_compact();
@@ -237,7 +269,7 @@ impl WorkerDb {
     /// Patch/merge documents. Equivalent to POST /update on the server.
     ///   { "collection": "laptops", "data": { "lp4": { "price": 1749 } } }
     fn handle_update(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_update::process_update(&self.db, request, 5 * 1024 * 1024);
+        let (code, mut body): (u16, Value) = handlers::process_update::process_update(&self.db, request, self.db.max_body_size);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         self.maybe_compact();
@@ -247,7 +279,7 @@ impl WorkerDb {
     /// Delete documents or drop a collection. Equivalent to POST /delete on the server.
     ///   { "collection": "laptops", "keys": "lp6" }  or  { "drop": true }
     fn handle_delete(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_delete::process_delete(&self.db, request, 5 * 1024 * 1024);
+        let (code, mut body): (u16, Value) = handlers::process_delete::process_delete(&self.db, request, self.db.max_body_size);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         self.maybe_compact();
@@ -283,7 +315,10 @@ impl WorkerDb {
         };
 
         // Execute the analytics query against the in-memory database.
-        let result = analytics::execute_query(&self.db, &query);
+        let result = match analytics::execute_query(&self.db, &query) {
+            Ok(res) => res,
+            Err(e) => return json!({ "error": format!("Analytics failed: {}", e) }).to_string(),
+        };
 
         // Serialize the result to a JSON string.
         // We manually construct the output shape to match what the dashboard expects.

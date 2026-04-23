@@ -1,4 +1,4 @@
-name: Auto-Bump Beta Version
+name: Auto-Bump Version
 
 # Trigger when code is pushed or merged into the dev branch
 on:
@@ -9,7 +9,7 @@ on:
 jobs:
   bump-version:
     # THE SHIELD: This prevents the infinite loop. It tells GitHub to ignore commits made by this bot.
-    if: "!startsWith(github.event.head_commit.message, 'chore: bump beta version')"
+    if: "!startsWith(github.event.head_commit.message, 'chore: bump version')"
     runs-on: ubuntu-latest
     permissions:
       contents: write # Required to push the new Cargo.toml back to the repo
@@ -32,8 +32,8 @@ jobs:
           CURRENT_VERSION=$(grep -m 1 '^version = ' moltendb-core/Cargo.toml | tr -d ' "' | sed 's/version=//')
           echo "Current version: $CURRENT_VERSION"
 
-          # Use Regex to split the string (e.g., "0.2.0-beta." and "3")
-          if [[ $CURRENT_VERSION =~ (.*-beta\.)([0-9]+) ]]; then
+          # Use Regex to split the string (e.g., "0.4." and "0")
+          if [[ $CURRENT_VERSION =~ (^[0-9]+\.[0-9]+\.)([0-9]+)$ ]]; then
             BASE="${BASH_REMATCH[1]}"
             NUM="${BASH_REMATCH[2]}"
 
@@ -63,10 +63,10 @@ jobs:
 
             # Commit and push all changed files back to the dev branch
             git add moltendb-core/Cargo.toml moltendb-server/Cargo.toml moltendb-auth/Cargo.toml moltendb-wasm/Cargo.toml Cargo.lock
-            git commit -m "chore: bump beta version to $NEW_VERSION [skip ci]"
+            git commit -m "chore: bump version to $NEW_VERSION [skip ci]"
             git push
           else
-            echo "Current version ($CURRENT_VERSION) does not match the '-beta.X' pattern."
+            echo "Current version ($CURRENT_VERSION) does not match the 'X.Y.Z' pattern."
             echo "Skipping version bump."
             exit 0
           fi
