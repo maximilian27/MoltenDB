@@ -167,6 +167,15 @@ pub fn insert_batch(
         .entry(collection.to_string())
         .or_insert_with(DashMap::new);
 
+    // TX_BEGIN: Start a transaction.
+    let tx_id = uuid::Uuid::new_v4().to_string();
+    storage.write_entry(&LogEntry {
+        cmd: "TX_BEGIN".into(),
+        collection: collection.into(),
+        key: tx_id.clone(),
+        value: Value::Null,
+    })?;
+
     for (key, mut value) in items {
         let now = now_iso();
         
@@ -225,7 +234,7 @@ pub fn insert_batch(
         // Step 2: Update indexes.
         indexing::index_doc(indexes, collection, &key, &value);
 
-        // Step 3: Persist.
+        // Step 3: Persist within the transaction.
         let entry = LogEntry {
             cmd: "INSERT".to_string(),
             collection: collection.to_string(),
@@ -246,6 +255,15 @@ pub fn insert_batch(
             .to_string(),
         );
     }
+
+    // TX_COMMIT: Successfully complete the transaction.
+    storage.write_entry(&LogEntry {
+        cmd: "TX_COMMIT".into(),
+        collection: collection.into(),
+        key: tx_id,
+        value: Value::Null,
+    })?;
+
     Ok(())
 }
 

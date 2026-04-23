@@ -28,9 +28,8 @@ mod indexing;   // index_doc, unindex_doc, track_query, create_index
 mod storage;    // StorageBackend trait + concrete implementations
 mod operations; // get, get_all, insert_batch, update, delete, etc.
 
-// Re-export DbError so callers can write `engine::DbError` instead of
-// `engine::types::DbError`.
-pub use types::DbError;
+// Re-export LogEntry so it can be used by tests and other crates.
+pub use types::{DbError, LogEntry};
 // Re-export the StorageBackend trait so callers can use it without knowing
 // the internal module structure.
 pub use storage::{StorageBackend, EncryptedStorage};

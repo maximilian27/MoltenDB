@@ -167,19 +167,49 @@ pub fn stream_into_state(
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
     let mut offset = 0u64;
+    let mut tx_buffer: Vec<(LogEntry, crate::engine::types::RecordPointer)> = Vec::new();
+    let mut active_tx: Option<String> = None;
 
     // stream_log_into calls our closure once per LogEntry, providing the 
     // LogEntry and its raw byte length in the log file.
     storage.stream_log_into(&mut |entry, length| {
-        apply_entry(&entry, state, indexes, Some(crate::engine::types::RecordPointer {
+        let pointer = crate::engine::types::RecordPointer {
             offset,
             length,
-        }));
+        };
+
+        match entry.cmd.as_str() {
+            "TX_BEGIN" => {
+                active_tx = Some(entry.key.clone());
+                tx_buffer.clear();
+            }
+            "TX_COMMIT" => {
+                if active_tx.as_ref() == Some(&entry.key) {
+                    // Flush buffer to DashMap
+                    for (e, p) in tx_buffer.drain(..) {
+                        apply_entry(&e, state, indexes, Some(p));
+                    }
+                    active_tx = None;
+                }
+            }
+            _ => {
+                if active_tx.is_some() {
+                    // Hold in RAM until commit
+                    tx_buffer.push((entry, pointer));
+                } else {
+                    // Standard non-transactional entry
+                    apply_entry(&entry, state, indexes, Some(pointer));
+                }
+            }
+        }
 
         count += 1;
         // +1 for the newline character appended to each JSON line in the log.
         offset += (length + 1) as u64;
     })?;
+
+    // If active_tx is still Some, the file ended prematurely (crash).
+    // The tx_buffer is dropped here -> Atomicity achieved.
     Ok(count)
 }
 

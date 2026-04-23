@@ -64,28 +64,34 @@ impl DocumentState {
 ///
 /// The four command types and their meanings:
 ///
-///   "INSERT" — insert or overwrite a document.
-///              `collection` = which collection, `key` = document ID,
-///              `value` = the full JSON document.
+///   "INSERT"   — insert or overwrite a document.
+///                `collection` = which collection, `key` = document ID,
+///                `value` = the full JSON document.
 ///
-///   "DELETE" — delete a single document.
-///              `collection` + `key` identify the document; `value` is null.
+///   "DELETE"   — delete a single document.
+///                `collection` + `key` identify the document; `value` is null.
 ///
-///   "DROP"   — delete an entire collection.
-///              `collection` = which collection; `key` and `value` are unused.
+///   "DROP"     — delete an entire collection.
+///                `collection` = which collection; `key` and `value` are unused.
 ///
-///   "INDEX"  — record that an index was created on a field.
-///              `collection` = which collection, `key` = field name,
-///              `value` is null. The index data itself is rebuilt from the
-///              INSERT entries during replay.
+///   "INDEX"    — record that an index was created on a field.
+///                `collection` = which collection, `key` = field name,
+///                `value` is null. The index data itself is rebuilt from the
+///                INSERT entries during replay.
 ///
-///   "ENC"    — a sentinel used by EncryptedStorage. The real LogEntry is
-///              encrypted inside `value` as a base64 string. The engine
-///              never sees ENC entries directly — EncryptedStorage decrypts
-///              them before returning them from read_log().
-#[derive(Serialize, Deserialize)]
+///   "TX_BEGIN" — marks the start of an atomic batch transaction.
+///                `key` = transaction ID (e.g. UUID).
+///
+///   "TX_COMMIT"— marks the successful completion of a transaction.
+///                `key` = transaction ID (matching the TX_BEGIN).
+///
+///   "ENC"      — a sentinel used by EncryptedStorage. The real LogEntry is
+///                encrypted inside `value` as a base64 string. The engine
+///                never sees ENC entries directly — EncryptedStorage decrypts
+///                them before returning them from read_log().
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LogEntry {
-    /// The command type: "INSERT", "DELETE", "DROP", "INDEX", or "ENC".
+    /// The command type: "INSERT", "DELETE", "DROP", "INDEX", "TX_BEGIN", "TX_COMMIT" or "ENC".
     pub cmd: String,
     /// The name of the collection this entry belongs to.
     pub collection: String,
