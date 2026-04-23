@@ -137,6 +137,27 @@ By default, any collection exceeding **50,000 documents** will automatically evi
 
 ---
 
+## Testing
+
+`moltendb-core` includes a comprehensive test suite to ensure engine reliability and query correctness.
+
+### Unit Tests
+Unit tests are located within the source files (e.g., `src/query.rs`, `src/engine/storage/mod.rs`).
+```bash
+cargo test -p moltendb-core --lib
+```
+
+### Integration Tests
+Integration tests are located in the `tests/` directory and verify the interaction between the engine, handlers, and storage backends.
+```bash
+# Run all core integration tests
+cargo test -p moltendb-core --test engine_tests
+cargo test -p moltendb-core --test query_tests
+cargo test -p moltendb-core --test hybrid_storage_tests
+```
+
+---
+
 ## Part of the MoltenDB workspace
 
 ```
