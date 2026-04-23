@@ -1,6 +1,6 @@
 [package]
 name = "moltendb-wasm"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 authors = ["Maximilian Both <maximilian.both27@outlook.com>"]
 description = "MoltenDB WASM adapter — exposes the core engine to JavaScript via wasm-bindgen."
@@ -14,7 +14,7 @@ name = "moltendb_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-moltendb-core = { version = "0.4.0", path = "../moltendb-core" }
+moltendb-core = { version = "0.4.1", path = "../moltendb-core" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
