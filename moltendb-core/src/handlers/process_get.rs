@@ -294,29 +294,40 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
         }
 
         // ── Field projection / exclusion ──────────────────────────────────────
-        if let Some(fields) = fields_req {
+        let mut processed_doc = if let Some(fields) = fields_req {
             // Project: keep only the requested fields.
             let mut projected = query::project(&doc, fields);
+
             // Also include any joined fields that were embedded above.
             if !join_aliases.is_empty() {
                 if let Some(doc_obj) = doc.as_object() {
                     if let Some(proj_obj) = projected.as_object_mut() {
-                        for alias in join_aliases {
-                            if let Some(joined_val) = doc_obj.get(&alias) {
-                                proj_obj.insert(alias, joined_val.clone());
+                        for alias in &join_aliases {
+                            if let Some(joined_val) = doc_obj.get(alias) {
+                                proj_obj.insert(alias.clone(), joined_val.clone());
                             }
                         }
                     }
                 }
             }
-            final_results.insert(key, projected);
+            projected
         } else if let Some(excluded) = excluded_fields_req {
             // Exclude: remove the specified fields, keep everything else.
-            final_results.insert(key, query::exclude(&doc, excluded));
+            query::exclude(&doc, excluded)
         } else {
             // No projection — return the full document.
-            final_results.insert(key, doc);
+            doc.clone()
+        };
+
+        // ALWAYS include _v, regardless of projection or exclusion.
+        // It's essential for concurrency control.
+        if let Some(v_val) = doc.get("_v") {
+            if let Some(obj) = processed_doc.as_object_mut() {
+                obj.insert("_v".to_string(), v_val.clone());
+            }
         }
+
+        final_results.insert(key, processed_doc);
     }
 
     // Return null if no documents matched.
@@ -326,7 +337,9 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
     // directly — no array wrapper, no _key injection. The caller already knows
     // which key they asked for.
     if let Some(Value::String(_)) = payload.get("keys") {
-        if let Some(first_val) = final_results.values().next() { return (200, first_val.clone()); }
+        if let Some(first_val) = final_results.values().next().cloned() {
+            return (200, first_val);
+        }
     }
 
     // ── Apply sort ────────────────────────────────────────────────────────────
@@ -406,23 +419,18 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
     // returning an object for unsorted results and an array for sorted results
     // was inconsistent. The only exception is single-key lookups (handled above)
     // which return the document directly without a wrapper.
-    let array: Vec<Value> = if let Some(limit) = count_limit {
-        iter.take(limit).map(|(k, mut doc)| {
-            // Inject the document key as "_key" so the caller knows which
-            // document each array element corresponds to.
-            if let Some(obj) = doc.as_object_mut() {
-                obj.insert("_key".to_string(), Value::String(k));
-            }
-            doc
-        }).collect()
-    } else {
-        iter.map(|(k, mut doc)| {
-            if let Some(obj) = doc.as_object_mut() {
-                obj.insert("_key".to_string(), Value::String(k));
-            }
-            doc
-        }).collect()
-    };
+    let mut iter: Box<dyn Iterator<Item = (String, Value)>> = Box::new(iter);
+    if let Some(limit) = count_limit {
+        iter = Box::new(iter.take(limit));
+    }
+
+    let array: Vec<Value> = iter.map(|(k, mut doc)| {
+        if let Some(obj) = doc.as_object_mut() {
+            obj.insert("_key".to_string(), Value::String(k));
+        }
+        doc
+    }).collect();
+
     (200, Value::Array(array))
 }
 
