@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3Njk3ODIzOH0.eobvtp-BLDkZA9gxuSi1FH3SX_gXlgSMqnnWr9Q0KRQ
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NzAxNjQyNH0.v15ftTfs9KMx1G0P4mhlhsHQUfLMD5yP8cEbY5NRnVQ
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
 ### subsequent examples. The laptops collection references memory and display
