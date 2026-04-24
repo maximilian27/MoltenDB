@@ -357,16 +357,20 @@ async fn main() {
     // Axum clones this for each request — Db and UserStore are cheap to clone (Arc-backed).
     let app_state = (db.clone(), users, cfg.max_body_size);
 
-    // Protected routes require a valid JWT token (enforced by auth_middleware).
-    // The middleware is applied only to this sub-router, not to public_routes.
-    let protected_routes = Router::new()
+    let mut protected_routes = Router::new()
         .route("/set", post(handle_set))           // Insert/upsert documents
         .route("/update", post(handle_update))     // Patch/merge documents
         .route("/delete", post(handle_delete))     // Delete documents or drop collection
-        .route("/schema", post(handle_schema))     // Register/update JSON schema
         .route("/get", post(handle_get))           // Query documents (with WHERE, fields, joins, etc.)
         .route("/collections/{collection}", get(handle_rest_get_collection))       // GET all docs (paginated)
-        .route("/collections/{collection}/docs/{key}", get(handle_rest_get))       // GET single doc
+        .route("/collections/{collection}/docs/{key}", get(handle_rest_get));      // GET single doc
+
+    #[cfg(feature = "schema")]
+    {
+        protected_routes = protected_routes.route("/schema", post(handle_schema));
+    }
+
+    let protected_routes = protected_routes
         // Apply the auth middleware to all routes in this sub-router.
         // `from_fn` wraps an async function as an Axum middleware layer.
         .layer(middleware::from_fn(auth::auth_middleware));
@@ -666,6 +670,7 @@ async fn handle_delete(
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 
+#[cfg(feature = "schema")]
 async fn handle_schema(
     State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
     Json(payload): Json<Value>,

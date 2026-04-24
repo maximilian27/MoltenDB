@@ -26,6 +26,7 @@
 mod types;      // LogEntry, DbError
 mod indexing;   // index_doc, unindex_doc, track_query, create_index
 mod storage;    // StorageBackend trait + concrete implementations
+#[cfg(feature = "schema")]
 mod schema;     // JSON Schema validation
 mod operations; // get, get_all, insert_batch, update, delete, etc.
 
@@ -101,6 +102,7 @@ pub struct Db {
 
     /// Registered JSON schemas per collection.
     /// Key: collection name → Value: (Original JSON, Compiled Validator).
+    #[cfg(feature = "schema")]
     pub schemas: Arc<DashMap<String, Arc<(Value, jsonschema::Validator)>>>,
 }
 
@@ -136,6 +138,7 @@ impl Db {
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
         let query_heatmap = Arc::new(Default::default());
+        #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
         // Choose the base storage backend based on the configured mode.
@@ -168,7 +171,12 @@ impl Db {
 
         // Replay the log (or snapshot + delta) into the in-memory state.
         // After this call, `state` and `indexes` reflect the persisted data.
-        storage::stream_into_state(&*storage, &state, &indexes, &schemas)?;
+        storage::stream_into_state(
+            &*storage,
+            &state,
+            &indexes,
+            #[cfg(feature = "schema")] &schemas,
+        )?;
 
         Ok(Self {
             state,
@@ -180,6 +188,7 @@ impl Db {
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
+            #[cfg(feature = "schema")]
             schemas,
         })
     }
@@ -203,6 +212,7 @@ impl Db {
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
         let query_heatmap = Arc::new(Default::default());
+        #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
         // Open the OPFS file. This is async because the browser's OPFS API
@@ -216,7 +226,12 @@ impl Db {
         }
 
         // Replay the log into the in-memory state.
-        storage::stream_into_state(&*storage, &state, &indexes, &schemas)?;
+        storage::stream_into_state(
+            &*storage,
+            &state,
+            &indexes,
+            #[cfg(feature = "schema")] &schemas,
+        )?;
 
         Ok(Self {
             state,
@@ -228,6 +243,7 @@ impl Db {
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
+            #[cfg(feature = "schema")]
             schemas,
         })
     }
@@ -262,7 +278,7 @@ impl Db {
             &self.indexes,
             &self.storage,
             &self.tx,
-            &self.schemas,
+            #[cfg(feature = "schema")] &self.schemas,
             collection,
             items,
         )?;
@@ -280,7 +296,7 @@ impl Db {
             &self.indexes,
             &self.storage,
             &self.tx,
-            &self.schemas,
+            #[cfg(feature = "schema")] &self.schemas,
             collection,
             key,
             updates,
@@ -345,6 +361,7 @@ impl Db {
 
     /// Register a JSON schema for a collection.
     /// All subsequent writes to this collection must conform to this schema.
+    #[cfg(feature = "schema")]
     pub fn set_schema(&self, collection: &str, schema: Value) -> Result<(), DbError> {
         schema::set_schema(
             &self.schemas,
@@ -392,6 +409,7 @@ impl Db {
         }
 
         // One SCHEMA entry per collection.
+        #[cfg(feature = "schema")]
         for schema_ref in self.schemas.iter() {
             let col_name = schema_ref.key();
             let (schema_json, _) = &**schema_ref.value();

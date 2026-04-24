@@ -28,6 +28,8 @@ pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize) ->
                 Ok(true)  => updated_count += 1,  // Document found and updated
                 Ok(false) => {},                   // Document not found — skip
                 Err(engine::DbError::Conflict) => return (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
+                #[cfg(feature = "schema")]
+                Err(engine::DbError::SchemaValidationError(msg)) => return (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => return (500, json!({ "error": "Database update failed", "details": e.to_string(), "statusCode": 500 }))
             }
         }

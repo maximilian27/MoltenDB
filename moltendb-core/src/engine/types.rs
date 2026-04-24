@@ -136,12 +136,13 @@ pub enum DbError {
     /// The requested collection does not exist.
     CollectionNotFound,
 
-    /// A document failed JSON schema validation.
-    SchemaValidationError(String),
-
     /// An optimistic concurrency control (OCC) conflict occurred.
     /// The document version provided by the client is outdated.
     Conflict,
+
+    /// A document failed JSON schema validation.
+    #[cfg(feature = "schema")]
+    SchemaValidationError(String),
 }
 
 /// Implement Display so DbError can be printed with `{}` formatting.
@@ -157,8 +158,9 @@ impl fmt::Display for DbError {
             DbError::InvalidQuery(msg) => write!(f, "Invalid Query: {}", msg),
             DbError::TypeMismatch(msg) => write!(f, "Type Mismatch: {}", msg),
             DbError::CollectionNotFound => write!(f, "Collection Not Found"),
-            DbError::SchemaValidationError(msg) => write!(f, "Schema Validation Error: {}", msg),
             DbError::Conflict => write!(f, "Conflict: Document version is outdated"),
+            #[cfg(feature = "schema")]
+            DbError::SchemaValidationError(msg) => write!(f, "Schema Validation Error: {}", msg),
         }
     }
 }

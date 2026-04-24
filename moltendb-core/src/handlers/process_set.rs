@@ -90,6 +90,8 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
                     (200, json!({ "status": "ok", "count": data_map.len() }))
                 },
                 Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
+                #[cfg(feature = "schema")]
+                Err(engine::DbError::SchemaValidationError(msg)) => (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))
             }
         },
@@ -127,6 +129,8 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
                     }))
                 },
                 Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
+                #[cfg(feature = "schema")]
+                Err(engine::DbError::SchemaValidationError(msg)) => (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))
             }
         },
