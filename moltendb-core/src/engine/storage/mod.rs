@@ -52,7 +52,9 @@ pub use wasm::OpfsStorage;
 // ── Shared imports ────────────────────────────────────────────────────────────
 // These are used by both the trait definition and the replay functions below.
 use crate::engine::types::{DbError, LogEntry};
+#[cfg(feature = "schema")]
 use serde_json::Value;
+use std::ops::ControlFlow;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
 // multiple threads simultaneously without a global lock.
 // DashSet is the set equivalent.
@@ -125,18 +127,21 @@ pub trait StorageBackend: Send + Sync {
     /// compatibility (used by WASM/EncryptedStorage which don't have snapshots).
     ///
     /// Returns the total number of entries processed.
-    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32)) -> Result<u64, DbError> {
+    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
         // Default: load everything into a Vec, then iterate.
         // Concrete implementations (AsyncDiskStorage, SyncDiskStorage) override
         // this with a more efficient snapshot + streaming approach.
         let entries = self.read_log()?;
-        let count = entries.len() as u64;
+        let mut count = 0u64;
         for entry in entries {
             // Default re-serializes to get length. 
             // Better implementations override this.
             let json = serde_json::to_vec(&entry).unwrap_or_default();
             let length = json.len() as u32;
-            f(entry, length);
+            if let ControlFlow::Break(_) = f(entry, length) {
+                return Ok(count);
+            }
+            count += 1;
         }
         Ok(count)
     }
@@ -165,7 +170,7 @@ pub fn stream_into_state(
     storage: &dyn StorageBackend,
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-    schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
     let mut offset = 0u64;
@@ -189,7 +194,13 @@ pub fn stream_into_state(
                 if active_tx.as_ref() == Some(&entry.key) {
                     // Flush buffer to DashMap
                     for (e, p) in tx_buffer.drain(..) {
-                        apply_entry(&e, state, indexes, schemas, Some(p));
+                        apply_entry(
+                            &e,
+                            state,
+                            indexes,
+                            #[cfg(feature = "schema")] schemas,
+                            Some(p),
+                        );
                     }
                     active_tx = None;
                 }
@@ -200,7 +211,13 @@ pub fn stream_into_state(
                     tx_buffer.push((entry, pointer));
                 } else {
                     // Standard non-transactional entry
-                    apply_entry(&entry, state, indexes, schemas, Some(pointer));
+                    apply_entry(
+                        &entry,
+                        state,
+                        indexes,
+                        #[cfg(feature = "schema")] schemas,
+                        Some(pointer),
+                    );
                 }
             }
         }
@@ -208,6 +225,7 @@ pub fn stream_into_state(
         count += 1;
         // +1 for the newline character appended to each JSON line in the log.
         offset += (length + 1) as u64;
+        ControlFlow::Continue(())
     })?;
 
     // If active_tx is still Some, the file ended prematurely (crash).
@@ -219,11 +237,11 @@ pub fn stream_into_state(
 ///
 /// If `pointer` is provided (during log replay), INSERT entries are stored
 /// as `DocumentState::Cold(pointer)` to save memory. Live writes stay `Hot`.
-fn apply_entry(
+pub fn apply_entry(
     entry: &LogEntry,
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-    schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     pointer: Option<crate::engine::types::RecordPointer>,
 ) {
     match entry.cmd.as_str() {
@@ -283,6 +301,7 @@ fn apply_entry(
                 DashMap::new(),
             );
         }
+        #[cfg(feature = "schema")]
         "SCHEMA" => {
             // Re-compile and register the schema during replay.
             if let Ok(validator) = jsonschema::validator_for(&entry.value) {

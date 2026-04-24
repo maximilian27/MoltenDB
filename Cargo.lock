@@ -985,9 +985,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1413,7 +1415,6 @@ dependencies = [
  "percent-encoding",
  "referencing",
  "regex-syntax",
- "reqwest",
  "serde",
  "serde_json",
  "uuid-simd",
@@ -1545,7 +1546,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-auth"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "bcrypt",
@@ -1557,7 +1558,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "argon2",
  "base64",
@@ -1565,6 +1566,7 @@ dependencies = [
  "chacha20poly1305",
  "dashmap",
  "getrandom 0.2.17",
+ "getrandom 0.3.4",
  "js-sys",
  "jsonschema",
  "memmap2",
@@ -1584,24 +1586,17 @@ dependencies = [
 
 [[package]]
 name = "moltendb-server"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
- "argon2",
  "axum",
  "axum-server",
- "base64",
- "bincode",
- "chacha20poly1305",
  "clap",
  "colored",
  "dashmap",
  "futures",
  "indicatif",
- "memmap2",
  "moltendb-auth",
  "moltendb-core",
- "rand_core 0.6.4",
- "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -1617,15 +1612,13 @@ dependencies = [
 
 [[package]]
 name = "moltendb-wasm"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "console_error_panic_hook",
- "getrandom 0.2.17",
  "js-sys",
  "moltendb-core",
  "serde-wasm-bindgen",
  "serde_json",
- "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

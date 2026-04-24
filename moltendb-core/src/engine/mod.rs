@@ -26,6 +26,7 @@
 mod types;      // LogEntry, DbError
 mod indexing;   // index_doc, unindex_doc, track_query, create_index
 mod storage;    // StorageBackend trait + concrete implementations
+#[cfg(feature = "schema")]
 mod schema;     // JSON Schema validation
 mod operations; // get, get_all, insert_batch, update, delete, etc.
 
@@ -34,6 +35,8 @@ pub use types::{DbError, LogEntry};
 // Re-export the StorageBackend trait so callers can use it without knowing
 // the internal module structure.
 pub use storage::{StorageBackend, EncryptedStorage};
+#[cfg(not(target_arch = "wasm32"))]
+pub use storage::{AsyncDiskStorage, SyncDiskStorage};
 
 // DashMap = concurrent hash map. DashSet = concurrent hash set.
 use dashmap::{DashMap, DashSet};
@@ -45,6 +48,7 @@ use std::collections::HashMap;
 // Arc = thread-safe reference-counted pointer.
 // Wrapping fields in Arc allows Db to be cheaply cloned — all clones share
 // the same underlying data.
+use std::ops::ControlFlow;
 use std::sync::Arc;
 // Tokio's broadcast channel: one sender, many receivers.
 // Used to push real-time change notifications to WebSocket subscribers.
@@ -101,6 +105,7 @@ pub struct Db {
 
     /// Registered JSON schemas per collection.
     /// Key: collection name → Value: (Original JSON, Compiled Validator).
+    #[cfg(feature = "schema")]
     pub schemas: Arc<DashMap<String, Arc<(Value, jsonschema::Validator)>>>,
 }
 
@@ -136,7 +141,13 @@ impl Db {
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
         let query_heatmap = Arc::new(Default::default());
+        #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
+
+        // Ensure the parent directory exists.
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         // Choose the base storage backend based on the configured mode.
         //
@@ -168,7 +179,12 @@ impl Db {
 
         // Replay the log (or snapshot + delta) into the in-memory state.
         // After this call, `state` and `indexes` reflect the persisted data.
-        storage::stream_into_state(&*storage, &state, &indexes, &schemas)?;
+        storage::stream_into_state(
+            &*storage,
+            &state,
+            &indexes,
+            #[cfg(feature = "schema")] &schemas,
+        )?;
 
         Ok(Self {
             state,
@@ -180,6 +196,7 @@ impl Db {
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
+            #[cfg(feature = "schema")]
             schemas,
         })
     }
@@ -203,6 +220,7 @@ impl Db {
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
         let query_heatmap = Arc::new(Default::default());
+        #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
         // Open the OPFS file. This is async because the browser's OPFS API
@@ -216,7 +234,12 @@ impl Db {
         }
 
         // Replay the log into the in-memory state.
-        storage::stream_into_state(&*storage, &state, &indexes, &schemas)?;
+        storage::stream_into_state(
+            &*storage,
+            &state,
+            &indexes,
+            #[cfg(feature = "schema")] &schemas,
+        )?;
 
         Ok(Self {
             state,
@@ -228,6 +251,7 @@ impl Db {
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
+            #[cfg(feature = "schema")]
             schemas,
         })
     }
@@ -262,7 +286,7 @@ impl Db {
             &self.indexes,
             &self.storage,
             &self.tx,
-            &self.schemas,
+            #[cfg(feature = "schema")] &self.schemas,
             collection,
             items,
         )?;
@@ -280,7 +304,7 @@ impl Db {
             &self.indexes,
             &self.storage,
             &self.tx,
-            &self.schemas,
+            #[cfg(feature = "schema")] &self.schemas,
             collection,
             key,
             updates,
@@ -345,6 +369,7 @@ impl Db {
 
     /// Register a JSON schema for a collection.
     /// All subsequent writes to this collection must conform to this schema.
+    #[cfg(feature = "schema")]
     pub fn set_schema(&self, collection: &str, schema: Value) -> Result<(), DbError> {
         schema::set_schema(
             &self.schemas,
@@ -374,33 +399,35 @@ impl Db {
             let col_name = col_ref.key();
             for item_ref in col_ref.value().iter() {
                 // To compact, we need the full Value. If it's Cold, we fetch it from storage.
-                let value = match item_ref.value() {
-                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                let entry = match item_ref.value() {
+                    crate::engine::types::DocumentState::Hot(v) => {
+                        types::LogEntry::new(
+                            "INSERT".to_string(),
+                            col_name.clone(),
+                            item_ref.key().clone(),
+                            v.clone(),
+                        )
+                    }
                     crate::engine::types::DocumentState::Cold(ptr) => {
                         let bytes = self.storage.read_at(ptr.offset, ptr.length)?;
-                        let log_entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
-                        log_entry.value
+                        serde_json::from_slice(&bytes)?
                     }
                 };
-                entries.push(types::LogEntry {
-                    cmd: "INSERT".to_string(),
-                    collection: col_name.clone(),
-                    key: item_ref.key().clone(),
-                    value,
-                });
+                entries.push(entry);
             }
         }
 
         // One SCHEMA entry per collection.
+        #[cfg(feature = "schema")]
         for schema_ref in self.schemas.iter() {
             let col_name = schema_ref.key();
             let (schema_json, _) = &**schema_ref.value();
-            entries.push(types::LogEntry {
-                cmd: "SCHEMA".to_string(),
-                collection: col_name.clone(),
-                key: "".to_string(),
-                value: schema_json.clone(),
-            });
+            entries.push(types::LogEntry::new(
+                "SCHEMA".to_string(),
+                col_name.clone(),
+                "".to_string(),
+                schema_json.clone(),
+            ));
         }
 
         // One INDEX entry per registered index.
@@ -408,12 +435,12 @@ impl Db {
         for index_ref in self.indexes.iter() {
             let parts: Vec<&str> = index_ref.key().split(':').collect();
             if parts.len() == 2 {
-                entries.push(types::LogEntry {
-                    cmd: "INDEX".to_string(),
-                    collection: parts[0].to_string(),
-                    key: parts[1].to_string(),       // field name
-                    value: serde_json::json!(null),
-                });
+                entries.push(types::LogEntry::new(
+                    "INDEX".to_string(),
+                    parts[0].to_string(),
+                    parts[1].to_string(),       // field name
+                    serde_json::json!(null),
+                ));
             }
         }
 
@@ -460,12 +487,142 @@ impl Db {
                         }
                     }
                 }
-                offset += (length + 1) as u64;
-            } else {
-                offset += (length + 1) as u64;
             }
+            offset += (length + 1) as u64;
+            ControlFlow::Continue(())
         })?;
 
         Ok(evicted_count)
+    }
+
+    /// Recover the database state to a specific point in time or sequence number.
+    /// Returns the recovered state as a Vec of LogEntries that can be written to a snapshot.
+    ///
+    /// This is a utility function used by the CLI for PITR.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn recover_to(
+        storage: &dyn StorageBackend,
+        to_time: Option<u64>,
+        to_seq: Option<u64>,
+    ) -> Result<Vec<LogEntry>, DbError> {
+        let state: DashMap<String, DashMap<String, crate::engine::types::DocumentState>> = DashMap::new();
+        let indexes: DashMap<String, DashMap<String, DashSet<String>>> = DashMap::new();
+        #[cfg(feature = "schema")]
+        let schemas: DashMap<String, Arc<(serde_json::Value, jsonschema::Validator)>> = DashMap::new();
+
+            let mut offset = 0u64;
+            let mut count = 0u64;
+            let mut current_tx_entries = Vec::new();
+            let mut current_tx_id = None;
+            
+            storage.stream_log_into(&mut |entry, length| {
+                // Condition 1: Check Timestamp
+                if let Some(t) = to_time {
+                    if entry._t > t {
+                        return ControlFlow::Break(());
+                    }
+                }
+    
+                // Condition 2: Check Sequence
+                if let Some(s) = to_seq {
+                    if count >= s {
+                        return ControlFlow::Break(());
+                    }
+                }
+
+            let pointer = crate::engine::types::RecordPointer {
+                offset,
+                length,
+            };
+
+            match entry.cmd.as_str() {
+                "TX_BEGIN" => {
+                    current_tx_id = Some(entry.key.clone());
+                    current_tx_entries.clear();
+                }
+                "TX_COMMIT" => {
+                    if current_tx_id.as_ref() == Some(&entry.key) {
+                        for (e, p) in current_tx_entries.drain(..) {
+                            crate::engine::storage::apply_entry(
+                                &e,
+                                &state,
+                                &indexes,
+                                #[cfg(feature = "schema")] &schemas,
+                                Some(p),
+                            );
+                        }
+                        current_tx_id = None;
+                    }
+                }
+                _ => {
+                    if current_tx_id.is_some() {
+                        current_tx_entries.push((entry, pointer));
+                    } else {
+                        crate::engine::storage::apply_entry(
+                            &entry,
+                            &state,
+                            &indexes,
+                            #[cfg(feature = "schema")] &schemas,
+                            Some(pointer),
+                        );
+                    }
+                }
+            }
+
+            count += 1;
+            offset += (length + 1) as u64;
+            ControlFlow::Continue(())
+        })?;
+
+        // Convert the recovered state into LogEntries (similar to compact logic)
+        let mut entries = Vec::new();
+        for col_ref in state.iter() {
+            let col_name = col_ref.key();
+            for item_ref in col_ref.value().iter() {
+                let entry = match item_ref.value() {
+                    crate::engine::types::DocumentState::Hot(v) => {
+                        LogEntry::new(
+                            "INSERT".to_string(),
+                            col_name.clone(),
+                            item_ref.key().clone(),
+                            v.clone(),
+                        )
+                    }
+                    crate::engine::types::DocumentState::Cold(ptr) => {
+                        let bytes = storage.read_at(ptr.offset, ptr.length).unwrap_or_default();
+                        serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+                            LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), serde_json::Value::Null)
+                        })
+                    }
+                };
+                entries.push(entry);
+            }
+        }
+
+        #[cfg(feature = "schema")]
+        for schema_ref in schemas.iter() {
+            let col_name = schema_ref.key();
+            let (schema_json, _) = &**schema_ref.value();
+            entries.push(LogEntry::new(
+                "SCHEMA".to_string(),
+                col_name.clone(),
+                "".to_string(),
+                schema_json.clone(),
+            ));
+        }
+
+        for index_ref in indexes.iter() {
+            let parts: Vec<&str> = index_ref.key().split(':').collect();
+            if parts.len() == 2 {
+                entries.push(LogEntry::new(
+                    "INDEX".to_string(),
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                    serde_json::json!(null),
+                ));
+            }
+        }
+
+        Ok(entries)
     }
 }

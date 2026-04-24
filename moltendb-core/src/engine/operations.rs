@@ -160,7 +160,7 @@ pub fn insert_batch(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
-    schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
     collection: &str,
     items: Vec<(String, Value)>,
 ) -> Result<(), DbError> {
@@ -170,12 +170,12 @@ pub fn insert_batch(
 
     // TX_BEGIN: Start a transaction.
     let tx_id = uuid::Uuid::new_v4().to_string();
-    storage.write_entry(&LogEntry {
-        cmd: "TX_BEGIN".into(),
-        collection: collection.into(),
-        key: tx_id.clone(),
-        value: Value::Null,
-    })?;
+    storage.write_entry(&LogEntry::new(
+        "TX_BEGIN".into(),
+        collection.into(),
+        tx_id.clone(),
+        Value::Null,
+    ))?;
 
     for (key, mut value) in items {
         let now = now_iso();
@@ -219,6 +219,7 @@ pub fn insert_batch(
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
+            #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &value)?;
 
             // Unindex the OLD value before overwriting.
@@ -233,6 +234,7 @@ pub fn insert_batch(
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
+            #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &value)?;
         }
 
@@ -243,12 +245,12 @@ pub fn insert_batch(
         indexing::index_doc(indexes, collection, &key, &value);
 
         // Step 3: Persist within the transaction.
-        let entry = LogEntry {
-            cmd: "INSERT".to_string(),
-            collection: collection.to_string(),
-            key: key.clone(),
-            value: value.clone(),
-        };
+        let entry = LogEntry::new(
+            "INSERT".to_string(),
+            collection.to_string(),
+            key.clone(),
+            value.clone(),
+        );
         storage.write_entry(&entry)?;
 
         // Step 4: Broadcast a lean change event to WebSocket subscribers.
@@ -265,12 +267,12 @@ pub fn insert_batch(
     }
 
     // TX_COMMIT: Successfully complete the transaction.
-    storage.write_entry(&LogEntry {
-        cmd: "TX_COMMIT".into(),
-        collection: collection.into(),
-        key: tx_id,
-        value: Value::Null,
-    })?;
+    storage.write_entry(&LogEntry::new(
+        "TX_COMMIT".into(),
+        collection.into(),
+        tx_id,
+        Value::Null,
+    ))?;
 
     Ok(())
 }
@@ -290,7 +292,7 @@ pub fn update(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
-    schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
     collection: &str,
     key: &str,
     updates: Value, // the partial update — only these fields will be changed
@@ -348,6 +350,7 @@ pub fn update(
 
             // Step 3: Clone the updated document and validate against schema.
             let new_value = doc.clone();
+            #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &new_value)?;
 
             // Step 4: Re-add the document to indexes with its new field values.
@@ -357,12 +360,12 @@ pub fn update(
             col.insert(key.to_string(), crate::engine::types::DocumentState::Hot(new_value.clone()));
 
             // Step 6: Write the full updated document as an INSERT entry.
-            let entry = LogEntry {
-                cmd: "INSERT".to_string(),
-                collection: collection.to_string(),
-                key: key.to_string(),
-                value: new_value.clone(),
-            };
+            let entry = LogEntry::new(
+                "INSERT".to_string(),
+                collection.to_string(),
+                key.to_string(),
+                new_value.clone(),
+            );
             storage.write_entry(&entry)?;
 
             // Step 7: Broadcast a lean change event to WebSocket subscribers.
@@ -418,12 +421,12 @@ pub fn delete(
 
     // Write a DELETE entry to the log.
     // The `value` field is null for DELETE entries — only collection + key matter.
-    let entry = LogEntry {
-        cmd: "DELETE".to_string(),
-        collection: collection.to_string(),
-        key: key.to_string(),
-        value: json!(null),
-    };
+    let entry = LogEntry::new(
+        "DELETE".to_string(),
+        collection.to_string(),
+        key.to_string(),
+        json!(null),
+    );
     storage.write_entry(&entry)?;
 
     // Broadcast a lean delete event to WebSocket subscribers.
@@ -476,12 +479,12 @@ pub fn delete_batch(
             col.remove(&key);
 
             // Write a DELETE entry for this key.
-            let entry = LogEntry {
-                cmd: "DELETE".to_string(),
-                collection: collection.to_string(),
-                key: key.clone(),
-                value: json!(null),
-            };
+            let entry = LogEntry::new(
+                "DELETE".to_string(),
+                collection.to_string(),
+                key.clone(),
+                json!(null),
+            );
             storage.write_entry(&entry)?;
 
             // Broadcast a lean delete event.
@@ -521,12 +524,12 @@ pub fn delete_collection(
     indexes.retain(|k, _| !k.starts_with(&format!("{}:", collection)));
 
     // Step 3: Persist the DROP command.
-    let entry = LogEntry {
-        cmd: "DROP".to_string(),
-        collection: collection.to_string(),
-        key: "*".to_string(),
-        value: json!(null),
-    };
+    let entry = LogEntry::new(
+        "DROP".to_string(),
+        collection.to_string(),
+        "*".to_string(),
+        json!(null),
+    );
     storage.write_entry(&entry)?;
 
     // Step 4: Broadcast a lean drop event.

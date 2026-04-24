@@ -21,9 +21,10 @@ The runnable binary. Delegates all database logic to `moltendb-core`.
 `moltendb-server` is the runnable binary of MoltenDB. It owns everything related to the network layer and leaves all database logic to `moltendb-core`:
 
 - **Axum HTTP server** with TLS termination (`axum-server` + `rustls`).
-- **REST endpoints** — `POST /set`, `POST /get`, `POST /update`, `POST /delete`, `POST /analytics` (⚠️ analytics under development).
+- **REST endpoints** — `POST /set`, `POST /get`, `POST /update`, `POST /delete`, `POST /snapshot`, `POST /analytics` (⚠️ analytics under development).
 - **REST-style GET** — `GET /:collection/:key` and `GET /:collection` (with query string filters).
 - **WebSocket** — `GET /ws` for real-time mutation notifications.
+- **CLI Utility** — `moltendb recover` subcommand for Point-in-Time Recovery.
 - **JWT auth middleware** — all protected routes require a valid `Authorization: Bearer <token>` header.
 - **Per-IP rate limiting** — sliding-window rate limiter, configurable via CLI.
 - **CORS** — configurable allowed origins.
@@ -89,6 +90,28 @@ cargo run --package moltendb-server --bin moltendb -- \
 | `--max-body-size` | `MAX_BODY_SIZE` | `10485760` | Max request body size in bytes (default 10 MB) |
 | `--hot-threshold` | `MOLTEN_HOT_THRESHOLD` | `50000` | Number of documents per collection kept in RAM before paging out to disk |
 | `--disable-encryption` | — | — | Disable at-rest encryption |
+
+### Point-in-Time Recovery (PITR)
+
+MoltenDB supports recovering the database to any millisecond or sequence number.
+
+#### Via CLI
+```bash
+# Recover to a specific Unix timestamp (milliseconds)
+moltendb recover --log my_database.log --to-time 1713972000000 --out recovered.snapshot.bin
+
+# Recover to a specific log sequence number
+moltendb recover --log my_database.log --to-seq 5000 --out recovered.snapshot.bin
+```
+
+To use the recovered state, rename `recovered.snapshot.bin` to `my_database.log.snapshot.bin` and restart the server.
+
+#### Manual Snapshot
+You can trigger an on-demand snapshot via the API. This is useful before performing risky operations.
+```http
+POST /snapshot
+Authorization: Bearer <jwt>
+```
 
 ---
 
@@ -196,7 +219,7 @@ A full API walkthrough is available in [`tests/requests.http`](../tests/requests
 
 ```toml
 [dependencies]
-moltendb-server = { version = "0.3.0-beta.2", default-features = false }
+moltendb-server = { version = "0.6.0", default-features = false }
 ```
 
 Then wrap the Axum router with your own `tower::Layer` before calling `serve()`. Without the `auth` feature the server starts without requiring `--jwt-secret` and all routes are unprotected.

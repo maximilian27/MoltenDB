@@ -228,12 +228,12 @@ pub fn create_index(
 
     // Write an INDEX entry to the log so this index is recreated on next startup.
     // The `key` field of the LogEntry holds the field name.
-    let entry = LogEntry {
-        cmd: "INDEX".to_string(),
-        collection: collection.to_string(),
-        key: field.to_string(),
-        value: serde_json::json!(null),
-    };
+    let entry = LogEntry::new(
+        "INDEX".to_string(),
+        collection.to_string(),
+        field.to_string(),
+        serde_json::json!(null),
+    );
 
     // Persist the INDEX entry via the storage backend.
     storage.write_entry(&entry)?;
