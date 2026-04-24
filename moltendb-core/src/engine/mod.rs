@@ -141,6 +141,11 @@ impl Db {
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
+        // Ensure the parent directory exists.
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         // Choose the base storage backend based on the configured mode.
         //
         //   tiered_mode = true  → TieredStorage: hot log (async writes) + cold log
@@ -391,20 +396,21 @@ impl Db {
             let col_name = col_ref.key();
             for item_ref in col_ref.value().iter() {
                 // To compact, we need the full Value. If it's Cold, we fetch it from storage.
-                let value = match item_ref.value() {
-                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
+                let entry = match item_ref.value() {
+                    crate::engine::types::DocumentState::Hot(v) => {
+                        types::LogEntry::new(
+                            "INSERT".to_string(),
+                            col_name.clone(),
+                            item_ref.key().clone(),
+                            v.clone(),
+                        )
+                    }
                     crate::engine::types::DocumentState::Cold(ptr) => {
                         let bytes = self.storage.read_at(ptr.offset, ptr.length)?;
-                        let log_entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
-                        log_entry.value
+                        serde_json::from_slice(&bytes)?
                     }
                 };
-                entries.push(types::LogEntry {
-                    cmd: "INSERT".to_string(),
-                    collection: col_name.clone(),
-                    key: item_ref.key().clone(),
-                    value,
-                });
+                entries.push(entry);
             }
         }
 
@@ -413,12 +419,12 @@ impl Db {
         for schema_ref in self.schemas.iter() {
             let col_name = schema_ref.key();
             let (schema_json, _) = &**schema_ref.value();
-            entries.push(types::LogEntry {
-                cmd: "SCHEMA".to_string(),
-                collection: col_name.clone(),
-                key: "".to_string(),
-                value: schema_json.clone(),
-            });
+            entries.push(types::LogEntry::new(
+                "SCHEMA".to_string(),
+                col_name.clone(),
+                "".to_string(),
+                schema_json.clone(),
+            ));
         }
 
         // One INDEX entry per registered index.
@@ -426,12 +432,12 @@ impl Db {
         for index_ref in self.indexes.iter() {
             let parts: Vec<&str> = index_ref.key().split(':').collect();
             if parts.len() == 2 {
-                entries.push(types::LogEntry {
-                    cmd: "INDEX".to_string(),
-                    collection: parts[0].to_string(),
-                    key: parts[1].to_string(),       // field name
-                    value: serde_json::json!(null),
-                });
+                entries.push(types::LogEntry::new(
+                    "INDEX".to_string(),
+                    parts[0].to_string(),
+                    parts[1].to_string(),       // field name
+                    serde_json::json!(null),
+                ));
             }
         }
 

@@ -9,22 +9,23 @@ async fn test_batch_atomicity() {
     // 1. Create a DB and write a partial batch manually to the log
     {
         let db = Db::open(log_path, true, false, 50000, 100, 1, 1024 * 1024, None).unwrap();
+        let collection = "test";
         
         // Use the storage directly to simulate a crash (no TX_COMMIT)
         let tx_id = "test-tx-123".to_string();
-        db.storage.write_entry(&LogEntry {
-            cmd: "TX_BEGIN".into(),
-            collection: "test".into(),
-            key: tx_id.clone(),
-            value: json!(null),
-        }).unwrap();
+        db.storage.write_entry(&LogEntry::new(
+            "TX_BEGIN".into(),
+            collection.into(),
+            tx_id.clone(),
+            json!(null),
+        )).unwrap();
 
-        db.storage.write_entry(&LogEntry {
-            cmd: "INSERT".into(),
-            collection: "test".into(),
-            key: "key1".into(),
-            value: json!({"data": "should not exist"}),
-        }).unwrap();
+        db.storage.write_entry(&LogEntry::new(
+            "INSERT".into(),
+            collection.into(),
+            "key1".into(),
+            json!({"data": "should not exist"}),
+        )).unwrap();
 
         // We "crash" here — no TX_COMMIT is written.
     }

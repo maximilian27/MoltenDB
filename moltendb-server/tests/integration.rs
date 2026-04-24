@@ -1,20 +1,23 @@
 /// MoltenDB integration test suite
 /// Tests all handler operations using an in-memory SyncDiskStorage backed by a temp file.
-use moltendb::{engine, handlers};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-
+use moltendb_core::{engine, handlers};
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-/// Open a fresh in-memory database backed by a unique temp file.
-fn open_db() -> engine::Db {
+fn open_db_with_path() -> (engine::Db, String) {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = format!("target/test_db_{}.log", id);
     let _ = std::fs::remove_file(&path);
-    engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).expect("open db")
+    (engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).expect("open db"), path)
+}
+
+/// Open a fresh in-memory database backed by a unique temp file.
+fn open_db() -> engine::Db {
+    open_db_with_path().0
 }
 
 /// Seed the three standard collections used by most tests.
@@ -124,7 +127,7 @@ fn test_get_all() {
 
 #[test]
 fn test_manual_snapshot() {
-    let db = open_db();
+    let (db, path) = open_db_with_path();
     seed(&db);
     
     let r = handlers::process_snapshot(&db).1;
@@ -132,9 +135,8 @@ fn test_manual_snapshot() {
     assert_eq!(r["message"], "Snapshot taken successfully");
 
     // Verify it actually created a snapshot file
-    let id = TEST_COUNTER.load(Ordering::Relaxed) - 1;
-    let path = format!("target/test_db_{}.log.snapshot.bin", id);
-    assert!(std::path::Path::new(&path).exists(), "Snapshot file should exist at {}", path);
+    let snapshot_path = format!("{}.snapshot.bin", path);
+    assert!(std::path::Path::new(&snapshot_path).exists(), "Snapshot file should exist at {}", snapshot_path);
 }
 
 #[test]
@@ -702,7 +704,7 @@ fn test_persistence_survives_reopen() {
     let path = format!("target/test_persist_{}.log", id);
     let _ = std::fs::remove_file(&path);
     {
-        let db = engine::Db::open(&path, true, false, None).unwrap();
+        let db = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
         set(&db, json!({
             "collection": "items",
             "data": { "k1": { "value": 42 } }
@@ -835,7 +837,7 @@ fn test_analytics_count() {
         "metric": { "type": "COUNT" }
     })).unwrap();
     let result = execute_query(&db, &q);
-    assert_eq!(result.result, serde_json::json!(6));
+    assert_eq!(result.unwrap().result, serde_json::json!(6));
 }
 
 #[test]
@@ -849,7 +851,7 @@ fn test_analytics_sum() {
     })).unwrap();
     let result = execute_query(&db, &q);
     // 1499+3499+1699+1899+2499+849 = 11944
-    assert_eq!(result.result, serde_json::json!(11944.0));
+    assert_eq!(result.unwrap().result, serde_json::json!(11944.0));
 }
 
 #[test]
@@ -862,7 +864,7 @@ fn test_analytics_avg() {
         "metric": { "type": "AVG", "field": "price" }
     })).unwrap();
     let result = execute_query(&db, &q);
-    let avg = result.result.as_f64().unwrap();
+    let avg = result.unwrap().result.as_f64().unwrap();
     assert!((avg - 11944.0 / 6.0).abs() < 0.01);
 }
 
@@ -879,8 +881,8 @@ fn test_analytics_min_max() {
         "collection": "laptops",
         "metric": { "type": "MAX", "field": "price" }
     })).unwrap();
-    assert_eq!(execute_query(&db, &min_q).result, json!(849.0));
-    assert_eq!(execute_query(&db, &max_q).result, json!(3499.0));
+    assert_eq!(execute_query(&db, &min_q).unwrap().result, json!(849.0));
+    assert_eq!(execute_query(&db, &max_q).unwrap().result, json!(3499.0));
 }
 
 #[test]
@@ -894,5 +896,5 @@ fn test_analytics_with_where() {
         "where": { "in_stock": true }
     })).unwrap();
     let result = execute_query(&db, &q);
-    assert_eq!(result.result, json!(5)); // all except lp4
+    assert_eq!(result.unwrap().result, json!(5)); // all except lp4
 }

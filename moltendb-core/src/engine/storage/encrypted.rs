@@ -167,12 +167,12 @@ impl EncryptedStorage {
 
         // Step 6: Return a sentinel LogEntry that hides the real cmd/collection/key.
         // The underlying storage only ever sees these opaque ENC entries.
-        Ok(LogEntry {
-            cmd: "ENC".to_string(),
-            collection: "_".to_string(), // placeholder — real collection is inside the ciphertext
-            key: "_".to_string(),        // placeholder — real key is inside the ciphertext
-            value: serde_json::json!(b64),
-        })
+        Ok(LogEntry::new(
+            "ENC".to_string(),
+            "_".to_string(), // placeholder — real collection is inside the ciphertext
+            "_".to_string(),        // placeholder — real key is inside the ciphertext
+            serde_json::json!(b64),
+        ))
     }
 
     /// Decrypt a single "ENC" LogEntry and return the original LogEntry.

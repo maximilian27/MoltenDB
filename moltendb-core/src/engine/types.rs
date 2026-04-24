@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 // fmt is used to implement the Display trait (human-readable error messages).
 use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A pointer to a document's location in the persistent log file.
 /// Used in the "Cold" state of the hybrid storage model.
@@ -100,6 +101,25 @@ pub struct LogEntry {
     /// The document value (for INSERT) or null (for DELETE/DROP/INDEX).
     /// For ENC entries, this holds the base64-encoded ciphertext.
     pub value: Value,
+    /// Engine-level timestamp (Unix milliseconds) for Point-in-Time Recovery.
+    pub _t: u64,
+}
+
+impl LogEntry {
+    /// Create a new LogEntry with the current timestamp.
+    pub fn new(cmd: String, collection: String, key: String, value: Value) -> Self {
+        let _t = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        Self {
+            cmd,
+            collection,
+            key,
+            value,
+            _t,
+        }
+    }
 }
 
 /// All possible errors that can occur in the database engine.

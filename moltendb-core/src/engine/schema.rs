@@ -19,12 +19,12 @@ pub fn set_schema(
         .map_err(|e| DbError::SchemaValidationError(format!("Invalid schema: {}", e)))?;
 
     // 2. Persist to WAL.
-    storage.write_entry(&LogEntry {
-        cmd: "SCHEMA".to_string(),
-        collection: collection.to_string(),
-        key: "".to_string(),
-        value: schema.clone(),
-    })?;
+    storage.write_entry(&LogEntry::new(
+        "SCHEMA".to_string(),
+        collection.to_string(),
+        "".to_string(),
+        schema.clone(),
+    ))?;
 
     // 3. Update in-memory state.
     schemas.insert(collection.to_string(), Arc::new((schema.clone(), validator)));
