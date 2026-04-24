@@ -1545,7 +1545,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-auth"
-version = "0.5.1"
+version = "0.5.0"
 dependencies = [
  "axum",
  "bcrypt",
@@ -1557,7 +1557,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-core"
-version = "0.5.1"
+version = "0.5.0"
 dependencies = [
  "argon2",
  "base64",
@@ -1584,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-server"
-version = "0.5.1"
+version = "0.5.0"
 dependencies = [
  "argon2",
  "axum",
@@ -1617,7 +1617,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-wasm"
-version = "0.5.1"
+version = "0.5.0"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.17",
