@@ -574,7 +574,7 @@ fn test_versioning_increments_on_update() {
 }
 
 #[test]
-fn test_stale_version_write_skipped() {
+fn test_stale_version_write_returns_conflict() {
     let db = open_db();
     seed(&db);
     // Update lp4 to bump _v to 2
@@ -582,14 +582,16 @@ fn test_stale_version_write_skipped() {
         "collection": "laptops",
         "data": { "lp4": { "price": 1749 } }
     }));
-    // Try to overwrite with stale _v:1 — should be skipped
-    set(&db, json!({
+    // Try to overwrite with stale _v:1 — should return 409 Conflict
+    let r = set(&db, json!({
         "collection": "laptops",
         "data": { "lp4": { "brand": "Dell", "model": "XPS 15 STALE", "price": 999, "_v": 1 } }
     }));
-    let r = get(&db, json!({ "collection": "laptops", "keys": "lp4" }));
-    assert_ne!(r["model"], "XPS 15 STALE");
-    assert_eq!(r["price"], 1749);
+    assert!(r.get("error").unwrap().as_str().unwrap().contains("Conflict"));
+    
+    let doc = get(&db, json!({ "collection": "laptops", "keys": "lp4" }));
+    assert_ne!(doc["model"], "XPS 15 STALE");
+    assert_eq!(doc["price"], 1749);
 }
 
 // ─── §50-53: Extends ─────────────────────────────────────────────────────────

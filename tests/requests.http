@@ -880,3 +880,102 @@ Authorization: Bearer {{token}}
   }
 }
 
+### ─── SCHEMAS ──────────────────────────────────────────────────────────────────
+
+### §61. Register a schema for the 'memory' collection
+POST https://localhost:1538/schema
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "memory",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "capacity_gb": { "type": "integer", "minimum": 1 },
+      "type": { "type": "string" },
+      "speed_mhz": { "type": "integer", "minimum": 1 },
+      "upgradeable": { "type": "boolean" }
+    },
+    "required": ["capacity_gb", "type", "speed_mhz", "upgradeable"]
+  }
+}
+
+### §62. Register a schema for the 'display' collection
+POST https://localhost:1538/schema
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "display",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "size_inch": { "type": "number", "minimum": 5 },
+      "resolution": { "type": "string" },
+      "panel": { "type": "string" },
+      "refresh_hz": { "type": "integer", "minimum": 24 },
+      "touchscreen": { "type": "boolean" },
+      "hdr": { "type": "boolean" }
+    },
+    "required": ["size_inch", "resolution", "panel", "refresh_hz"]
+  }
+}
+
+### §63. Register a schema for the 'laptops' collection
+POST https://localhost:1538/schema
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "brand": { "type": "string" },
+      "model": { "type": "string" },
+      "price": { "type": "number", "minimum": 0 },
+      "in_stock": { "type": "boolean" },
+      "memory_id": { "type": "string" },
+      "display_id": { "type": "string" },
+      "tags": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "specs": {
+        "type": "object",
+        "properties": {
+          "cpu": {
+            "type": "object",
+            "properties": {
+              "brand": { "type": "string" },
+              "cores": { "type": "integer", "minimum": 1 },
+              "ghz": { "type": "number", "minimum": 0.1 }
+            }
+          },
+          "battery_wh": { "type": "integer", "minimum": 1 },
+          "weight_kg": { "type": "number", "minimum": 0.1 }
+        }
+      }
+    },
+    "required": ["brand", "model", "price", "in_stock"]
+  }
+}
+
+### §64. Test Schema Validation (Failure)
+### This will fail because 'price' is missing (required) and 'brand' is not a string.
+POST https://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "fail1": {
+      "brand": 123,
+      "model": "Broken Laptop",
+      "in_stock": true
+    }
+  }
+}
+

@@ -160,12 +160,22 @@ pub fn insert_batch(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
+    schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
     collection: &str,
     items: Vec<(String, Value)>,
 ) -> Result<(), DbError> {
     let col = state
         .entry(collection.to_string())
         .or_insert_with(DashMap::new);
+
+    // TX_BEGIN: Start a transaction.
+    let tx_id = uuid::Uuid::new_v4().to_string();
+    storage.write_entry(&LogEntry {
+        cmd: "TX_BEGIN".into(),
+        collection: collection.into(),
+        key: tx_id.clone(),
+        value: Value::Null,
+    })?;
 
     for (key, mut value) in items {
         let now = now_iso();
@@ -189,13 +199,14 @@ pub fn insert_batch(
         }
 
         if let Some(existing) = existing_val {
+            // ... (existing logic) ...
             let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
             let incoming_v = value.get("_v").and_then(|v| v.as_u64());
 
             if let Some(iv) = incoming_v {
                 if iv <= existing_v {
-                    debug!("⚡ Conflict skip: {}/{} incoming _v={} <= stored _v={}", collection, key, iv, existing_v);
-                    continue;
+                    debug!("⚡ Conflict error: {}/{} incoming _v={} <= stored _v={}", collection, key, iv, existing_v);
+                    return Err(DbError::Conflict);
                 }
             }
 
@@ -207,6 +218,9 @@ pub fn insert_batch(
                 obj.insert("modifiedAt".to_string(), serde_json::json!(now));
             }
 
+            // Schema Validation: Check the document BEFORE index update and WAL write.
+            crate::engine::schema::validate_document(schemas, collection, &value)?;
+
             // Unindex the OLD value before overwriting.
             indexing::unindex_doc(indexes, collection, &key, &existing);
         } else {
@@ -217,6 +231,9 @@ pub fn insert_batch(
                 obj.insert("createdAt".to_string(), serde_json::json!(now.clone()));
                 obj.insert("modifiedAt".to_string(), serde_json::json!(now));
             }
+
+            // Schema Validation: Check the document BEFORE index update and WAL write.
+            crate::engine::schema::validate_document(schemas, collection, &value)?;
         }
 
         // Step 1: Insert/overwrite in memory (always Hot for new writes).
@@ -225,7 +242,7 @@ pub fn insert_batch(
         // Step 2: Update indexes.
         indexing::index_doc(indexes, collection, &key, &value);
 
-        // Step 3: Persist.
+        // Step 3: Persist within the transaction.
         let entry = LogEntry {
             cmd: "INSERT".to_string(),
             collection: collection.to_string(),
@@ -246,6 +263,15 @@ pub fn insert_batch(
             .to_string(),
         );
     }
+
+    // TX_COMMIT: Successfully complete the transaction.
+    storage.write_entry(&LogEntry {
+        cmd: "TX_COMMIT".into(),
+        collection: collection.into(),
+        key: tx_id,
+        value: Value::Null,
+    })?;
+
     Ok(())
 }
 
@@ -264,6 +290,7 @@ pub fn update(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
+    schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
     collection: &str,
     key: &str,
     updates: Value, // the partial update — only these fields will be changed
@@ -294,6 +321,16 @@ pub fn update(
             // Only top-level fields are merged — nested objects are replaced,
             // not recursively merged.
             if let Some(update_obj) = updates.as_object() {
+                // If the caller provides a "_v" field in the update, it acts as a guard.
+                // If the current version is not equal to this guard, we return Conflict.
+                let existing_v = doc.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
+                if let Some(guard_v) = update_obj.get("_v").and_then(|v| v.as_u64()) {
+                    if guard_v != existing_v {
+                        debug!("⚡ Conflict error: {}/{} update guard _v={} != stored _v={}", collection, key, guard_v, existing_v);
+                        return Err(DbError::Conflict);
+                    }
+                }
+
                 if let Some(doc_obj) = doc.as_object_mut() {
                     for (k, v) in update_obj {
                         // _v and createdAt are managed exclusively by the engine.
@@ -302,16 +339,16 @@ pub fn update(
                         doc_obj.insert(k.clone(), v.clone());
                     }
                     // Bump the version counter on every update.
-                    let old_v = doc_obj.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-                    doc_obj.insert("_v".to_string(), serde_json::json!(old_v + 1));
+                    doc_obj.insert("_v".to_string(), serde_json::json!(existing_v + 1));
                     // Stamp the modification time. createdAt is already in the
                     // document and is intentionally left untouched.
                     doc_obj.insert("modifiedAt".to_string(), serde_json::json!(now_iso()));
                 }
             }
 
-            // Step 3: Clone the updated document.
+            // Step 3: Clone the updated document and validate against schema.
             let new_value = doc.clone();
+            crate::engine::schema::validate_document(schemas, collection, &new_value)?;
 
             // Step 4: Re-add the document to indexes with its new field values.
             indexing::index_doc(indexes, collection, key, &new_value);
