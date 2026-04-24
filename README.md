@@ -12,7 +12,7 @@ Same query engine. Same Bitcask-inspired hybrid storage. Two environments.
 
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-80%20passing-brightgreen?style=flat-square)](#testing)
 
 **⚠️ Beta Software** — APIs may change. Not recommended for production use yet.
 
@@ -66,7 +66,7 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "0.2.0-beta.2"
+moltendb-core = "0.5.0"
 ```
 
 ```rust
@@ -131,8 +131,12 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Cross-collection joins with dot-notation foreign keys
 - Auto-indexing: fields queried 3+ times get an index automatically; equality lookups become O(1)
 - Range query index acceleration: `$gt`/`$lt` scan the index values instead of all documents
-- Document versioning: every document automatically gets `_v`, `createdAt`, `modifiedAt`
-- Conflict resolution: incoming writes with `_v ≤ stored _v` are silently skipped (server wins)
+- **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
+- **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.
+- **Optimistic Concurrency Control:** Improved version conflict detection and `409 Conflict` reporting.
+- **Document versioning:** every document automatically gets `_v`, `createdAt`, `modifiedAt`
+- **Atomic Batch Transactions:** WAL transaction markers (`TX_BEGIN`/`TX_COMMIT`) prevent partial write failures.
+- Conflict resolution: incoming writes with stale `_v` return a `409 Conflict` error.
 - Inline reference embedding (`extends`): embed data from another collection at insert time
 
 ### ✅ Security
@@ -150,7 +154,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
   - [View WASM Demo Source Code (GitHub)](https://github.com/maximilian27/moltendb-wasm-demo)
 - **[Server Integration Test Suite (GitHub)](https://github.com/maximilian27/moltendb-server-test)** — A browser-based testing environment to exercise the HTTP API and WebSocket endpoint against a live server using the TypeScript client. Includes an interactive Server Query Builder, a WebSocket tester, and a collection fetcher.
 - **57+ documented example requests** in `tests/requests.http`
-- **56 integration tests** covering all query features, versioning, persistence, compaction, concurrency, and analytics.
+- **80+ integration tests** covering all query features, versioning, persistence, compaction, concurrency, and schema validation.
 - **Rust stress-test examples** (`examples/`) — generate 100 000 synthetic documents, bulk-insert via HTTP, and run 10 000–100 000 concurrent fetch requests with a full latency percentile report.
 
 ---
