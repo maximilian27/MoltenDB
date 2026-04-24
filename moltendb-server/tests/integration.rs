@@ -898,3 +898,43 @@ fn test_analytics_with_where() {
     let result = execute_query(&db, &q);
     assert_eq!(result.unwrap().result, json!(5)); // all except lp4
 }
+
+#[test]
+fn test_pitr_recovery() {
+    let path = format!("target/pitr_{}.log", uuid::Uuid::new_v4());
+    let db = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
+    
+    // 1. Insert some data
+    handlers::process_set(&db, &json!({
+        "collection": "pitr",
+        "data": { "k1": { "v": 1 } }
+    }), TEST_MAX_BODY);
+    
+    // Capture time after first insert
+    let t1 = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    
+    // 2. Insert more data
+    handlers::process_set(&db, &json!({
+        "collection": "pitr",
+        "data": { "k2": { "v": 2 } }
+    }), TEST_MAX_BODY);
+    
+    // 3. Perform recovery to t1
+    let recovered_entries = engine::Db::recover_to(&*db.storage, Some(t1), None).unwrap();
+    
+    // Should only have k1 (and metadata if any, but seed is empty here)
+    // Actually, each set produces a LogEntry.
+    // Use println to debug if needed
+    // println!("Recovered entries: {:?}", recovered_entries);
+    assert_eq!(recovered_entries.len(), 1);
+    assert_eq!(recovered_entries[0].key, "k1");
+    
+    // 4. Perform recovery to sequence 3 (TX_BEGIN, INSERT, TX_COMMIT)
+    let recovered_entries_seq = engine::Db::recover_to(&*db.storage, None, Some(3)).unwrap();
+    assert_eq!(recovered_entries_seq.len(), 1);
+    assert_eq!(recovered_entries_seq[0].key, "k1");
+    
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.snapshot.bin", path));
+}

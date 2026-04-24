@@ -23,6 +23,7 @@ use super::StorageBackend;
 // DbError is our custom error enum.
 use crate::engine::types::{DbError, LogEntry};
 // Standard library file I/O types.
+use std::ops::ControlFlow;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::time::SystemTime;
@@ -192,9 +193,9 @@ pub(super) fn load_snapshot(log_path: &str) -> Option<(Vec<LogEntry>, u64)> {
 /// Lines that fail to parse (e.g. partial writes from a crash) are silently
 /// skipped — the database will simply not see those entries, which is safe
 /// because the in-memory state is rebuilt from what we can read.
-pub fn stream_log_entries<F>(path: &str, skip_lines: u64, mut f: F) -> Result<(), DbError>
+pub fn stream_log_entries<F>(path: &str, skip_lines: u64, mut f: F) -> Result<ControlFlow<(), ()>, DbError>
 where
-    F: FnMut(LogEntry, u32), // closure called once per valid entry + raw byte length
+    F: FnMut(LogEntry, u32) -> ControlFlow<(), ()>, // closure called once per valid entry + raw byte length
 {
     // If the file doesn't exist yet (first run), just do nothing.
     if let Ok(file) = File::open(path) {
@@ -211,12 +212,14 @@ where
                 let length = json_str.len() as u32;
                 // Ignore lines that fail to parse (e.g. partial write on crash).
                 if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str) {
-                    f(entry, length); // hand the entry and its raw length to the caller
+                    if let ControlFlow::Break(_) = f(entry, length) {
+                        return Ok(ControlFlow::Break(()));
+                    }
                 }
             }
         }
     }
-    Ok(())
+    Ok(ControlFlow::Continue(()))
 }
 
 /// Count the total number of lines in the log file.
@@ -247,7 +250,10 @@ pub fn read_log_from_disk(path: &str) -> Result<Vec<LogEntry>, DbError> {
     let mut entries = Vec::new();
     // skip_lines = 0 means read from the very beginning (no snapshot skip here,
     // because EncryptedStorage handles its own snapshot logic via read_log).
-    stream_log_entries(path, 0, |e, _| entries.push(e))?;
+    let _ = stream_log_entries(path, 0, |e, _| {
+        entries.push(e);
+        ControlFlow::Continue(())
+    })?;
     Ok(entries)
 }
 
@@ -472,8 +478,9 @@ impl StorageBackend for AsyncDiskStorage {
     ///   Stream the entire log file line-by-line. No full Vec in RAM.
     fn stream_log_into(
         &self,
-        f: &mut dyn FnMut(LogEntry, u32),
+        f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>,
     ) -> Result<u64, DbError> {
+        let mut count = 0u64;
         // Attempt to load the binary snapshot for fast startup.
         if let Some((snapshot_entries, seq)) = load_snapshot(&self.path) {
             tracing::info!(
@@ -485,20 +492,32 @@ impl StorageBackend for AsyncDiskStorage {
                 // For snapshots, we re-serialize because they aren't in the log file
                 let json = serde_json::to_vec(&entry).unwrap_or_default();
                 let length = json.len() as u32;
-                f(entry, length);
+                if let ControlFlow::Break(_) = f(entry, length) {
+                    return Ok(count);
+                }
+                count += 1;
             }
             // Then replay only the log lines that came after the snapshot.
             // `seq` is the number of lines to skip (already in the snapshot).
-            stream_log_entries(&self.path, seq, |e, l| f(e, l))?;
-            let total = count_log_lines(&self.path);
-            return Ok(total);
+            if let ControlFlow::Break(_) = stream_log_entries(&self.path, seq, |e, l| {
+                let res = f(e, l);
+                if let ControlFlow::Continue(_) = res {
+                    count += 1;
+                }
+                res
+            })? {
+                return Ok(count);
+            }
+            return Ok(count);
         }
 
         // No snapshot found — stream the full log from the beginning.
-        let mut count = 0u64;
-        stream_log_entries(&self.path, 0, |e, l| {
-            f(e, l);
-            count += 1;
+        let _ = stream_log_entries(&self.path, 0, |e, l| {
+            let res = f(e, l);
+            if let ControlFlow::Continue(_) = res {
+                count += 1;
+            }
+            res
         })?;
         Ok(count)
     }
@@ -600,8 +619,9 @@ impl StorageBackend for SyncDiskStorage {
     /// Same logic as AsyncDiskStorage::stream_log_into — see that method for details.
     fn stream_log_into(
         &self,
-        f: &mut dyn FnMut(LogEntry, u32),
+        f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>,
     ) -> Result<u64, DbError> {
+        let mut count = 0u64;
         // Fast path: load snapshot and replay only the delta.
         if let Some((snapshot_entries, seq)) = load_snapshot(&self.path) {
             tracing::info!(
@@ -613,18 +633,30 @@ impl StorageBackend for SyncDiskStorage {
                 // For snapshots, we re-serialize because they aren't in the log file
                 let json = serde_json::to_vec(&entry).unwrap_or_default();
                 let length = json.len() as u32;
-                f(entry, length);
+                if let ControlFlow::Break(_) = f(entry, length) {
+                    return Ok(count);
+                }
+                count += 1;
             }
-            stream_log_entries(&self.path, seq, |e, l| f(e, l))?;
-            let total = count_log_lines(&self.path);
-            return Ok(total);
+            if let ControlFlow::Break(_) = stream_log_entries(&self.path, seq, |e, l| {
+                let res = f(e, l);
+                if let ControlFlow::Continue(_) = res {
+                    count += 1;
+                }
+                res
+            })? {
+                return Ok(count);
+            }
+            return Ok(count);
         }
 
         // Slow path: stream the full log line-by-line.
-        let mut count = 0u64;
-        stream_log_entries(&self.path, 0, |e, l| {
-            f(e, l);
-            count += 1;
+        let _ = stream_log_entries(&self.path, 0, |e, l| {
+            let res = f(e, l);
+            if let ControlFlow::Continue(_) = res {
+                count += 1;
+            }
+            res
         })?;
         Ok(count)
     }

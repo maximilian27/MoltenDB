@@ -1,4 +1,4 @@
-use moltendb_core::engine::{Db, StorageBackend, LogEntry};
+use moltendb_core::engine::{Db, LogEntry};
 use serde_json::json;
 
 #[tokio::test]

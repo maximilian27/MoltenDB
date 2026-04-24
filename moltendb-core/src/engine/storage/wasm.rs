@@ -38,6 +38,7 @@ use crate::engine::types::{DbError, LogEntry};
 // In WASM, "threads" are Web Workers — Mutex prevents two workers from writing
 // to the same file simultaneously (though in practice we only have one worker).
 use std::sync::Mutex;
+use std::ops::ControlFlow;
 // wasm_bindgen bridges Rust and JavaScript — it generates the JS glue code
 // that lets Rust call browser APIs and vice versa.
 use wasm_bindgen::prelude::*;
@@ -143,6 +144,44 @@ impl Drop for OpfsStorage {
 
 /// Implement the StorageBackend trait for OPFS-based storage.
 impl StorageBackend for OpfsStorage {
+    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
+        let handle = self.handle.lock().unwrap();
+
+        // Get the file size to know how many bytes to read.
+        let size = handle.get_size().map_err(|_| DbError::WriteError)? as usize;
+
+        // If the file is empty (first run), return 0 immediately.
+        if size == 0 { return Ok(0); }
+
+        // Allocate a buffer exactly the size of the file.
+        let mut buf = vec![0u8; size];
+
+        // Set the read position to the beginning of the file.
+        let opts = web_sys::FileSystemReadWriteOptions::new();
+        opts.set_at(0.0);
+
+        // Read the entire file into the buffer in one call.
+        handle
+            .read_with_u8_array_and_options(&mut buf, &opts)
+            .map_err(|_| DbError::WriteError)?;
+
+        // Convert bytes to a string. from_utf8_lossy replaces invalid UTF-8
+        // sequences with the replacement character instead of returning an error.
+        let data_str = String::from_utf8_lossy(&buf);
+
+        let mut count = 0u64;
+        for line in data_str.lines() {
+            let length = line.len() as u32;
+            if let Ok(entry) = serde_json::from_str::<LogEntry>(line) {
+                if let ControlFlow::Break(_) = f(entry, length) {
+                    break;
+                }
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     /// Append a single log entry to the OPFS file.
     ///
     /// The entry is serialized to JSON, a newline is appended, and the bytes

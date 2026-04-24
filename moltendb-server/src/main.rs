@@ -25,7 +25,7 @@ use moltendb_core::handlers;   // Business logic for each API endpoint (process_
 mod rate_limit;  // Per-IP sliding-window rate limiter
 
 // Core engine — imported from the moltendb-core crate
-use moltendb_core::engine;
+use moltendb_core::engine::{self, StorageBackend};
 
 // Path = extracts path parameters from the URL, e.g. /collections/{collection}
 use axum::extract::Path;
@@ -58,6 +58,7 @@ use futures::{sink::SinkExt, stream::StreamExt};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 // signal = OS signal handling (Ctrl+C, SIGTERM) for graceful shutdown.
 use tokio::signal;
 // RequestBodyLimitLayer = middleware that rejects request bodies exceeding a size limit.
@@ -78,6 +79,9 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(name = "moltendb", version, about)]
 struct Config {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Port to listen on [env: PORT]
     #[arg(long, default_value = "1538", env = "PORT")]
     port: u16,
@@ -152,6 +156,38 @@ struct Config {
     hot_threshold: usize,
 }
 
+#[derive(clap::Subcommand, Debug)]
+enum Commands {
+    /// Start the MoltenDB server (default)
+    Serve,
+    /// Point-in-Time Recovery: Recover a database to a specific time or sequence
+    Recover {
+        /// Path to the source database log file
+        #[arg(long)]
+        log: String,
+        
+        /// Optional path to an older snapshot to start from (faster)
+        #[arg(long)]
+        snapshot: Option<String>,
+        
+        /// Target timestamp (Unix ms) to recover to
+        #[arg(long)]
+        to_time: Option<u64>,
+        
+        /// Target sequence number (log line count) to recover to
+        #[arg(long)]
+        to_seq: Option<u64>,
+        
+        /// Output path for the recovered snapshot file
+        #[arg(long)]
+        out: String,
+        
+        /// Encryption password if the log is encrypted
+        #[arg(long, env = "ENCRYPTION_KEY")]
+        encryption_key: Option<String>,
+    },
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 /// Server entry point.
@@ -167,6 +203,66 @@ async fn main() {
     // If a required flag is missing and has no default, clap prints an error
     // and exits the process before this line even runs.
     let cfg = Config::parse();
+
+        if let Some(Commands::Recover { log, snapshot: _, to_time, to_seq, out, encryption_key }) = &cfg.command {
+        // Recovery Mode
+        tracing_subscriber::fmt().init();
+        info!("🕒 MoltenDB Point-in-Time Recovery Tool");
+        info!("📖 Reading log: {}", log);
+
+        let password = encryption_key.as_ref().map(|s| s.clone()).unwrap_or_else(|| "default_molten_password".to_string());
+        let master_key = engine::EncryptedStorage::derive_key(&password, "moltendb_log_salt");
+
+        // Open storage
+        let base_storage = Arc::new(engine::SyncDiskStorage::new(&log).expect("Failed to open log file"));
+        let storage: Arc<dyn engine::StorageBackend> = Arc::new(engine::EncryptedStorage::new(base_storage, &master_key));
+
+        match engine::Db::recover_to(&*storage, *to_time, *to_seq) {
+            Ok(entries) => {
+                info!("✅ Recovered {} entries.", entries.len());
+                // For recovery, we set seq = to_seq if provided, or 0 (it will be ignored by out-of-band loading anyway)
+                // Actually, the snapshot we produce should probably have a seq that reflects the log state.
+                // But for a 'recovered' snapshot, it's a fresh ground truth.
+                
+                // We reuse the disk-level write_snapshot if possible, but it's crate-private.
+                // However, engine::Db::compact uses storage.compact(entries).
+                // Let's use a temporary DB to write the snapshot.
+                
+                // For PITR, we want to write a snapshot file at `out`.
+                // MoltenDB snapshots are normally `{log_path}.snapshot.bin`.
+                // We can just use the provided `out` path directly.
+                
+                // Since write_snapshot is private to moltendb-core::engine::storage::disk,
+                // we might need to expose a way to write a snapshot from the engine.
+                // Or just use the recovered entries to create a new log and then compact it.
+                
+                info!("💾 Saving recovered state to: {}", out);
+                
+                // Create a temporary log file for the recovered state
+                let temp_log = format!("{}.log", out);
+                {
+                    let recovered_storage = engine::SyncDiskStorage::new(&temp_log).expect("Failed to create recovery log");
+                    for entry in &entries {
+                        recovered_storage.write_entry(entry).expect("Failed to write entry to recovery log");
+                    }
+                    // Now compact it to produce the snapshot
+                    recovered_storage.compact(entries).expect("Failed to compact recovery log");
+                }
+                
+                // The snapshot is now at temp_log.snapshot.bin
+                let snapshot_path = format!("{}.snapshot.bin", temp_log);
+                std::fs::rename(snapshot_path, &out).expect("Failed to move snapshot to output path");
+                std::fs::remove_file(temp_log).ok();
+                
+                info!("✨ Recovery complete! You can now use {} as your database snapshot.", out);
+            }
+            Err(e) => {
+                error!("❌ Recovery failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
 
     // Set up structured logging (tracing).
     // `tracing_subscriber::fmt()` configures a human-readable log formatter
