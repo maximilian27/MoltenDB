@@ -160,7 +160,7 @@ pub fn insert_batch(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
-    schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
     collection: &str,
     items: Vec<(String, Value)>,
 ) -> Result<(), DbError> {
@@ -219,6 +219,7 @@ pub fn insert_batch(
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
+            #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &value)?;
 
             // Unindex the OLD value before overwriting.
@@ -233,6 +234,7 @@ pub fn insert_batch(
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
+            #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &value)?;
         }
 
@@ -290,7 +292,7 @@ pub fn update(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
-    schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
     collection: &str,
     key: &str,
     updates: Value, // the partial update — only these fields will be changed
@@ -348,6 +350,7 @@ pub fn update(
 
             // Step 3: Clone the updated document and validate against schema.
             let new_value = doc.clone();
+            #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &new_value)?;
 
             // Step 4: Re-add the document to indexes with its new field values.

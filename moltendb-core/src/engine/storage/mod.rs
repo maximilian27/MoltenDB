@@ -52,6 +52,7 @@ pub use wasm::OpfsStorage;
 // ── Shared imports ────────────────────────────────────────────────────────────
 // These are used by both the trait definition and the replay functions below.
 use crate::engine::types::{DbError, LogEntry};
+#[cfg(feature = "schema")]
 use serde_json::Value;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
 // multiple threads simultaneously without a global lock.
@@ -165,7 +166,7 @@ pub fn stream_into_state(
     storage: &dyn StorageBackend,
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-    schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
     let mut offset = 0u64;
@@ -189,7 +190,13 @@ pub fn stream_into_state(
                 if active_tx.as_ref() == Some(&entry.key) {
                     // Flush buffer to DashMap
                     for (e, p) in tx_buffer.drain(..) {
-                        apply_entry(&e, state, indexes, schemas, Some(p));
+                        apply_entry(
+                            &e,
+                            state,
+                            indexes,
+                            #[cfg(feature = "schema")] schemas,
+                            Some(p),
+                        );
                     }
                     active_tx = None;
                 }
@@ -200,7 +207,13 @@ pub fn stream_into_state(
                     tx_buffer.push((entry, pointer));
                 } else {
                     // Standard non-transactional entry
-                    apply_entry(&entry, state, indexes, schemas, Some(pointer));
+                    apply_entry(
+                        &entry,
+                        state,
+                        indexes,
+                        #[cfg(feature = "schema")] schemas,
+                        Some(pointer),
+                    );
                 }
             }
         }
@@ -223,7 +236,7 @@ fn apply_entry(
     entry: &LogEntry,
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-    schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     pointer: Option<crate::engine::types::RecordPointer>,
 ) {
     match entry.cmd.as_str() {
@@ -283,6 +296,7 @@ fn apply_entry(
                 DashMap::new(),
             );
         }
+        #[cfg(feature = "schema")]
         "SCHEMA" => {
             // Re-compile and register the schema during replay.
             if let Ok(validator) = jsonschema::validator_for(&entry.value) {
