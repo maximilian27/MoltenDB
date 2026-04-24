@@ -1,3 +1,13 @@
+# [0.5.0](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.5.0) (2026-04-24)
+
+### Features
+
+* **Atomic Batch Transactions:** Implemented `TX_BEGIN` and `TX_COMMIT` WAL markers to ensure atomicity for batch operations without performance overhead.
+* **Optimistic Concurrency Control (OCC):** Enhanced conflict detection with explicit `409 Conflict` errors and version guards for updates.
+* **JSON Schema Validation:** High-speed schema enforcement per collection using the `jsonschema` crate.
+* **Snapshot Exports:** Background binary snapshots (`bincode`) for point-in-time durability and sub-millisecond recovery.
+* **Consistent Versioning:** Ensured document version (`_v`) is always returned in all query responses for better client-side concurrency handling.
+
 # [0.4.0](https://github.com/maximilian27/MoltenDB/compare/v0.3.0-beta.4...v0.4.0) (2026-04-23)
 
 
