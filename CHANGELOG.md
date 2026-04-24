@@ -1,24 +1,18 @@
-# [0.6.0](https://github.com/maximilian27/MoltenDB/compare/v0.5.0...v0.6.0) (2026-04-24)
+# [0.6.0](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.6.0) (2026-04-24)
 
-### Features
-
-* **Point-in-Time Recovery (PITR):** Added a standalone `recover` CLI subcommand to restore the database to a specific millisecond or sequence number.
-* **Engine-level Timestamps (`_t`):** Every log entry (INSERT, DELETE, DROP, etc.) now includes an immutable `_t` Unix timestamp in milliseconds for precise recovery and auditing.
-* **Snapshot Versioning:** Implemented automatic snapshot rotation where old snapshots are moved to a `/backup` folder before being replaced, preventing data loss during compaction.
-* **On-demand Snapshots:** Added a new `POST /snapshot` API endpoint (authenticated) to trigger manual database snapshots.
-* **Robust Log Streaming:** Updated the `StorageBackend` trait to support early-exit during log replay, enabling efficient partial restores.
 
 ### Bug Fixes
 
-* **WASM Feature Gating:** Fixed compilation errors in the WASM build by properly gating native storage backends and resolving unresolved imports.
-* **Database Initialization:** Improved `Db::open` to automatically create parent directories if they don't exist, preventing `NotFound` errors on new environments.
-
-# [0.5.0](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.5.0) (2026-04-24)
+* wasm compilation issues ([cf7f2fd](https://github.com/maximilian27/MoltenDB/commit/cf7f2fd4b3acb63574f9deb956b8c0677be233c9))
 
 
 ### Features
 
+* add timestamp metadata ([65b7363](https://github.com/maximilian27/MoltenDB/commit/65b73634189297ad0a55028608e7642d34d57005))
+* expose snapshot endpoint ([f8a9b09](https://github.com/maximilian27/MoltenDB/commit/f8a9b091331dcddc91ab6c8e27b381dc5d08c1cd))
+* point in time recovery ([619239d](https://github.com/maximilian27/MoltenDB/commit/619239db6597be4ee945fcd7caa8812ebcd4007a))
 * schema validation ([85757a2](https://github.com/maximilian27/MoltenDB/commit/85757a2f0f959dbe6bf9513ea5fb657c2acd97bf))
+* versioned snapshot and backup management ([0a46217](https://github.com/maximilian27/MoltenDB/commit/0a46217ac6dc06686b1f2760fc3ab290be969ffc))
 * WAL transaction markers ([51f7ecd](https://github.com/maximilian27/MoltenDB/commit/51f7ecd04c42bbbda5412601807856154f9ba32e))
 
 
