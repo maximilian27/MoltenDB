@@ -54,6 +54,7 @@ pub use wasm::OpfsStorage;
 use crate::engine::types::{DbError, LogEntry};
 #[cfg(feature = "schema")]
 use serde_json::Value;
+use std::ops::ControlFlow;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
 // multiple threads simultaneously without a global lock.
 // DashSet is the set equivalent.
@@ -126,18 +127,21 @@ pub trait StorageBackend: Send + Sync {
     /// compatibility (used by WASM/EncryptedStorage which don't have snapshots).
     ///
     /// Returns the total number of entries processed.
-    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32)) -> Result<u64, DbError> {
+    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
         // Default: load everything into a Vec, then iterate.
         // Concrete implementations (AsyncDiskStorage, SyncDiskStorage) override
         // this with a more efficient snapshot + streaming approach.
         let entries = self.read_log()?;
-        let count = entries.len() as u64;
+        let mut count = 0u64;
         for entry in entries {
             // Default re-serializes to get length. 
             // Better implementations override this.
             let json = serde_json::to_vec(&entry).unwrap_or_default();
             let length = json.len() as u32;
-            f(entry, length);
+            if let ControlFlow::Break(_) = f(entry, length) {
+                return Ok(count);
+            }
+            count += 1;
         }
         Ok(count)
     }
@@ -221,6 +225,7 @@ pub fn stream_into_state(
         count += 1;
         // +1 for the newline character appended to each JSON line in the log.
         offset += (length + 1) as u64;
+        ControlFlow::Continue(())
     })?;
 
     // If active_tx is still Some, the file ended prematurely (crash).
@@ -232,7 +237,7 @@ pub fn stream_into_state(
 ///
 /// If `pointer` is provided (during log replay), INSERT entries are stored
 /// as `DocumentState::Cold(pointer)` to save memory. Live writes stay `Hot`.
-fn apply_entry(
+pub fn apply_entry(
     entry: &LogEntry,
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,

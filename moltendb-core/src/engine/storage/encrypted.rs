@@ -58,6 +58,7 @@ use chacha20poly1305::{
 // RngCore = trait that provides fill_bytes() for generating random bytes.
 use rand_core::{OsRng, RngCore};
 // Arc = thread-safe reference-counted pointer for shared ownership.
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 /// Transparent encryption wrapper around any StorageBackend.
@@ -167,12 +168,12 @@ impl EncryptedStorage {
 
         // Step 6: Return a sentinel LogEntry that hides the real cmd/collection/key.
         // The underlying storage only ever sees these opaque ENC entries.
-        Ok(LogEntry {
-            cmd: "ENC".to_string(),
-            collection: "_".to_string(), // placeholder — real collection is inside the ciphertext
-            key: "_".to_string(),        // placeholder — real key is inside the ciphertext
-            value: serde_json::json!(b64),
-        })
+        Ok(LogEntry::new(
+            "ENC".to_string(),
+            "_".to_string(), // placeholder — real collection is inside the ciphertext
+            "_".to_string(),        // placeholder — real key is inside the ciphertext
+            serde_json::json!(b64),
+        ))
     }
 
     /// Decrypt a single "ENC" LogEntry and return the original LogEntry.
@@ -259,7 +260,7 @@ impl StorageBackend for EncryptedStorage {
         Ok(decrypted)
     }
 
-    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32)) -> Result<u64, DbError> {
+    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
         let mut count = 0u64;
         // EncryptedStorage wraps the inner backend. Since it doesn't have a 
         // specialized streaming implementation yet, we fall back to read_log 
@@ -270,17 +271,24 @@ impl StorageBackend for EncryptedStorage {
             if enc_entry.cmd == "ENC" {
                 match self.decrypt_entry(&enc_entry) {
                     Ok(real_entry) => {
-                        f(real_entry, length);
-                        count += 1;
+                        let res = f(real_entry, length);
+                        if let ControlFlow::Continue(_) = res {
+                            count += 1;
+                        }
+                        res
                     }
                     Err(e) => {
                         tracing::warn!("⚠️  Skipping undecryptable log entry during streaming: {}", e);
+                        ControlFlow::Continue(())
                     }
                 }
             } else {
                 // Pass through plaintext entry with its original length
-                f(enc_entry, length);
-                count += 1;
+                let res = f(enc_entry, length);
+                if let ControlFlow::Continue(_) = res {
+                    count += 1;
+                }
+                res
             }
         })?;
         

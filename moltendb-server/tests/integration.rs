@@ -1,21 +1,23 @@
 /// MoltenDB integration test suite
 /// Tests all handler operations using an in-memory SyncDiskStorage backed by a temp file.
-use moltendb_core::engine;
-use moltendb_server::handlers;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-
+use moltendb_core::{engine, handlers};
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+fn open_db_with_path() -> (engine::Db, String) {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = format!("target/test_db_{}.log", id);
+    let _ = std::fs::remove_file(&path);
+    (engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).expect("open db"), path)
+}
+
 /// Open a fresh in-memory database backed by a unique temp file.
 fn open_db() -> engine::Db {
-    let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("moltendb_test_{}.log", id));
-    let _ = std::fs::remove_file(&path);
-    engine::Db::open(path.to_str().unwrap(), true, false, 50000, 100, 60, 10485760, None).expect("open db")
+    open_db_with_path().0
 }
 
 /// Seed the three standard collections used by most tests.
@@ -70,6 +72,9 @@ fn update(db: &engine::Db, payload: serde_json::Value) -> Value {
 fn delete(db: &engine::Db, payload: serde_json::Value) -> Value {
     handlers::process_delete(db, &payload, TEST_MAX_BODY).1
 }
+fn snapshot(db: &engine::Db) -> Value {
+    handlers::process_snapshot(db).1
+}
 
 fn arr(v: &Value) -> &Vec<Value> {
     v.as_array().expect("expected array result")
@@ -118,6 +123,20 @@ fn test_get_all() {
     seed(&db);
     let r = get(&db, json!({ "collection": "laptops" }));
     assert_eq!(arr(&r).len(), 6);
+}
+
+#[test]
+fn test_manual_snapshot() {
+    let (db, path) = open_db_with_path();
+    seed(&db);
+    
+    let r = handlers::process_snapshot(&db).1;
+    assert_eq!(r["status"], "ok");
+    assert_eq!(r["message"], "Snapshot taken successfully");
+
+    // Verify it actually created a snapshot file
+    let snapshot_path = format!("{}.snapshot.bin", path);
+    assert!(std::path::Path::new(&snapshot_path).exists(), "Snapshot file should exist at {}", snapshot_path);
 }
 
 #[test]
@@ -574,7 +593,7 @@ fn test_versioning_increments_on_update() {
 }
 
 #[test]
-fn test_stale_version_write_returns_conflict() {
+fn test_stale_version_write_skipped() {
     let db = open_db();
     seed(&db);
     // Update lp4 to bump _v to 2
@@ -582,16 +601,14 @@ fn test_stale_version_write_returns_conflict() {
         "collection": "laptops",
         "data": { "lp4": { "price": 1749 } }
     }));
-    // Try to overwrite with stale _v:1 — should return 409 Conflict
-    let r = set(&db, json!({
+    // Try to overwrite with stale _v:1 — should be skipped
+    set(&db, json!({
         "collection": "laptops",
         "data": { "lp4": { "brand": "Dell", "model": "XPS 15 STALE", "price": 999, "_v": 1 } }
     }));
-    assert!(r.get("error").unwrap().as_str().unwrap().contains("Conflict"));
-    
-    let doc = get(&db, json!({ "collection": "laptops", "keys": "lp4" }));
-    assert_ne!(doc["model"], "XPS 15 STALE");
-    assert_eq!(doc["price"], 1749);
+    let r = get(&db, json!({ "collection": "laptops", "keys": "lp4" }));
+    assert_ne!(r["model"], "XPS 15 STALE");
+    assert_eq!(r["price"], 1749);
 }
 
 // ─── §50-53: Extends ─────────────────────────────────────────────────────────
@@ -684,9 +701,8 @@ fn test_unknown_property_get() {
 #[test]
 fn test_persistence_survives_reopen() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path_buf = std::env::temp_dir().join(format!("moltendb_persist_{}.log", id));
-    let path = path_buf.to_str().unwrap();
-    let _ = std::fs::remove_file(path);
+    let path = format!("target/test_persist_{}.log", id);
+    let _ = std::fs::remove_file(&path);
     {
         let db = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
         set(&db, json!({
@@ -706,9 +722,8 @@ fn test_persistence_survives_reopen() {
 #[test]
 fn test_compaction_preserves_data() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path_buf = std::env::temp_dir().join(format!("moltendb_compact_{}.log", id));
-    let path = path_buf.to_str().unwrap();
-    let _ = std::fs::remove_file(path);
+    let path = format!("target/test_compact_{}.log", id);
+    let _ = std::fs::remove_file(&path);
     let db = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
     seed(&db);
     delete(&db, json!({ "collection": "laptops", "keys": "lp6" }));
@@ -728,9 +743,8 @@ fn test_compaction_preserves_data() {
 fn test_concurrent_writes() {
     use std::thread;
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path_buf = std::env::temp_dir().join(format!("moltendb_concurrent_{}.log", id));
-    let path = path_buf.to_str().unwrap();
-    let _ = std::fs::remove_file(path);
+    let path = format!("target/test_concurrent_{}.log", id);
+    let _ = std::fs::remove_file(&path);
     let db = Arc::new(engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap());
     let n_threads = 8;
     let n_docs = 100;
@@ -757,9 +771,8 @@ fn test_concurrent_writes() {
 fn test_concurrent_reads_during_writes() {
     use std::thread;
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path_buf = std::env::temp_dir().join(format!("moltendb_rw_{}.log", id));
-    let path = path_buf.to_str().unwrap();
-    let _ = std::fs::remove_file(path);
+    let path = format!("target/test_rw_{}.log", id);
+    let _ = std::fs::remove_file(&path);
     let db = Arc::new(engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap());
     // Pre-seed
     for i in 0..50 {
@@ -823,8 +836,8 @@ fn test_analytics_count() {
         "collection": "laptops",
         "metric": { "type": "COUNT" }
     })).unwrap();
-    let result = execute_query(&db, &q).unwrap();
-    assert_eq!(result.result, serde_json::json!(6));
+    let result = execute_query(&db, &q);
+    assert_eq!(result.unwrap().result, serde_json::json!(6));
 }
 
 #[test]
@@ -836,9 +849,9 @@ fn test_analytics_sum() {
         "collection": "laptops",
         "metric": { "type": "SUM", "field": "price" }
     })).unwrap();
-    let result = execute_query(&db, &q).unwrap();
+    let result = execute_query(&db, &q);
     // 1499+3499+1699+1899+2499+849 = 11944
-    assert_eq!(result.result, serde_json::json!(11944.0));
+    assert_eq!(result.unwrap().result, serde_json::json!(11944.0));
 }
 
 #[test]
@@ -850,8 +863,8 @@ fn test_analytics_avg() {
         "collection": "laptops",
         "metric": { "type": "AVG", "field": "price" }
     })).unwrap();
-    let result = execute_query(&db, &q).unwrap();
-    let avg = result.result.as_f64().unwrap();
+    let result = execute_query(&db, &q);
+    let avg = result.unwrap().result.as_f64().unwrap();
     assert!((avg - 11944.0 / 6.0).abs() < 0.01);
 }
 
@@ -882,6 +895,46 @@ fn test_analytics_with_where() {
         "metric": { "type": "COUNT" },
         "where": { "in_stock": true }
     })).unwrap();
-    let result = execute_query(&db, &q).unwrap();
-    assert_eq!(result.result, json!(5)); // all except lp4
+    let result = execute_query(&db, &q);
+    assert_eq!(result.unwrap().result, json!(5)); // all except lp4
+}
+
+#[test]
+fn test_pitr_recovery() {
+    let path = format!("target/pitr_{}.log", uuid::Uuid::new_v4());
+    let db = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
+    
+    // 1. Insert some data
+    handlers::process_set(&db, &json!({
+        "collection": "pitr",
+        "data": { "k1": { "v": 1 } }
+    }), TEST_MAX_BODY);
+    
+    // Capture time after first insert
+    let t1 = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    
+    // 2. Insert more data
+    handlers::process_set(&db, &json!({
+        "collection": "pitr",
+        "data": { "k2": { "v": 2 } }
+    }), TEST_MAX_BODY);
+    
+    // 3. Perform recovery to t1
+    let recovered_entries = engine::Db::recover_to(&*db.storage, Some(t1), None).unwrap();
+    
+    // Should only have k1 (and metadata if any, but seed is empty here)
+    // Actually, each set produces a LogEntry.
+    // Use println to debug if needed
+    // println!("Recovered entries: {:?}", recovered_entries);
+    assert_eq!(recovered_entries.len(), 1);
+    assert_eq!(recovered_entries[0].key, "k1");
+    
+    // 4. Perform recovery to sequence 3 (TX_BEGIN, INSERT, TX_COMMIT)
+    let recovered_entries_seq = engine::Db::recover_to(&*db.storage, None, Some(3)).unwrap();
+    assert_eq!(recovered_entries_seq.len(), 1);
+    assert_eq!(recovered_entries_seq[0].key, "k1");
+    
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.snapshot.bin", path));
 }

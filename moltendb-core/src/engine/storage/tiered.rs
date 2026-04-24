@@ -76,6 +76,7 @@ use std::fs::{File, OpenOptions};
 // BufRead lets us iterate a byte slice line-by-line without copying.
 use std::io::{BufRead, BufReader, Cursor};
 // Arc = thread-safe reference-counted pointer.
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -136,12 +137,11 @@ impl MmapLogReader {
     /// Iterate over all valid LogEntry lines in the mapped file, calling `f`
     /// for each one. Lines that fail to parse are silently skipped (same
     /// behaviour as the streaming disk reader — tolerates partial writes).
-    ///
-    /// `skip_lines` allows skipping entries already covered by a snapshot,
-    /// so we only replay the delta portion of the file.
-    pub fn stream_entries<F>(&self, skip_lines: u64, mut f: F)
+    /// Call `f` for each log entry in the file, starting from `skip_lines`.
+    /// Early-exits if the closure returns `ControlFlow::Break`.
+    pub fn stream_entries<F>(&self, skip_lines: u64, mut f: F) -> ControlFlow<(), ()>
     where
-        F: FnMut(LogEntry, u32),
+        F: FnMut(LogEntry, u32) -> ControlFlow<(), ()>,
     {
         // Wrap the mmap byte slice in a Cursor so we can use BufRead::lines().
         // Cursor<&[u8]> implements Read, and BufReader adds line-buffering.
@@ -159,10 +159,13 @@ impl MmapLogReader {
                 let length = json_str.len() as u32;
                 // Ignore lines that fail to parse (partial writes on crash).
                 if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str) {
-                    f(entry, length);
+                    if let ControlFlow::Break(_) = f(entry, length) {
+                        return ControlFlow::Break(());
+                    }
                 }
             }
         }
+        ControlFlow::Continue(())
     }
 
     /// Return the total number of lines in the mapped file.
@@ -295,7 +298,10 @@ impl StorageBackend for TieredStorage {
 
         // Read cold tier first (older data).
         if let Some(reader) = MmapLogReader::open(&self.cold_path) {
-            reader.stream_entries(0, |e, _| entries.push(e));
+            let _ = reader.stream_entries(0, |e, _| {
+                entries.push(e);
+                ControlFlow::Continue(())
+            });
         }
 
         // Read hot tier on top (newer data overwrites cold on replay).
@@ -381,7 +387,7 @@ impl StorageBackend for TieredStorage {
     ///
     /// Hot entries applied in step 2/3 overwrite cold entries from step 1
     /// for the same key, giving the correct final state.
-    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32)) -> Result<u64, DbError> {
+    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
         let mut total = 0u64;
 
         // ── Step 1: Replay cold tier via mmap ────────────────────────────────
@@ -394,23 +400,27 @@ impl StorageBackend for TieredStorage {
                 cold_line_count
             );
             // Stream all cold entries — skip_lines=0 means read from the start.
-            cold_reader.stream_entries(0, |e, l| {
-                f(e, l);
-                total += 1;
-            });
+            if let ControlFlow::Break(_) = cold_reader.stream_entries(0, |e, l| {
+                let res = f(e, l);
+                if let ControlFlow::Continue(_) = res {
+                    total += 1;
+                }
+                res
+            }) {
+                return Ok(total);
+            }
         }
 
         // ── Step 2 & 3: Replay hot tier (snapshot + delta) ───────────────────
         // Delegate to AsyncDiskStorage's stream_log_into which handles the
         // snapshot + delta logic for the hot log file.
-        let hot_count = self.hot.stream_log_into(f)?;
-        total += hot_count;
-
-        tracing::info!(
-            "✅ Tiered startup replay complete ({} total entries: cold + {} hot)",
-            total,
-            hot_count
-        );
+        self.hot.stream_log_into(&mut |e, l| {
+            let res = f(e, l);
+            if let ControlFlow::Continue(_) = res {
+                total += 1;
+            }
+            res
+        })?;
 
         Ok(total)
     }

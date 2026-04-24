@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NzAxNjQyNH0.v15ftTfs9KMx1G0P4mhlhsHQUfLMD5yP8cEbY5NRnVQ
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NzEyMzQ5Nn0.PHfKZb6OtnmwbEwLtcULsjJuYJpKlCLGJwG7lWhzaDE
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
 ### subsequent examples. The laptops collection references memory and display
@@ -978,4 +978,13 @@ Authorization: Bearer {{token}}
     }
   }
 }
+
+### ─── RECOVERY & MAINTENANCE ──────────────────────────────────────────────────
+
+### §65. Take a manual snapshot (requires auth)
+### This triggers a compaction and creates a new .snapshot.bin file.
+### Old snapshots are moved to the /backup folder.
+POST https://localhost:1538/snapshot
+Content-Type: application/json
+Authorization: Bearer {{token}}
 
