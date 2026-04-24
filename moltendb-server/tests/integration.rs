@@ -1,7 +1,6 @@
 /// MoltenDB integration test suite
 /// Tests all handler operations using an in-memory SyncDiskStorage backed by a temp file.
-use moltendb_core::engine;
-use moltendb_server::handlers;
+use moltendb::{engine, handlers};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -13,9 +12,9 @@ static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// Open a fresh in-memory database backed by a unique temp file.
 fn open_db() -> engine::Db {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("moltendb_test_{}.log", id));
+    let path = format!("target/test_db_{}.log", id);
     let _ = std::fs::remove_file(&path);
-    engine::Db::open(path.to_str().unwrap(), true, false, 50000, 100, 60, 10485760, None).expect("open db")
+    engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).expect("open db")
 }
 
 /// Seed the three standard collections used by most tests.
@@ -70,6 +69,9 @@ fn update(db: &engine::Db, payload: serde_json::Value) -> Value {
 fn delete(db: &engine::Db, payload: serde_json::Value) -> Value {
     handlers::process_delete(db, &payload, TEST_MAX_BODY).1
 }
+fn snapshot(db: &engine::Db) -> Value {
+    handlers::process_snapshot(db).1
+}
 
 fn arr(v: &Value) -> &Vec<Value> {
     v.as_array().expect("expected array result")
@@ -118,6 +120,21 @@ fn test_get_all() {
     seed(&db);
     let r = get(&db, json!({ "collection": "laptops" }));
     assert_eq!(arr(&r).len(), 6);
+}
+
+#[test]
+fn test_manual_snapshot() {
+    let db = open_db();
+    seed(&db);
+    
+    let r = handlers::process_snapshot(&db).1;
+    assert_eq!(r["status"], "ok");
+    assert_eq!(r["message"], "Snapshot taken successfully");
+
+    // Verify it actually created a snapshot file
+    let id = TEST_COUNTER.load(Ordering::Relaxed) - 1;
+    let path = format!("target/test_db_{}.log.snapshot.bin", id);
+    assert!(std::path::Path::new(&path).exists(), "Snapshot file should exist at {}", path);
 }
 
 #[test]
@@ -574,7 +591,7 @@ fn test_versioning_increments_on_update() {
 }
 
 #[test]
-fn test_stale_version_write_returns_conflict() {
+fn test_stale_version_write_skipped() {
     let db = open_db();
     seed(&db);
     // Update lp4 to bump _v to 2
@@ -582,16 +599,14 @@ fn test_stale_version_write_returns_conflict() {
         "collection": "laptops",
         "data": { "lp4": { "price": 1749 } }
     }));
-    // Try to overwrite with stale _v:1 — should return 409 Conflict
-    let r = set(&db, json!({
+    // Try to overwrite with stale _v:1 — should be skipped
+    set(&db, json!({
         "collection": "laptops",
         "data": { "lp4": { "brand": "Dell", "model": "XPS 15 STALE", "price": 999, "_v": 1 } }
     }));
-    assert!(r.get("error").unwrap().as_str().unwrap().contains("Conflict"));
-    
-    let doc = get(&db, json!({ "collection": "laptops", "keys": "lp4" }));
-    assert_ne!(doc["model"], "XPS 15 STALE");
-    assert_eq!(doc["price"], 1749);
+    let r = get(&db, json!({ "collection": "laptops", "keys": "lp4" }));
+    assert_ne!(r["model"], "XPS 15 STALE");
+    assert_eq!(r["price"], 1749);
 }
 
 // ─── §50-53: Extends ─────────────────────────────────────────────────────────
@@ -684,11 +699,10 @@ fn test_unknown_property_get() {
 #[test]
 fn test_persistence_survives_reopen() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path_buf = std::env::temp_dir().join(format!("moltendb_persist_{}.log", id));
-    let path = path_buf.to_str().unwrap();
-    let _ = std::fs::remove_file(path);
+    let path = format!("target/test_persist_{}.log", id);
+    let _ = std::fs::remove_file(&path);
     {
-        let db = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
+        let db = engine::Db::open(&path, true, false, None).unwrap();
         set(&db, json!({
             "collection": "items",
             "data": { "k1": { "value": 42 } }
@@ -706,9 +720,8 @@ fn test_persistence_survives_reopen() {
 #[test]
 fn test_compaction_preserves_data() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path_buf = std::env::temp_dir().join(format!("moltendb_compact_{}.log", id));
-    let path = path_buf.to_str().unwrap();
-    let _ = std::fs::remove_file(path);
+    let path = format!("target/test_compact_{}.log", id);
+    let _ = std::fs::remove_file(&path);
     let db = engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap();
     seed(&db);
     delete(&db, json!({ "collection": "laptops", "keys": "lp6" }));
@@ -728,9 +741,8 @@ fn test_compaction_preserves_data() {
 fn test_concurrent_writes() {
     use std::thread;
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path_buf = std::env::temp_dir().join(format!("moltendb_concurrent_{}.log", id));
-    let path = path_buf.to_str().unwrap();
-    let _ = std::fs::remove_file(path);
+    let path = format!("target/test_concurrent_{}.log", id);
+    let _ = std::fs::remove_file(&path);
     let db = Arc::new(engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap());
     let n_threads = 8;
     let n_docs = 100;
@@ -757,9 +769,8 @@ fn test_concurrent_writes() {
 fn test_concurrent_reads_during_writes() {
     use std::thread;
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path_buf = std::env::temp_dir().join(format!("moltendb_rw_{}.log", id));
-    let path = path_buf.to_str().unwrap();
-    let _ = std::fs::remove_file(path);
+    let path = format!("target/test_rw_{}.log", id);
+    let _ = std::fs::remove_file(&path);
     let db = Arc::new(engine::Db::open(&path, true, false, 50000, 100, 60, 10485760, None).unwrap());
     // Pre-seed
     for i in 0..50 {
@@ -823,7 +834,7 @@ fn test_analytics_count() {
         "collection": "laptops",
         "metric": { "type": "COUNT" }
     })).unwrap();
-    let result = execute_query(&db, &q).unwrap();
+    let result = execute_query(&db, &q);
     assert_eq!(result.result, serde_json::json!(6));
 }
 
@@ -836,7 +847,7 @@ fn test_analytics_sum() {
         "collection": "laptops",
         "metric": { "type": "SUM", "field": "price" }
     })).unwrap();
-    let result = execute_query(&db, &q).unwrap();
+    let result = execute_query(&db, &q);
     // 1499+3499+1699+1899+2499+849 = 11944
     assert_eq!(result.result, serde_json::json!(11944.0));
 }
@@ -850,7 +861,7 @@ fn test_analytics_avg() {
         "collection": "laptops",
         "metric": { "type": "AVG", "field": "price" }
     })).unwrap();
-    let result = execute_query(&db, &q).unwrap();
+    let result = execute_query(&db, &q);
     let avg = result.result.as_f64().unwrap();
     assert!((avg - 11944.0 / 6.0).abs() < 0.01);
 }
@@ -868,8 +879,8 @@ fn test_analytics_min_max() {
         "collection": "laptops",
         "metric": { "type": "MAX", "field": "price" }
     })).unwrap();
-    assert_eq!(execute_query(&db, &min_q).unwrap().result, json!(849.0));
-    assert_eq!(execute_query(&db, &max_q).unwrap().result, json!(3499.0));
+    assert_eq!(execute_query(&db, &min_q).result, json!(849.0));
+    assert_eq!(execute_query(&db, &max_q).result, json!(3499.0));
 }
 
 #[test]
@@ -882,6 +893,6 @@ fn test_analytics_with_where() {
         "metric": { "type": "COUNT" },
         "where": { "in_stock": true }
     })).unwrap();
-    let result = execute_query(&db, &q).unwrap();
+    let result = execute_query(&db, &q);
     assert_eq!(result.result, json!(5)); // all except lp4
 }

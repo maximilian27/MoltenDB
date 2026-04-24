@@ -361,6 +361,7 @@ async fn main() {
         .route("/set", post(handle_set))           // Insert/upsert documents
         .route("/update", post(handle_update))     // Patch/merge documents
         .route("/delete", post(handle_delete))     // Delete documents or drop collection
+        .route("/snapshot", post(handle_snapshot))   // Take a snapshot on demand
         .route("/get", post(handle_get))           // Query documents (with WHERE, fields, joins, etc.)
         .route("/collections/{collection}", get(handle_rest_get_collection))       // GET all docs (paginated)
         .route("/collections/{collection}/docs/{key}", get(handle_rest_get));      // GET single doc
@@ -676,6 +677,14 @@ async fn handle_schema(
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let (code, body) = handlers::process_schema(&db, &payload, max_body_size);
+    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+}
+
+/// POST /snapshot — take a snapshot of the database on demand.
+async fn handle_snapshot(
+    State((db, _, _)): State<(engine::Db, auth::UserStore, usize)>,
+) -> (StatusCode, Json<Value>) {
+    let (code, body) = handlers::process_snapshot(&db);
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 

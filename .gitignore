@@ -7,3 +7,4 @@
 /my_database.log.snapshot.bin
 /moltendb-core/pkg/
 /web-packages
+/backup
