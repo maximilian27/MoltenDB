@@ -1588,22 +1588,15 @@ dependencies = [
 name = "moltendb-server"
 version = "0.5.0"
 dependencies = [
- "argon2",
  "axum",
  "axum-server",
- "base64",
- "bincode",
- "chacha20poly1305",
  "clap",
  "colored",
  "dashmap",
  "futures",
  "indicatif",
- "memmap2",
  "moltendb-auth",
  "moltendb-core",
- "rand_core 0.6.4",
- "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -1622,13 +1615,10 @@ name = "moltendb-wasm"
 version = "0.5.0"
 dependencies = [
  "console_error_panic_hook",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
  "js-sys",
  "moltendb-core",
  "serde-wasm-bindgen",
  "serde_json",
- "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

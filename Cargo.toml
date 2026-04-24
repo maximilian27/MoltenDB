@@ -1,9 +1,9 @@
 [workspace]
 members = [
     "moltendb-core",
+    "moltendb-auth",
     "moltendb-wasm",
     "moltendb-server",
-    "moltendb-auth",
 ]
 resolver = "2"
 
