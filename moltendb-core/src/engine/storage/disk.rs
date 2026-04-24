@@ -24,6 +24,8 @@ use super::StorageBackend;
 use crate::engine::types::{DbError, LogEntry};
 // Standard library file I/O types.
 use std::fs::{File, OpenOptions};
+use std::path::Path;
+use std::time::SystemTime;
 // BufRead lets us iterate a file line-by-line without loading it all into RAM.
 // BufWriter batches small writes into larger OS-level write calls for efficiency.
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -98,6 +100,29 @@ pub(super) fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> 
     w.flush()?;
     // Drop the writer to release the file handle before renaming (required on Windows).
     drop(w);
+
+    // Before renaming the new snapshot, move the old one to the backup folder.
+    if Path::new(&path).exists() {
+        let log_dir = Path::new(log_path).parent().unwrap_or_else(|| Path::new("."));
+        let backup_dir = log_dir.join("backup");
+        
+        // Ensure backup directory exists
+        std::fs::create_dir_all(&backup_dir)?;
+
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        
+        let filename = Path::new(&path).file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("snapshot.bin");
+        
+        let backup_path = backup_dir.join(format!("{}.{}.bak", filename, now));
+        
+        // Move current snapshot to backup
+        let _ = std::fs::rename(&path, &backup_path);
+    }
 
     // Atomic rename: replaces the old snapshot file in one OS operation.
     std::fs::rename(&tmp, &path)?;
