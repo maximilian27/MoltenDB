@@ -108,6 +108,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - **[`@moltendb-web/core` on NPM](https://www.npmjs.com/package/@moltendb-web/core)** — bundles the WASM engine, Web Worker, and main-thread client into a single publishable artifact
 - **[`@moltendb-web/query` on NPM](https://www.npmjs.com/package/@moltendb-web/query)** — type-safe, chainable query builder (CJS + ESM + `.d.ts`)
 - **[`@moltendb-web/angular` on NPM](https://www.npmjs.com/package/@moltendb-web/angular)** — official Angular wrapper for seamless integration
+- **Point-in-Time Recovery Ready:** Every write in the browser now includes a `_t` timestamp. While the recovery tool runs natively, browser logs can be exported and recovered to any millisecond using the native CLI.
 - **[⚡ Try the Live Angular Demo](https://moltendb-angular.maximilian-both27.workers.dev/laptops)**
 - **[⚡ Try the Live Browser WASM Demo on StackBlitz](https://stackblitz.com/~/github.com/maximilian27/moltendb-wasm-demo)**
 
@@ -120,6 +121,9 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Two write modes: async (50 ms flush, high throughput) and sync (flush-on-write, zero data loss)
 - Two storage modes: standard (single log file) and tiered (hot + cold log, mmap cold reads)
 - Binary snapshots on compaction for fast startup (snapshot + delta replay, not full log replay)
+- **Point-in-Time Recovery (PITR):** Recover the database to any millisecond or log sequence number using the `recover` CLI command.
+- **Snapshot Versioning:** Historical snapshots are automatically moved to a `/backup` folder with Unix timestamps.
+- **Manual Snapshots:** Trigger a snapshot on demand via the `POST /snapshot` endpoint.
 - Size-based compaction trigger (> 100 MB) in addition to the hourly timer
 - WebSocket endpoint (`/ws`) for real-time push notifications — subscribe and receive change events on every write
 
@@ -236,6 +240,22 @@ If you want to quickly test the functionality with the requests.http file, you s
   **--admin-user `admin`**\
   **--admin-password `admin123`**\
 Make sure to login first and then replace the token in the requests.http file with the one you get from the login response.
+
+### RECOVERY & MAINTENANCE
+
+#### Take a manual snapshot
+```http
+POST /snapshot
+Authorization: Bearer <token>
+```
+Triggers an immediate compaction and saves a new `snapshot.bin`. The previous snapshot is moved to the `/backup` folder.
+
+#### Point-in-Time Recovery (CLI)
+To recover a database to a specific time (e.g., before a bug deleted data):
+```bash
+moltendb recover --log my_database.log --to-time 1713972000000 --out recovered.snapshot.bin
+```
+The resulting `recovered.snapshot.bin` can then be renamed to `my_database.log.snapshot.bin` to restore the state.
 
 ---
 
@@ -734,7 +754,11 @@ MoltenDB/
 
 MoltenDB is currently in **Beta**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by following roadmap and community feedback.
 
-Because I am a solo developer and I don't make any money from this project (yet?), my personal life comes first. I am moving at a sustainable pace to ensure the architecture stays clean and I don't burn out. Instead of locking into a rigid feature timeline, development is focused on three major architectural themes. **If you need a specific feature to adopt MoltenDB, please open a GitHub Issue or vote on existing ones so it gets prioritized!**
+### 0. Point-in-Time Recovery (PITR) & Recovery Tooling
+- **Engine-level Timestamps:** Every write (INSERT, DELETE, DROP) now includes a hidden `_t` millisecond timestamp for precise recovery.
+- **Snapshot Versioning:** Compaction now preserves historical snapshots in a `/backup` folder before overwriting the active `snapshot.bin`.
+- **`recover` CLI:** A standalone utility to rebuild your database to an exact millisecond or log sequence number.
+- **Manual Snapshots:** A new `POST /snapshot` endpoint to trigger an atomic snapshot on demand.
 
 ### 1. Scaling & Ecosystem
 - **Mobile Native Modules:** Compiling the exact same Rust core to run natively on iOS and Android (via FFI/JNI). This will bring blazing-fast, local-first embedded databases to React Native and Flutter.

@@ -21,8 +21,10 @@ Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 `moltendb-core` is the heart of MoltenDB. It contains every piece of logic that is shared between the HTTP server (`moltendb-server`) and the browser WASM adapter (`moltendb-wasm`):
 
 - **In-memory store** — `DashMap`-backed document collections, keyed by `(collection, key)`.
-- **Append-only WAL** — every write is appended to a log file (`LogEntry`: INSERT, DELETE, DROP, INDEX, ENC). On startup the log is replayed into memory.
+- **Append-only WAL** — every write is appended to a log file (`LogEntry`: INSERT, DELETE, DROP, INDEX, ENC) with an engine-level `_t` timestamp for Point-in-Time Recovery.
 - **Storage backends** — `DiskStorage` (sync/async), `TieredStorage` (hot + cold log), `EncryptedStorage` (ChaCha20-Poly1305), `OpfsStorage` (WASM / browser OPFS).
+- **Snapshot Versioning** — Automatically backs up old snapshots to a `/backup` folder before rotation.
+- **Point-in-Time Recovery (PITR)** — Rebuild the state to any millisecond or sequence number (native only).
 - **Query evaluator** — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$contains`, `$or`, `$and`, field projection (include / exclude), dot-notation for nested fields, joins, sort, count, offset.
 - **Analytics engine** — COUNT, SUM, AVG, MIN, MAX with optional WHERE filtering. ⚠️ **Under active development — not ready for production use.**
 - **Auto-indexing** — `query_heatmap` tracks hot fields and builds indexes automatically.
@@ -48,7 +50,7 @@ WASM-specific code (`OpfsStorage`, `Db::open_wasm`) is gated behind `#[cfg(targe
 
 ```toml
 [dependencies]
-moltendb-core = "0.4.0"
+moltendb-core = "0.6.0"
 ```
 
 ### Minimal example
