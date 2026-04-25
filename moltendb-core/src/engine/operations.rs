@@ -297,6 +297,15 @@ pub fn update(
     key: &str,
     updates: Value, // the partial update — only these fields will be changed
 ) -> Result<bool, DbError> {
+    // TX_BEGIN: Start a transaction for the update.
+    let tx_id = uuid::Uuid::new_v4().to_string();
+    storage.write_entry(&LogEntry::new(
+        "TX_BEGIN".into(),
+        collection.into(),
+        tx_id.clone(),
+        Value::Null,
+    ))?;
+
     if let Some(col) = state.get(collection) {
         if let Some(doc) = {
             if let Some(doc_state) = col.get(key) {
@@ -368,6 +377,14 @@ pub fn update(
             );
             storage.write_entry(&entry)?;
 
+            // TX_COMMIT: Successfully complete the transaction.
+            storage.write_entry(&LogEntry::new(
+                "TX_COMMIT".into(),
+                collection.into(),
+                tx_id,
+                Value::Null,
+            ))?;
+
             // Step 7: Broadcast a lean change event to WebSocket subscribers.
             let new_v = new_value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
             let _ = tx.send(
@@ -382,6 +399,17 @@ pub fn update(
             return Ok(true); // document was found and updated
         }
     }
+
+    // If document not found, we still commit the transaction (which was just a BEGIN).
+    // Alternatively, we could have started the transaction only after finding the document.
+    // Given the current architecture, starting it at the top is safer for consistency.
+    storage.write_entry(&LogEntry::new(
+        "TX_COMMIT".into(),
+        collection.into(),
+        tx_id,
+        Value::Null,
+    ))?;
+
     Ok(false) // document not found — no-op
 }
 
@@ -551,6 +579,15 @@ pub fn delete_collection(
     tx: &tokio::sync::broadcast::Sender<String>,
     collection: &str,
 ) -> Result<(), DbError> {
+    // TX_BEGIN: Start a transaction for the drop.
+    let tx_id = uuid::Uuid::new_v4().to_string();
+    storage.write_entry(&LogEntry::new(
+        "TX_BEGIN".into(),
+        collection.into(),
+        tx_id.clone(),
+        Value::Null,
+    ))?;
+
     // Step 1: Remove from memory.
     state.remove(collection);
     // Step 2: Remove all indexes for this collection.
@@ -564,6 +601,14 @@ pub fn delete_collection(
         json!(null),
     );
     storage.write_entry(&entry)?;
+
+    // TX_COMMIT: Successfully complete the transaction.
+    storage.write_entry(&LogEntry::new(
+        "TX_COMMIT".into(),
+        collection.into(),
+        tx_id,
+        Value::Null,
+    ))?;
 
     // Step 4: Broadcast a lean drop event.
     let event = json!({
