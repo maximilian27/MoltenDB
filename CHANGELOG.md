@@ -1,21 +1,23 @@
-# [0.6.0](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.6.0) (2026-04-24)
-
+# [0.6.1](https://github.com/maximilian27/MoltenDB/compare/v0.6.0...v0.6.1) (2026-04-25)
 
 ### Bug Fixes
 
-* wasm compilation issues ([cf7f2fd](https://github.com/maximilian27/MoltenDB/commit/cf7f2fd4b3acb63574f9deb956b8c0677be233c9))
+* **persistence:** fixed a bug where `DELETE` operations were lost on restart if following an uncommitted transaction
+* **transactions:** added missing `TX_BEGIN`/`TX_COMMIT` markers to `update`, `delete_collection`, `set_schema`, and `create_index`
+* **snapshots:** fixed "expected value at line 1 column 1" deserialization error and ensured snapshot data is loaded as "Hot"
+* **wasm:** fixed gated storage imports for browser builds
 
+# [0.6.0](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.6.0) (2026-04-25)
+
+> [!CAUTION]
+> This version contains critical bugs related to data persistence and snapshot loading. It is recommended to use v0.6.1 instead.
 
 ### Features
 
-* add timestamp metadata ([65b7363](https://github.com/maximilian27/MoltenDB/commit/65b73634189297ad0a55028608e7642d34d57005))
-* expose snapshot endpoint ([f8a9b09](https://github.com/maximilian27/MoltenDB/commit/f8a9b091331dcddc91ab6c8e27b381dc5d08c1cd))
-* point in time recovery ([619239d](https://github.com/maximilian27/MoltenDB/commit/619239db6597be4ee945fcd7caa8812ebcd4007a))
-* schema validation ([85757a2](https://github.com/maximilian27/MoltenDB/commit/85757a2f0f959dbe6bf9513ea5fb657c2acd97bf))
-* versioned snapshot and backup management ([0a46217](https://github.com/maximilian27/MoltenDB/commit/0a46217ac6dc06686b1f2760fc3ab290be969ffc))
-* WAL transaction markers ([51f7ecd](https://github.com/maximilian27/MoltenDB/commit/51f7ecd04c42bbbda5412601807856154f9ba32e))
-
-
+* **PITR:** added engine-level timestamps (`_t`) and `recover --to` CLI subcommand
+* **Snapshots:** implemented versioned backups in `/backup` folder and on-demand `POST /snapshot` endpoint
+* **Developer Experience:** added standalone desktop and CLI TODO examples using `moltendb-core`
+* **Integrity:** enhanced WAL replay logic to handle dangling transactions without data loss
 
 # [0.4.0](https://github.com/maximilian27/MoltenDB/compare/v0.3.0-beta.4...v0.4.0) (2026-04-23)
 

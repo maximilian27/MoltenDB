@@ -194,15 +194,19 @@ pub fn stream_into_state(
                 if active_tx.as_ref() == Some(&entry.key) {
                     // Flush buffer to DashMap
                     for (e, p) in tx_buffer.drain(..) {
+                        // If length was 0, p.length will be 0 (from the snapshot replay)
+                        let pointer = if p.length == 0 { None } else { Some(p) };
                         apply_entry(
                             &e,
                             state,
                             indexes,
                             #[cfg(feature = "schema")] schemas,
-                            Some(p),
+                            pointer,
                         );
                     }
                     active_tx = None;
+                } else {
+                    tracing::warn!("⚠️  TX_COMMIT seen for unknown or inactive transaction ID: {}. Ignoring.", entry.key);
                 }
             }
             _ => {
@@ -211,12 +215,14 @@ pub fn stream_into_state(
                     tx_buffer.push((entry, pointer));
                 } else {
                     // Standard non-transactional entry
+                    // If length is 0, it means it's from a snapshot, so we want it Hot (pointer=None).
+                    let p = if length == 0 { None } else { Some(pointer) };
                     apply_entry(
                         &entry,
                         state,
                         indexes,
                         #[cfg(feature = "schema")] schemas,
-                        Some(pointer),
+                        p,
                     );
                 }
             }
@@ -229,7 +235,7 @@ pub fn stream_into_state(
     })?;
 
     // If active_tx is still Some, the file ended prematurely (crash).
-    // The tx_buffer is dropped here -> Atomicity achieved.
+    // In this case, we DISCARD the buffer to ensure atomicity of the last operation.
     Ok(count)
 }
 
