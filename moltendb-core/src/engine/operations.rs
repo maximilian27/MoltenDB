@@ -398,6 +398,15 @@ pub fn delete(
     collection: &str,
     key: &str,
 ) -> Result<(), DbError> {
+    // TX_BEGIN: Start a transaction for the delete.
+    let tx_id = uuid::Uuid::new_v4().to_string();
+    storage.write_entry(&LogEntry::new(
+        "TX_BEGIN".into(),
+        collection.into(),
+        tx_id.clone(),
+        Value::Null,
+    ))?;
+
     if let Some(col) = state.get(collection) {
         if let Some(val) = {
             if let Some(doc_state) = col.get(key) {
@@ -420,7 +429,6 @@ pub fn delete(
     }
 
     // Write a DELETE entry to the log.
-    // The `value` field is null for DELETE entries — only collection + key matter.
     let entry = LogEntry::new(
         "DELETE".to_string(),
         collection.to_string(),
@@ -428,6 +436,14 @@ pub fn delete(
         json!(null),
     );
     storage.write_entry(&entry)?;
+
+    // TX_COMMIT: Successfully complete the transaction.
+    storage.write_entry(&LogEntry::new(
+        "TX_COMMIT".into(),
+        collection.into(),
+        tx_id,
+        Value::Null,
+    ))?;
 
     // Broadcast a lean delete event to WebSocket subscribers.
     let _ = tx.send(
@@ -455,6 +471,15 @@ pub fn delete_batch(
     collection: &str,
     keys: Vec<String>,
 ) -> Result<(), DbError> {
+    // TX_BEGIN: Start a transaction for the batch delete.
+    let tx_id = uuid::Uuid::new_v4().to_string();
+    storage.write_entry(&LogEntry::new(
+        "TX_BEGIN".into(),
+        collection.into(),
+        tx_id.clone(),
+        Value::Null,
+    ))?;
+
     if let Some(col) = state.get(collection) {
         for key in keys {
             // Remove from indexes before removing from state.
@@ -498,6 +523,14 @@ pub fn delete_batch(
             let _ = tx.send(event);
         }
     }
+
+    // TX_COMMIT: Successfully complete the transaction.
+    storage.write_entry(&LogEntry::new(
+        "TX_COMMIT".into(),
+        collection.into(),
+        tx_id,
+        Value::Null,
+    ))?;
 
     Ok(())
 }

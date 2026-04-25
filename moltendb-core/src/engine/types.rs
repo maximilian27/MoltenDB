@@ -188,6 +188,8 @@ impl fmt::Display for DbError {
 /// Allow `std::io::Error` to be converted to `DbError` with the `?` operator.
 /// This means any function returning `Result<_, DbError>` can use `?` on
 /// file I/O operations without manually wrapping the error.
+impl std::error::Error for DbError {}
+
 impl From<std::io::Error> for DbError {
     fn from(err: std::io::Error) -> Self {
         DbError::Io(err)

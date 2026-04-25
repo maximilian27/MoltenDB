@@ -203,6 +203,8 @@ pub fn stream_into_state(
                         );
                     }
                     active_tx = None;
+                } else {
+                    tracing::warn!("⚠️  TX_COMMIT seen for unknown or inactive transaction ID: {}. Ignoring.", entry.key);
                 }
             }
             _ => {
@@ -229,7 +231,7 @@ pub fn stream_into_state(
     })?;
 
     // If active_tx is still Some, the file ended prematurely (crash).
-    // The tx_buffer is dropped here -> Atomicity achieved.
+    // In this case, we DISCARD the buffer to ensure atomicity of the last operation.
     Ok(count)
 }
 

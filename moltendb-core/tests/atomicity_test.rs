@@ -58,5 +58,5 @@ async fn test_batch_atomicity() {
     }
 
     let _ = std::fs::remove_file(log_path);
-    let _ = std::fs::remove_file(format!("{}.snapshot", log_path));
+    let _ = std::fs::remove_file(format!("{}.snapshot.bin", log_path));
 }
