@@ -90,8 +90,8 @@ pub(super) fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> 
 
     // Each entry is length-prefixed so the reader knows how many bytes to read.
     for entry in entries {
-        // bincode is a compact binary format — much faster to deserialize than JSON.
-        let encoded = bincode::serialize(entry).map_err(|_| DbError::WriteError)?;
+        // We use JSON for snapshots as well for now to avoid bincode issues with dynamic Value
+        let encoded = serde_json::to_vec(entry).map_err(|_| DbError::WriteError)?;
         let len = encoded.len() as u64;
         w.write_all(&len.to_le_bytes())?;
         w.write_all(&encoded)?;
@@ -137,6 +137,10 @@ pub(super) fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> 
 ///   - any read fails (truncated file, wrong format)
 pub(super) fn load_snapshot(log_path: &str) -> Option<(Vec<LogEntry>, u64)> {
     let path = snapshot_path(log_path);
+    if !Path::new(&path).exists() {
+        return None;
+    }
+    tracing::info!("🔍 Attempting to load snapshot from {}", path);
     // If the file doesn't exist, open() returns Err and we return None.
     let mut file = File::open(&path).ok()?;
 
@@ -146,6 +150,7 @@ pub(super) fn load_snapshot(log_path: &str) -> Option<(Vec<LogEntry>, u64)> {
     let mut magic = [0u8; 8];
     file.read_exact(&mut magic).ok()?;
     if &magic != b"MOLTSNAP" {
+        tracing::warn!("❌ Invalid snapshot magic header");
         return None; // Not a valid snapshot file
     }
 
@@ -159,20 +164,44 @@ pub(super) fn load_snapshot(log_path: &str) -> Option<(Vec<LogEntry>, u64)> {
     file.read_exact(&mut count_bytes).ok()?;
     let count = u64::from_le_bytes(count_bytes) as usize;
 
+    tracing::info!("📂 Snapshot header: seq={}, count={}", seq, count);
+
     let mut entries = Vec::with_capacity(count);
-    for _ in 0..count {
+    for i in 0..count {
         // Read the length prefix for this entry.
         let mut len_bytes = [0u8; 8];
-        file.read_exact(&mut len_bytes).ok()?;
+        if let Err(e) = file.read_exact(&mut len_bytes) {
+             tracing::error!("❌ Failed to read entry {} length: {}", i, e);
+             return None;
+        }
         let len = u64::from_le_bytes(len_bytes) as usize;
 
-        // Read exactly `len` bytes and deserialize with bincode.
+        // Read exactly `len` bytes and deserialize with JSON.
         let mut buf = vec![0u8; len];
-        file.read_exact(&mut buf).ok()?;
+        if let Err(e) = file.read_exact(&mut buf) {
+             tracing::error!("❌ Failed to read entry {} data: {}", i, e);
+             return None;
+        }
+
+        // If the entry is all zeros or empty, it might be a partial write
+        if len > 0 && buf.iter().all(|&b| b == 0) {
+            tracing::error!("❌ Entry {} data is all zeros. Snapshot might be corrupt.", i);
+            return None;
+        }
 
         // If deserialization fails (e.g. schema changed), return None so we
         // fall back to full log replay instead of crashing.
-        let entry: LogEntry = bincode::deserialize(&buf).ok()?;
+        let entry: LogEntry = match serde_json::from_slice(&buf) {
+            Ok(e) => e,
+            Err(err) => {
+                let sample = if buf.len() > 20 { &buf[..20] } else { &buf };
+                tracing::error!(
+                    "❌ Failed to deserialize entry {} (len {}): {}. Sample: {:?}. This usually happens if the snapshot was created with an older version of MoltenDB or is corrupt. Falling back to log replay.",
+                    i, len, err, sample
+                );
+                return None;
+            }
+        };
         entries.push(entry);
     }
 
@@ -483,16 +512,15 @@ impl StorageBackend for AsyncDiskStorage {
         let mut count = 0u64;
         // Attempt to load the binary snapshot for fast startup.
         if let Some((snapshot_entries, seq)) = load_snapshot(&self.path) {
-            tracing::info!(
-                "⚡ Snapshot loaded ({} entries, seq {}). Replaying delta only...",
-                snapshot_entries.len(),
-                seq
-            );
+                tracing::info!(
+                    "⚡ Snapshot loaded ({} entries, seq {}). Replaying delta only...",
+                    snapshot_entries.len(),
+                    seq
+                );
             for entry in snapshot_entries {
-                // For snapshots, we re-serialize because they aren't in the log file
-                let json = serde_json::to_vec(&entry).unwrap_or_default();
-                let length = json.len() as u32;
-                if let ControlFlow::Break(_) = f(entry, length) {
+                // Entries from snapshot MUST be Hot because they are not in the log file
+                // and thus don't have a valid RecordPointer for this log instance.
+                if let ControlFlow::Break(_) = f(entry, 0) {
                     return Ok(count);
                 }
                 count += 1;
@@ -630,10 +658,9 @@ impl StorageBackend for SyncDiskStorage {
                 seq
             );
             for entry in snapshot_entries {
-                // For snapshots, we re-serialize because they aren't in the log file
-                let json = serde_json::to_vec(&entry).unwrap_or_default();
-                let length = json.len() as u32;
-                if let ControlFlow::Break(_) = f(entry, length) {
+                // Entries from snapshot MUST be Hot because they are not in the log file
+                // and thus don't have a valid RecordPointer for this log instance.
+                if let ControlFlow::Break(_) = f(entry, 0) {
                     return Ok(count);
                 }
                 count += 1;
