@@ -343,7 +343,7 @@ impl StorageBackend for TieredStorage {
             // After promotion, the cold tier contains everything.
             // The hot tier can now start fresh with an empty log.
             // We write a minimal hot log with zero entries (just the snapshot).
-            let seq = count_log_lines(&self.hot_path);
+            let seq = 0u64;
             if let Err(e) = write_snapshot(&self.hot_path, &[], seq) {
                 tracing::warn!("⚠️  Failed to write hot snapshot after promotion: {}", e);
             }
@@ -365,7 +365,7 @@ impl StorageBackend for TieredStorage {
             );
 
             // Write a binary snapshot of the current hot state.
-            let seq = count_log_lines(&self.hot_path);
+            let seq = 0u64;
             if let Err(e) = write_snapshot(&self.hot_path, &entries, seq) {
                 tracing::warn!("⚠️  Failed to write hot snapshot: {}", e);
             }

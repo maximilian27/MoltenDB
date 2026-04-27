@@ -1,6 +1,6 @@
 [package]
 name = "moltendb-core"
-version = "0.6.0"
+version = "0.6.2"
 edition = "2024"
 authors = ["Maximilian Both <maximilian.both27@outlook.com>"]
 description = "MoltenDB core engine — in-memory DashMap storage, WAL persistence, query evaluation. No HTTP, no auth."
@@ -58,7 +58,9 @@ bincode = "1.3.3"
 memmap2 = "0.9"
 tokio = { version = "1.49.0", features = ["full"] }
 uuid = { version = "1.22", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 
 [dev-dependencies]
 tempfile = "3.10"
+eframe = "0.31.0"

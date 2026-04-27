@@ -192,6 +192,15 @@ pub fn create_index(
         return Ok(());
     }
 
+    // TX_BEGIN: Start a transaction for the index creation.
+    let tx_id = uuid::Uuid::new_v4().to_string();
+    storage.write_entry(&LogEntry::new(
+        "TX_BEGIN".into(),
+        collection.into(),
+        tx_id.clone(),
+        Value::Null,
+    ))?;
+
     // Build the initial index by scanning all existing documents.
     // This is O(n) in the number of documents, but only happens once per field.
     let field_index = DashMap::new();
@@ -237,6 +246,14 @@ pub fn create_index(
 
     // Persist the INDEX entry via the storage backend.
     storage.write_entry(&entry)?;
+
+    // TX_COMMIT: Successfully complete the transaction.
+    storage.write_entry(&LogEntry::new(
+        "TX_COMMIT".into(),
+        collection.into(),
+        tx_id,
+        Value::Null,
+    ))?;
 
     debug!("⚡ Persistent Index created on {}.{}", collection, field);
     Ok(())

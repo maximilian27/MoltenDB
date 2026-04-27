@@ -18,12 +18,29 @@ pub fn set_schema(
     let validator = jsonschema::validator_for(&schema)
         .map_err(|e| DbError::SchemaValidationError(format!("Invalid schema: {}", e)))?;
 
+    // TX_BEGIN: Start a transaction for the schema update.
+    let tx_id = uuid::Uuid::new_v4().to_string();
+    storage.write_entry(&LogEntry::new(
+        "TX_BEGIN".into(),
+        collection.into(),
+        tx_id.clone(),
+        Value::Null,
+    ))?;
+
     // 2. Persist to WAL.
     storage.write_entry(&LogEntry::new(
         "SCHEMA".to_string(),
         collection.to_string(),
         "".to_string(),
         schema.clone(),
+    ))?;
+
+    // TX_COMMIT: Successfully complete the transaction.
+    storage.write_entry(&LogEntry::new(
+        "TX_COMMIT".into(),
+        collection.into(),
+        tx_id,
+        Value::Null,
     ))?;
 
     // 3. Update in-memory state.

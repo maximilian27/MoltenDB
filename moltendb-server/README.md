@@ -219,7 +219,7 @@ A full API walkthrough is available in [`tests/requests.http`](../tests/requests
 
 ```toml
 [dependencies]
-moltendb-server = { version = "0.6.0", default-features = false }
+moltendb-server = { version = "0.6.2", default-features = false }
 ```
 
 Then wrap the Axum router with your own `tower::Layer` before calling `serve()`. Without the `auth` feature the server starts without requiring `--jwt-secret` and all routes are unprotected.

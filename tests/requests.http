@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NzEyMzQ5Nn0.PHfKZb6OtnmwbEwLtcULsjJuYJpKlCLGJwG7lWhzaDE
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NzM4NDkzNn0.xBzx2Ly99zhpRd9jYzuPqDBLPjAjTYyZ973qzuURBmQ
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
 ### subsequent examples. The laptops collection references memory and display
@@ -589,7 +589,7 @@ Authorization: Bearer {{token}}
 {
   "collection": "laptops",
   "data": {
-    "lp4": { "in_stock": true, "price": 1749 }
+    "lp2": { "in_stock": true, "price": 3333 }
   }
 }
 

@@ -66,15 +66,15 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "0.5.0"
+moltendb-core = "0.6.2"
 ```
 
 ```rust
 use moltendb_core::engine::Db;
 
-let db = Db::open("./my_app.log").await?;
-db.set("users", "u1", serde_json::json!({ "name": "Alice" })).await?;
-let user = db.get("users", "u1").await?;
+let db = Db::open("./my_app.log", true, false, 1000, 0, 0, 1024*1024, None)?;
+db.insert_batch("users", vec![("u1".to_string(), serde_json::json!({ "name": "Alice" }))])?;
+let user = db.get("users", "u1");
 ```
 
 ### `moltendb-auth` — The Identity Layer
@@ -98,6 +98,18 @@ By default, any collection exceeding **50,000 documents** will automatically evi
 One of MoltenDB's core features is **GraphQL-style field selection**: every query lets you specify exactly which fields (including deeply nested ones) you want back. You never receive more data than you asked for — no over-fetching, no under-fetching, no separate schema to maintain.
 
 ---
+
+### Examples
+
+- **[TODO App (CLI)](moltendb-core/examples/todo_app.rs)** — A simple CLI application demonstrating basic CRUD operations and data persistence using only `moltendb-core`.
+  ```bash
+  cargo run -p moltendb-core --example todo_app
+  ```
+
+- **[TODO App (Desktop)](moltendb-core/examples/todo_desktop.rs)** — A standalone GUI application built with `eframe` (egui) and `moltendb-core`.
+  ```bash
+  cargo run -p moltendb-core --example todo_desktop
+  ```
 
 ## What Actually Works Today
 
