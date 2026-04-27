@@ -230,7 +230,11 @@ pub fn stream_into_state(
 
         count += 1;
         // +1 for the newline character appended to each JSON line in the log.
-        offset += (length + 1) as u64;
+        // length=0 means this entry came from the snapshot (not the log file),
+        // so we must NOT advance the file offset for it.
+        if length > 0 {
+            offset += (length + 1) as u64;
+        }
         ControlFlow::Continue(())
     })?;
 

@@ -61,12 +61,6 @@ pub(super) fn snapshot_path(log_path: &str) -> String {
     format!("{}.snapshot.bin", log_path)
 }
 
-/// Serialize all current `entries` into a binary snapshot file and write it
-/// atomically (write to `.tmp`, then rename over the real file so we never
-/// end up with a half-written snapshot).
-///
-/// `seq` is the number of log lines that were present in the log file at the
-/// time of compaction — it tells the next startup how many lines to skip.
 pub(super) fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> Result<(), DbError> {
     let path = snapshot_path(log_path);
     // Write to a temp file first so the swap is atomic.
@@ -127,6 +121,62 @@ pub(super) fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> 
 
     // Atomic rename: replaces the old snapshot file in one OS operation.
     std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+pub(super) fn write_compacted_log_no_tx(path: &str, entries: &[LogEntry]) -> Result<(), DbError> {
+    let temp_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true) // start fresh — we're rewriting the whole log
+        .open(path)?;
+    let mut temp_writer = BufWriter::new(temp_file);
+
+    // Write each entry as a JSON line, same format as the live log.
+    for entry in entries {
+        writeln!(temp_writer, "{}", serde_json::to_string(&entry)?)?;
+    }
+
+    temp_writer.flush()?;
+    Ok(())
+}
+
+pub(super) fn write_compacted_log(path: &str, entries: &[LogEntry]) -> Result<(), DbError> {
+    let temp_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true) // start fresh — we're rewriting the whole log
+        .open(path)?;
+    let mut temp_writer = BufWriter::new(temp_file);
+
+    // Write each entry as a JSON line, same format as the live log.
+    for entry in entries {
+        // We write each entry in its own transaction in the compacted log.
+        // This ensures they are replayed correctly even if followed by other log entries.
+        let tx_id = format!("compact-{}", entry.key);
+        
+        let begin = LogEntry {
+            cmd: "TX_BEGIN".to_string(),
+            collection: entry.collection.clone(),
+            key: tx_id.clone(),
+            value: serde_json::Value::Null,
+            _t: entry._t,
+        };
+        writeln!(temp_writer, "{}", serde_json::to_string(&begin)?)?;
+        
+        writeln!(temp_writer, "{}", serde_json::to_string(&entry)?)?;
+        
+        let commit = LogEntry {
+            cmd: "TX_COMMIT".to_string(),
+            collection: entry.collection.clone(),
+            key: tx_id,
+            value: serde_json::Value::Null,
+            _t: entry._t,
+        };
+        writeln!(temp_writer, "{}", serde_json::to_string(&commit)?)?;
+    }
+
+    temp_writer.flush()?;
     Ok(())
 }
 
@@ -293,25 +343,6 @@ pub fn read_log_from_disk(path: &str) -> Result<Vec<LogEntry>, DbError> {
 // This keeps the log file from growing unboundedly over time.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Write a compacted set of entries to `path` (which should be a `.tmp` file).
-/// The caller is responsible for atomically swapping this file over the real log.
-pub(super) fn write_compacted_log(path: &str, entries: &[LogEntry]) -> Result<(), DbError> {
-    let temp_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true) // start fresh — we're rewriting the whole log
-        .open(path)?;
-    let mut temp_writer = BufWriter::new(temp_file);
-
-    // Write each entry as a JSON line, same format as the live log.
-    for entry in entries {
-        writeln!(temp_writer, "{}", serde_json::to_string(&entry)?)?;
-    }
-
-    temp_writer.flush()?;
-    Ok(())
-}
-
 // ─── AsyncDiskStorage ─────────────────────────────────────────────────────────
 //
 // Design: the write path is completely non-blocking. When write_entry() is
@@ -375,6 +406,7 @@ impl AsyncDiskStorage {
                         if log_line.starts_with("__RELOAD_FILE__") {
                             // Extract the temp file path from the sentinel string.
                             let temp_path = log_line.replace("__RELOAD_FILE__", "");
+                            // println!("🔥 Worker: Reloading file from {}", temp_path);
 
                             // Flush and close the current file before renaming.
                             // On Windows, a file cannot be renamed while it's open.
@@ -459,26 +491,24 @@ impl StorageBackend for AsyncDiskStorage {
         read_log_from_disk(&self.path)
     }
 
-    /// Compact the log: write a binary snapshot, rewrite the log to contain
-    /// only current state, then signal the background task to swap the file.
+    /// Compact the log: write a binary snapshot, rewrite the log to be empty,
+    /// then signal the background task to swap the file.
     fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
-        // Step 1: Write a binary snapshot so the next startup can skip log replay.
-        // We record `seq` = current line count so we know where the snapshot ends.
-        let seq = count_log_lines(&self.path);
+        // Step 1: Write a binary snapshot.
+        // After compaction the log is reset to empty, so seq=0: all future log
+        // lines written after this snapshot must be replayed from the start.
+        let seq = 0u64;
         if let Err(e) = write_snapshot(&self.path, &entries, seq) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
-            // Non-fatal: we continue without a snapshot. Next startup will do a
-            // full log replay instead, which is slower but still correct.
         }
 
-        // Step 2: Write the compacted log to a temp file.
+        // Step 2: Write an empty compacted log to a temp file.
+        // Since the snapshot now contains the full state, we can start the log fresh.
         let temp_path = format!("{}.tmp", self.path);
-        write_compacted_log(&temp_path, &entries)?;
+        write_compacted_log_no_tx(&temp_path, &[])?;
 
         // Step 3: Send the sentinel to the background task so it flushes,
         // closes the current file, renames the temp file over it, and reopens.
-        // This is the only safe way to swap the file on Windows (where you
-        // can't rename a file that's currently open by another handle).
         if let Some(ref sender) = self.sender {
             sender
                 .send(format!("__RELOAD_FILE__{}", temp_path))
@@ -512,11 +542,6 @@ impl StorageBackend for AsyncDiskStorage {
         let mut count = 0u64;
         // Attempt to load the binary snapshot for fast startup.
         if let Some((snapshot_entries, seq)) = load_snapshot(&self.path) {
-                tracing::info!(
-                    "⚡ Snapshot loaded ({} entries, seq {}). Replaying delta only...",
-                    snapshot_entries.len(),
-                    seq
-                );
             for entry in snapshot_entries {
                 // Entries from snapshot MUST be Hot because they are not in the log file
                 // and thus don't have a valid RecordPointer for this log instance.
@@ -604,25 +629,30 @@ impl StorageBackend for SyncDiskStorage {
         read_log_from_disk(&self.path)
     }
 
-    /// Compact the log: write a binary snapshot, atomically swap the log file,
-    /// then reopen the writer pointing at the new (compacted) file.
+    /// Compact the log: write a binary snapshot, swap the log file with an
+    /// empty one, then reopen the writer.
     fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
         // Step 1: Write binary snapshot for fast next startup.
-        let seq = count_log_lines(&self.path);
+        // After compaction the log is reset to empty, so seq=0: all future log
+        // lines written after this snapshot must be replayed from the start.
+        let seq = 0u64;
         if let Err(e) = write_snapshot(&self.path, &entries, seq) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         }
 
-        // Step 2: Write compacted log to a temp file.
+        // Step 2: Write an empty compacted log to a temp file.
         let temp_path = format!("{}.tmp", self.path);
-        write_compacted_log(&temp_path, &entries)?;
+        write_compacted_log_no_tx(&temp_path, &[])?;
 
         // Step 3: Lock the writer, rename the temp file over the live log,
         // then reopen the writer so future writes go to the compacted file.
         let mut w = self.writer.lock().map_err(|_| DbError::LockPoisoned)?;
         // On Unix this rename is atomic. On Windows the file must be closed first,
         // but since we hold the Mutex no other thread can write concurrently.
-        std::fs::rename(&temp_path, &self.path)?;
+        if let Err(e) = std::fs::rename(&temp_path, &self.path) {
+             tracing::error!("Failed to swap compacted file: {}", e);
+             return Err(DbError::from(e));
+        }
 
         // Reopen the file so the writer points at the new compacted log.
         let new_file = OpenOptions::new()

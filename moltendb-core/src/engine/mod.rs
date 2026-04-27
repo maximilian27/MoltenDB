@@ -445,7 +445,22 @@ impl Db {
         }
 
         // Delegate the actual file rewrite (and snapshot write) to the storage backend.
-        self.storage.compact(entries)?;
+        self.storage.compact(entries.clone())?;
+
+        // After compaction the log is rewritten and all old RecordPointers are invalid.
+        // Promote every Cold entry in the in-memory state to Hot so subsequent reads
+        // don't try to seek to stale byte offsets in the now-truncated log file.
+        for entry in &entries {
+            if entry.cmd == "INSERT" {
+                if let Some(col) = self.state.get(&entry.collection) {
+                    if let Some(mut doc) = col.get_mut(&entry.key) {
+                        if matches!(*doc, crate::engine::types::DocumentState::Cold(_)) {
+                            *doc = crate::engine::types::DocumentState::Hot(entry.value.clone());
+                        }
+                    }
+                }
+            }
+        }
 
         info!("✅ Log Compaction Finished!");
         Ok(())
