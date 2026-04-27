@@ -1,3 +1,9 @@
+# [0.6.2](https://github.com/maximilian27/MoltenDB/compare/v0.6.1...v6.0.2) (2026-04-27)
+### Bug Fixes
+* **persistence:** fixed collections loaded from `.log` file being ignored when a snapshot also exists due to incorrect `seq` offset after compaction
+* **persistence:** fixed stale `Cold(RecordPointer)` entries after compaction causing data to disappear on fetch
+* **persistence:** fixed corrupted byte offsets for log-sourced documents when snapshot entries were incorrectly advancing the file offset counter
+
 # [0.6.1](https://github.com/maximilian27/MoltenDB/compare/v0.6.0...v0.6.1) (2026-04-25)
 
 ### Bug Fixes
