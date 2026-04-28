@@ -18,8 +18,8 @@
 // User storage:
 //   Users are stored in an in-memory DashMap (username → bcrypt hash).
 //   Credentials are loaded from environment variables at startup:
-//     MOLTENDB_ADMIN_USER   
-//     MOLTENDB_ADMIN_PASSWORD 
+//     MOLTENDB_ROOT_USER
+//     MOLTENDB_ROOT_PASSWORD
 //   No external database is needed. Additional users can be added at runtime
 //   via UserStore::add_user().
 //
