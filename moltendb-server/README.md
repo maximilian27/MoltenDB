@@ -50,8 +50,8 @@ moltendb \
   --write-mode async \
   --storage-mode tiered \
   --jwt-secret my-awesome-secret \
-  --admin-user admin \
-  --admin-password admin123 \
+  --root-user admin \
+  --root-password admin123 \
   --cors-origin "*"
 ```
 
@@ -63,8 +63,8 @@ cargo run --package moltendb-server --bin moltendb -- \
   --write-mode async \
   --storage-mode tiered \
   --jwt-secret my-awesome-secret \
-  --admin-user admin \
-  --admin-password admin123 \
+  --root-user admin \
+  --root-password admin123 \
   --cors-origin "*"
 ```
 
@@ -82,8 +82,8 @@ cargo run --package moltendb-server --bin moltendb -- \
 | `--storage-mode` | `STORAGE_MODE` | `standard` | `standard` or `tiered` (hot + cold log, recommended for 100k+ docs) |
 | `--encryption-key` | `ENCRYPTION_KEY` | — | At-rest encryption password (ChaCha20-Poly1305) |
 | `--jwt-secret` | `JWT_SECRET` | **required** | JWT signing secret — server refuses to start without it |
-| `--admin-user` | `MOLTENDB_ADMIN_USER` | — | Admin username seeded at startup |
-| `--admin-password` | `MOLTENDB_ADMIN_PASSWORD` | — | Admin password seeded at startup |
+| `--root-password` | `MOLTENDB_ROOT_PASSWORD` | — | Root password seeded at startup |
+| `--root-user` | `MOLTENDB_ROOT_USER` | — | Root username seeded at startup |
 | `--cors-origin` | `CORS_ORIGIN` | `*` | Allowed CORS origin(s), comma-separated |
 | `--rate-limit-requests` | `RATE_LIMIT_REQUESTS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `RATE_LIMIT_WINDOW_SECS` | `60` | Rate limit sliding window in seconds |

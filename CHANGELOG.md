@@ -11,6 +11,12 @@
 ### Features
 * **backups:** added script-based post-backup hook with automatic PowerShell ExecutionPolicy bypass on Windows
 * **backups:** switched from arbitrary shell commands to dedicated script execution for improved security
+* **configuration:** consolidated database initialization into `DbConfig` struct for improved maintainability
+* **naming:** standardized all environment variables with `MOLTENDB_` prefix
+
+### Breaking Changes
+* **identity:** renamed `--admin-user` to `--root-user` and `--admin-password` to `--root-password` (env vars also updated to `MOLTENDB_ROOT_USER` and `MOLTENDB_ROOT_PASSWORD`)
+* **configuration:** `Db::open` and `Db::open_wasm` now accept a `DbConfig` struct instead of individual arguments
 
 # [0.6.2](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.6.2) (2026-04-27)
 

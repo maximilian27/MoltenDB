@@ -81,7 +81,7 @@ let user = db.get("users", "u1");
 
 Handles everything related to identity: Argon2 password hashing, JWT minting and validation (HMAC-SHA256), and the `UserStore`. Depends only on `moltendb-core` — it has no knowledge of HTTP routing or the server binary.
 
-**v1 is single-user only.** One admin user is configured at startup via `--admin-user` / `--admin-password`. There is no user management API — to change credentials, restart the server with updated values.
+**v1 is single-user only.** One root user is configured at startup via `--root-user` / `--root-password`. There is no user management API — to change credentials, restart the server with updated values.
 
 ### `moltendb-server` — The Network Layer
 
@@ -160,7 +160,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Passwords hashed with bcrypt / argon2
 - JWT tokens signed with HMAC-SHA256, 24-hour expiry
 - Credentials loaded from environment variables at startup (no hardcoded defaults in production)
-- **Single-user mode only (v1):** MoltenDB supports exactly one admin user. There is no user management API — to change credentials, restart the server with updated `--admin-user` / `--admin-password` values.
+- **Single-user mode only (v1):** MoltenDB supports exactly one root user. There is no user management API — to change credentials, restart the server with updated `--root-user` / `--root-password` values.
 - Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch size (max 1000 keys)
 - Security headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `HSTS`, `CSP`, etc.
 - Graceful shutdown: drains in-flight requests (up to 30 s), then awaits the async writer task to fully flush all buffered log entries before exit
@@ -225,17 +225,17 @@ wasm-pack build moltendb-core --target web
 
 ```bash
 # Set credentials (REQUIRED)
-export MOLTENDB_ADMIN_USER=myuser
-export MOLTENDB_ADMIN_PASSWORD=str0ng-p4ssw0rd
-export JWT_SECRET=another-strong-secret
+export MOLTENDB_ROOT_USER=myuser
+export MOLTENDB_ROOT_PASSWORD=str0ng-p4ssw0rd
+export MOLTENDB_JWT_SECRET=another-strong-secret
 
 # Run the server binary
 cargo run --release -p moltendb-server
 
 # Or with CLI flags (equivalent)
 cargo run --release -p moltendb-server -- \
-  --admin-user myuser \
-  --admin-password str0ng-p4ssw0rd \
+  --root-user myuser \
+  --root-password str0ng-p4ssw0rd \
   --jwt-secret another-strong-secret \
   --encryption-key my-encryption-password \
   --port 1538
@@ -250,8 +250,8 @@ Run `cargo run -p moltendb-server -- --help` to see all available flags.
 ### Quick Test with `requests.http`
 
 If you want to quickly test the functionality with the requests.http file, you should start the server with the following credentials (via CLI flags or environment variables): \
-  **--admin-user `admin`**\
-  **--admin-password `admin123`**\
+  **--root-user `admin`**\
+  **--root-password `admin123`**\
 Make sure to login first and then replace the token in the requests.http file with the one you get from the login response.
 
 ### RECOVERY & MAINTENANCE
@@ -606,24 +606,24 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 
 | Flag | Env var | Default | Description |
 |---|---|---|---|
-| `--port` | `PORT` | `1538` | TCP port |
-| `--db-path` | `DB_PATH` | `my_database.log` | Log file path |
-| `--cert` | `TLS_CERT` | `cert.pem` | TLS certificate |
-| `--key` | `TLS_KEY` | `key.pem` | TLS private key |
-| `--encryption-key` | `ENCRYPTION_KEY` | built-in default ⚠️ | At-rest encryption password |
-| `--disable-encryption` | `DISABLE_ENCRYPTION` | `false` | Store data as plain JSON |
-| `--write-mode` | `WRITE_MODE` | `async` | `async` or `sync` |
-| `--storage-mode` | `STORAGE_MODE` | `standard` | `standard` or `tiered` |
-| `--rate-limit-requests` | `RATE_LIMIT_REQUESTS` | `100` | Max requests per IP per window |
-| `--rate-limit-window` | `RATE_LIMIT_WINDOW_SECS` | `60` | Window size in seconds |
-| `--jwt-secret` | `JWT_SECRET` | **REQUIRED** 🔥 | JWT signing secret |
-| `--admin-user` | `MOLTENDB_ADMIN_USER` | **REQUIRED** 🔥 | Admin username |
-| `--admin-password` | `MOLTENDB_ADMIN_PASSWORD` | **REQUIRED** 🔥 | Admin password |
-| `--cors-origin` | `CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s). Use `*` for dev only; set to your frontend URL in production (comma-separated for multiple) |
-| `--max-body-size` | `MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. |
-| `--debug` | `DEBUG` | `false` | Enable verbose debug logging |
-| `--hot-threshold` | `MOLTEN_HOT_THRESHOLD` | `50000` | Max documents per collection to keep in RAM |
-| `--post-backup-script` | `POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup. Receives the absolute path to the newly created snapshot as the first positional argument. On Windows, PowerShell is used with `-ExecutionPolicy Bypass`. |
+| `--cert` | `MOLTENDB_TLS_CERT` | `cert.pem` | TLS certificate |
+| `--cors-origin` | `MOLTENDB_CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s). Use `*` for dev only; set to your frontend URL in production (comma-separated for multiple) |
+| `--db-path` | `MOLTENDB_DB_PATH` | `my_database.log` | Log file path |
+| `--debug` | `MOLTENDB_DEBUG` | `false` | Enable verbose debug logging |
+| `--disable-encryption` | `MOLTENDB_DISABLE_ENCRYPTION` | `false` | Store data as plain JSON |
+| `--encryption-key` | `MOLTENDB_ENCRYPTION_KEY` | built-in default ⚠️ | At-rest encryption password |
+| `--hot-threshold` | `MOLTENDB_HOT_THRESHOLD` | `50000` | Max documents per collection to keep in RAM |
+| `--jwt-secret` | `MOLTENDB_JWT_SECRET` | **REQUIRED** 🔥 | JWT signing secret |
+| `--key` | `MOLTENDB_TLS_KEY` | `key.pem` | TLS private key |
+| `--max-body-size` | `MOLTENDB_MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. |
+| `--port` | `MOLTENDB_PORT` | `1538` | TCP port |
+| `--post-backup-script` | `MOLTENDB_POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup. Receives the absolute path to the newly created snapshot as the first positional argument. On Windows, PowerShell is used with `-ExecutionPolicy Bypass`. |
+| `--rate-limit-requests` | `MOLTENDB_RATE_LIMIT_REQS` | `100` | Max requests per IP per window |
+| `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Window size in seconds |
+| `--root-password` | `MOLTENDB_ROOT_PASSWORD` | **REQUIRED** 🔥 | Root password |
+| `--root-user` | `MOLTENDB_ROOT_USER` | **REQUIRED** 🔥 | Root username |
+| `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` |
+| `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
 ### 🔒 Security Considerations
 
