@@ -26,12 +26,15 @@
 mod types;      // LogEntry, DbError
 mod indexing;   // index_doc, unindex_doc, track_query, create_index
 mod storage;    // StorageBackend trait + concrete implementations
+mod config;     // DbConfig struct
 #[cfg(feature = "schema")]
 mod schema;     // JSON Schema validation
 mod operations; // get, get_all, insert_batch, update, delete, etc.
 
 // Re-export LogEntry so it can be used by tests and other crates.
 pub use types::{DbError, LogEntry};
+// Re-export DbConfig
+pub use config::DbConfig;
 // Re-export the StorageBackend trait so callers can use it without knowing
 // the internal module structure.
 pub use storage::{StorageBackend, EncryptedStorage};
@@ -127,17 +130,17 @@ impl Db {
     /// `encryption_key` — if Some, wrap the storage in EncryptedStorage.
     ///                    if None, data is stored in plaintext (not recommended).
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn open(
-        path: &str,
-        sync_mode: bool,
-        tiered_mode: bool,
-        hot_threshold: usize,
-        rate_limit_requests: u32,
-        rate_limit_window: u64,
-        max_body_size: usize,
-        encryption_key: Option<&[u8; 32]>,
-        post_backup_cmd: Option<String>,
-    ) -> Result<Self, DbError> {
+    pub fn open(config: DbConfig) -> Result<Self, DbError> {
+        let path = &config.path;
+        let sync_mode = config.sync_mode;
+        let tiered_mode = config.tiered_mode;
+        let hot_threshold = config.hot_threshold;
+        let rate_limit_requests = config.rate_limit_requests;
+        let rate_limit_window = config.rate_limit_window;
+        let max_body_size = config.max_body_size;
+        let encryption_key = config.encryption_key;
+        let post_backup_script = config.post_backup_script;
+
         // Create the shared in-memory state containers.
         let state = Arc::new(DashMap::new());
         // Create the broadcast channel with a buffer of 100 messages.
@@ -177,7 +180,7 @@ impl Db {
         // EncryptedStorage is transparent — it encrypts on write and decrypts
         // on read, so the rest of the engine doesn't know encryption is happening.
         let storage: Arc<dyn StorageBackend> = if let Some(key) = encryption_key {
-            Arc::new(storage::EncryptedStorage::new(base_storage, key))
+            Arc::new(storage::EncryptedStorage::new(base_storage, &key))
         } else {
             base_storage
         };
@@ -203,7 +206,7 @@ impl Db {
             max_body_size,
             #[cfg(feature = "schema")]
             schemas,
-            post_backup_script: post_backup_cmd,
+            post_backup_script,
         })
     }
 
@@ -212,16 +215,16 @@ impl Db {
     ///
     /// `db_name` — the filename in the OPFS root directory (e.g. "analytics_db").
     #[cfg(target_arch = "wasm32")]
-    pub async fn open_wasm(
-        db_name: &str,
-        hot_threshold: usize,
-        rate_limit_requests: u32,
-        rate_limit_window: u64,
-        max_body_size: usize,
-        encryption_key: Option<&[u8; 32]>,
-        sync_mode: bool,
-        post_backup_cmd: Option<String>,
-    ) -> Result<Self, DbError> {
+    pub async fn open_wasm(config: DbConfig) -> Result<Self, DbError> {
+        let db_name = &config.path;
+        let hot_threshold = config.hot_threshold;
+        let rate_limit_requests = config.rate_limit_requests;
+        let rate_limit_window = config.rate_limit_window;
+        let max_body_size = config.max_body_size;
+        let encryption_key = config.encryption_key;
+        let sync_mode = config.sync_mode;
+        let post_backup_script = config.post_backup_script;
+
         let state = Arc::new(DashMap::new());
         let (tx, _rx) = broadcast::channel(100);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
@@ -237,7 +240,7 @@ impl Db {
 
         // Apply encryption wrapper if a key is provided.
         if let Some(key) = encryption_key {
-            storage = Arc::new(storage::EncryptedStorage::new(storage, key));
+            storage = Arc::new(storage::EncryptedStorage::new(storage, &key));
         }
 
         // Replay the log into the in-memory state.
@@ -260,7 +263,7 @@ impl Db {
             max_body_size,
             #[cfg(feature = "schema")]
             schemas,
-            post_backup_script: post_backup_cmd,
+            post_backup_script,
         })
     }
 

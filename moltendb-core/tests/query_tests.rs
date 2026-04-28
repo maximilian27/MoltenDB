@@ -1,4 +1,4 @@
-use moltendb_core::engine::Db;
+use moltendb_core::engine::{Db, DbConfig};
 use moltendb_core::handlers::process_get;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,7 +11,11 @@ fn open_db() -> Db {
     if path.exists() {
         let _ = std::fs::remove_file(&path);
     }
-    Db::open(path.to_str().unwrap(), true, false, 50000, 100, 60, 10485760, None, None).expect("Failed to open db")
+    Db::open(DbConfig {
+        path: path.to_str().unwrap().to_string(),
+        sync_mode: true,
+        ..Default::default()
+    }).expect("Failed to open db")
 }
 
 fn seed_data(db: &Db) {
