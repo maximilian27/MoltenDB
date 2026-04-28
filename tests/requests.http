@@ -589,7 +589,7 @@ Authorization: Bearer {{token}}
 {
   "collection": "laptops",
   "data": {
-    "lp2": { "in_stock": true, "price": 3333 }
+    "lp2": { "in_stock": true, "price": 3456 }
   }
 }
 

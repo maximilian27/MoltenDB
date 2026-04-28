@@ -381,17 +381,19 @@ async fn main() {
     //   2. Wraps it in EncryptedStorage if encryption_key is Some.
     //   3. Streams the log file line-by-line, replaying entries into RAM.
     //   4. Returns a Db handle (cheap to clone — it's Arc-backed internally).
-    let db = match engine::Db::open(
-        &db_path,
-        is_sync_mode,
-        is_tiered_mode,
-        cfg.hot_threshold,
+    let db_config = engine::DbConfig {
+        path: db_path.clone(),
+        sync_mode: is_sync_mode,
+        tiered_mode: is_tiered_mode,
+        hot_threshold: cfg.hot_threshold,
         rate_limit_requests,
         rate_limit_window,
-        cfg.max_body_size,
-        encryption_key,
-        cfg.post_backup_script,
-    ) {
+        max_body_size: cfg.max_body_size,
+        encryption_key: encryption_key.cloned(),
+        post_backup_script: cfg.post_backup_script,
+    };
+
+    let db = match engine::Db::open(db_config) {
         Ok(database) => database,
         Err(e) => {
             error!("🔥 CRITICAL: Failed to start MoltenDB! Details: {}", e);

@@ -1,4 +1,4 @@
-use moltendb_core::engine::Db;
+use moltendb_core::engine::{Db, DbConfig};
 use serde_json::json;
 use std::fs;
 
@@ -9,7 +9,11 @@ fn test_pitr_timestamp_metadata() {
     let log_path_str = log_path.to_str().unwrap();
     
     // 1. Open DB and write some data
-    let db = Db::open(log_path_str, true, false, 50000, 100, 60, 10485760, None, None).unwrap();
+    let db = Db::open(DbConfig {
+        path: log_path_str.to_string(),
+        sync_mode: true,
+        ..Default::default()
+    }).unwrap();
     
     let t_start = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -41,7 +45,11 @@ fn test_pitr_timestamp_metadata() {
     
     // 3. Re-open the database from the log to verify it recovered with _t
     drop(db);
-    let db2 = Db::open(log_path_str, true, false, 50000, 100, 60, 10485760, None, None).unwrap();
+    let db2 = Db::open(DbConfig {
+        path: log_path_str.to_string(),
+        sync_mode: true,
+        ..Default::default()
+    }).unwrap();
     let _k1 = db2.get("test", "k1").expect("k1 should be recovered");
     
     // Instead, we verify that PITR recovery works which relies on _t.
