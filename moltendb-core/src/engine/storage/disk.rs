@@ -517,6 +517,8 @@ impl StorageBackend for AsyncDiskStorage {
             tokio::spawn(async move {
                 let res = if cfg!(target_os = "windows") {
                     tokio::process::Command::new("powershell")
+                        .arg("-ExecutionPolicy")
+                        .arg("Bypass")
                         .arg("-Command")
                         .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
                         .output()
@@ -697,6 +699,8 @@ impl StorageBackend for SyncDiskStorage {
             tokio::spawn(async move {
                 let res = if cfg!(target_os = "windows") {
                     tokio::process::Command::new("powershell")
+                        .arg("-ExecutionPolicy")
+                        .arg("Bypass")
                         .arg("-Command")
                         .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
                         .output()
