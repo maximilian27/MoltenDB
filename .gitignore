@@ -9,3 +9,5 @@
 /web-packages
 /backup
 /moltendb-server/target
+/backup_hook.ps1
+/backup_hook.sh
