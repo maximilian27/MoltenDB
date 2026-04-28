@@ -72,7 +72,7 @@ let protected = Router::new()
 
 ---
 
-## Current limitations (v0.3.x)
+## Current limitations (v0.7.0)
 
 - **Single-user only** — one root user is configured at startup via `--root-user` / `--root-password`. There is no HTTP endpoint to create or delete users at runtime.
 - **No token refresh** — tokens expire after 24 hours. Re-login is required.
@@ -87,7 +87,7 @@ let protected = Router::new()
 
 ```toml
 # Cargo.toml
-moltendb-server = { version = "0.3.0-beta.2", default-features = false }
+moltendb-server = { version = "0.7.0", default-features = false }
 ```
 
 Then wrap the Axum router with your own `tower::Layer` before calling `serve()`. See the [server README](../moltendb-server/README.md) for details.

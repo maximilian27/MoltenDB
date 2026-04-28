@@ -361,9 +361,11 @@ async fn main() {
     //   Db::open(). The reference cannot outlive the owned value, so both must
     //   be declared in the same scope.
     //
-    // If we wrote `let key = Some(derive_key(...)); Db::open(..., key.as_ref())`
-    // in a single expression, the temporary `key` would be dropped before
-    // Db::open() could use the reference — the borrow checker prevents this.
+    // If we wrote `let key = Some(derive_key(...)); Db::open(db_config)`
+    // in a single expression, and db_config used key.as_ref(), the temporary 
+    // `key` would be dropped before Db::open() could use the reference.
+    // However, since DbConfig now takes an owned Option<[u8; 32]>, this 
+    // specific borrow checker issue is simplified.
     let encryption_key_storage;
     let encryption_key: Option<&[u8; 32]> = if cfg.disable_encryption {
         warn!("⚠️  Encryption is DISABLED — data will be stored as plain JSON!");

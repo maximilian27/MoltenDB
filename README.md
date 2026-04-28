@@ -66,16 +66,60 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "0.6.3"
+moltendb-core = "0.7.0"
 ```
 
 ```rust
-use moltendb_core::engine::Db;
+use moltendb_core::engine::{Db, DbConfig};
 
-let db = Db::open("./my_app.log", true, false, 1000, 0, 0, 1024*1024, None)?;
+let config = DbConfig {
+    path: "./my_app.log".to_string(),
+    sync_mode: true,
+    hot_threshold: 1000,
+    ..Default::default()
+};
+
+let db = Db::open(config).await?;
 db.insert_batch("users", vec![("u1".to_string(), serde_json::json!({ "name": "Alice" }))])?;
 let user = db.get("users", "u1");
 ```
+
+| Feature | Available in `moltendb-core`? | Available in `moltendb-server`? | Why? |
+| :--- | :--- | :--- | :--- |
+| `MOLTENDB_DB_PATH` | No (passed via `DbConfig`) | **Yes** | Engine needs a path; server provides the CLI flag. |
+| `MOLTENDB_PORT` | **No** | **Yes** | Core has no network listener or HTTP logic. |
+| `MOLTENDB_ROOT_USER` | **No** | **Yes** | Core doesn't handle API authentication. |
+| `MOLTENDB_JWT_SECRET` | **No** | **Yes** | Server-side token security. |
+| `MOLTENDB_SYNC_MODE` | No (passed via `DbConfig`) | **Yes** | Controls the core engine's storage behavior. |
+
+> [!TIP]
+> **When using the standalone `moltendb-server` binary, all flags and environment variables are available.** The server acts as a thin wrapper that combines the engine, authentication, and networking layers. The distinction only matters if you are using `moltendb-core` as a library in your own Rust project.
+
+### 3. How to configure `moltendb-core` directly
+
+If you are building a custom application and importing `moltendb-core`, you don't use environment variables or CLI flags unless you implement them yourself. Instead, you initialize the database using the `DbConfig` struct:
+
+```rust
+use moltendb_core::engine::{Db, DbConfig};
+
+#[tokio::main]
+async fn main() {
+    // Core doesn't know about MOLTENDB_PORT or MOLTENDB_ROOT_USER
+    let config = DbConfig {
+        path: "my_data.db".to_string(),
+        sync_mode: true,
+        hot_threshold: 10000,
+        ..Default::default()
+    };
+
+    let db = Db::open(config).await.unwrap();
+    // Now you have a running database instance in your own app!
+}
+```
+
+In summary: **the server flags are just a user interface for the standalone binary.** If you use the core package as a library, you are responsible for how you want to configure it.
+
+---
 
 ### `moltendb-auth` — The Identity Layer
 
@@ -199,7 +243,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "0.6.3"
+moltendb-core = "0.7.0"
 ```
 
 ### Download Pre-built Binaries
@@ -218,7 +262,7 @@ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -node
 The WASM package targets `moltendb-core` only — no HTTP or auth deps are included:
 
 ```bash
-wasm-pack build moltendb-core --target web
+wasm-pack build moltendb-wasm --target web
 ```
 
 ### Run the server
@@ -604,24 +648,32 @@ See `src/ws_test/websocket-test.html` for an interactive tester.
 
 All options can be set via CLI flags or environment variables. CLI flags take priority.
 
-| Flag | Env var | Default | Description |
+> [!NOTE]
+> **If you are running the `moltendb-server` binary, you can use all flags listed below.** The separation between "Networking/Auth" and "Database Engine" is only relevant for developers embedding `moltendb-core` as a library.
+
+### Networking & Authentication (Server-only)
 |---|---|---|---|
 | `--cert` | `MOLTENDB_TLS_CERT` | `cert.pem` | TLS certificate |
-| `--cors-origin` | `MOLTENDB_CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s). Use `*` for dev only; set to your frontend URL in production (comma-separated for multiple) |
-| `--db-path` | `MOLTENDB_DB_PATH` | `my_database.log` | Log file path |
+| `--cors-origin` | `MOLTENDB_CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s) |
+| `--jwt-secret` | `MOLTENDB_JWT_SECRET` | **REQUIRED** 🔥 | JWT signing secret |
+| `--key` | `MOLTENDB_TLS_KEY` | `key.pem` | TLS private key |
+| `--port` | `MOLTENDB_PORT` | `1538` | TCP port |
+| `--root-password` | `MOLTENDB_ROOT_PASSWORD` | **REQUIRED** 🔥 | Root password |
+| `--root-user` | `MOLTENDB_ROOT_USER` | **REQUIRED** 🔥 | Root username |
 | `--debug` | `MOLTENDB_DEBUG` | `false` | Enable verbose debug logging |
+
+### Database Engine Flags (passed to `moltendb-core`)
+
+| Flag | Env var | Default | Description |
+|---|---|---|---|
+| `--db-path` | `MOLTENDB_DB_PATH` | `my_database.log` | Log file path |
 | `--disable-encryption` | `MOLTENDB_DISABLE_ENCRYPTION` | `false` | Store data as plain JSON |
 | `--encryption-key` | `MOLTENDB_ENCRYPTION_KEY` | built-in default ⚠️ | At-rest encryption password |
 | `--hot-threshold` | `MOLTENDB_HOT_THRESHOLD` | `50000` | Max documents per collection to keep in RAM |
-| `--jwt-secret` | `MOLTENDB_JWT_SECRET` | **REQUIRED** 🔥 | JWT signing secret |
-| `--key` | `MOLTENDB_TLS_KEY` | `key.pem` | TLS private key |
-| `--max-body-size` | `MOLTENDB_MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. |
-| `--port` | `MOLTENDB_PORT` | `1538` | TCP port |
-| `--post-backup-script` | `MOLTENDB_POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup. Receives the absolute path to the newly created snapshot as the first positional argument. On Windows, PowerShell is used with `-ExecutionPolicy Bypass`. |
+| `--max-body-size` | `MOLTENDB_MAX_BODY_SIZE` | `10485760` | Maximum request body size in bytes |
+| `--post-backup-script` | `MOLTENDB_POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup |
 | `--rate-limit-requests` | `MOLTENDB_RATE_LIMIT_REQS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Window size in seconds |
-| `--root-password` | `MOLTENDB_ROOT_PASSWORD` | **REQUIRED** 🔥 | Root password |
-| `--root-user` | `MOLTENDB_ROOT_USER` | **REQUIRED** 🔥 | Root username |
 | `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` |
 | `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
@@ -633,9 +685,10 @@ Executing external scripts carries inherent risks. MoltenDB mitigates some of th
 
 #### Recommended Mitigations:
 1. **Docker Isolation:** Run MoltenDB in a container to isolate the host filesystem and network. Use a minimal base image.
-2. **Principle of Least Privilege:** Run the MoltenDB process under a dedicated service account with access only to its data directory.
-3. **Sandboxing:** Use `seccomp` or `AppArmor`/`Selinux` on Linux to restrict the types of processes MoltenDB can spawn.
-4. **Script Hardening:** Ensure your hook scripts have restricted permissions (e.g., `chmod 700`) and do not contain hardcoded secrets. Use environment variables for API keys.
+2. **Principle of Least Privilege:** Run the MoltenDB process under a dedicated service account with access only to its data directory. Ensure only the MoltenDB service user can read the hook script files.
+3. **Absolute Paths:** Always use absolute paths for your scripts to avoid "command not found" errors or potential path hijacking.
+4. **Sandboxing:** Use `seccomp` or `AppArmor`/`Selinux` on Linux to restrict the types of processes MoltenDB can spawn.
+5. **Script Hardening:** Ensure your hook scripts have restricted permissions (e.g., `chmod 700`) and do not contain hardcoded secrets. Use environment variables for API keys.
 
 ⚠️ = insecure default, must be overridden in production. The server prints a warning at startup for each one that is not set.
 
