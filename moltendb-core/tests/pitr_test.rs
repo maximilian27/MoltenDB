@@ -9,7 +9,7 @@ fn test_pitr_timestamp_metadata() {
     let log_path_str = log_path.to_str().unwrap();
     
     // 1. Open DB and write some data
-    let db = Db::open(log_path_str, true, false, 50000, 100, 60, 10485760, None).unwrap();
+    let db = Db::open(log_path_str, true, false, 50000, 100, 60, 10485760, None, None).unwrap();
     
     let t_start = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

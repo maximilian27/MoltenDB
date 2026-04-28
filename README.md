@@ -135,6 +135,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Binary snapshots on compaction for fast startup (snapshot + delta replay, not full log replay)
 - **Point-in-Time Recovery (PITR):** Recover the database to any millisecond or log sequence number using the `recover` CLI command.
 - **Snapshot Versioning:** Historical snapshots are automatically moved to a `/backup` folder with Unix timestamps.
+- **Post-Backup Hook:** Automatically execute custom shell commands (e.g., S3 upload, Slack notify) after every successful snapshot.
 - **Manual Snapshots:** Trigger a snapshot on demand via the `POST /snapshot` endpoint.
 - Size-based compaction trigger (> 100 MB) in addition to the hourly timer
 - WebSocket endpoint (`/ws`) for real-time push notifications — subscribe and receive change events on every write
@@ -622,6 +623,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--max-body-size` | `MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. |
 | `--debug` | `DEBUG` | `false` | Enable verbose debug logging |
 | `--hot-threshold` | `MOLTEN_HOT_THRESHOLD` | `50000` | Max documents per collection to keep in RAM |
+| `--post-backup-script` | `POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup (receives the snapshot path as first argument) |
 
 ⚠️ = insecure default, must be overridden in production. The server prints a warning at startup for each one that is not set.
 

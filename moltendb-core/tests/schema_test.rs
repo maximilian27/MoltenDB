@@ -6,7 +6,7 @@ use tempfile::tempdir;
 async fn test_schema_enforcement() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
-    let db = Db::open(db_path.to_str().unwrap(), false, false, 50000, 100, 60, 10 * 1024 * 1024, None).unwrap();
+    let db = Db::open(db_path.to_str().unwrap(), false, false, 50000, 100, 60, 10 * 1024 * 1024, None, None).unwrap();
 
     // 1. Set a schema for 'users'
     let schema = json!({
@@ -53,7 +53,7 @@ async fn test_schema_persistence() {
     let db_path = db_path_buf.to_str().unwrap();
 
     {
-        let db = Db::open(db_path, false, false, 50000, 100, 60, 10 * 1024 * 1024, None).unwrap();
+        let db = Db::open(db_path, false, false, 50000, 100, 60, 10 * 1024 * 1024, None, None).unwrap();
         let schema = json!({
             "type": "object",
             "properties": {
@@ -65,7 +65,7 @@ async fn test_schema_persistence() {
 
     // Re-open and verify schema is still there
     {
-        let db = Db::open(db_path, false, false, 50000, 100, 60, 10 * 1024 * 1024, None).unwrap();
+        let db = Db::open(db_path, false, false, 50000, 100, 60, 10 * 1024 * 1024, None, None).unwrap();
         let invalid_doc = json!({ "count": "many" });
         let result = db.insert_batch("items", vec![("i1".to_string(), invalid_doc)]);
         assert!(result.is_err());

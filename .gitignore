@@ -11,3 +11,4 @@
 /moltendb-server/target
 /backup_hook.ps1
 /backup_hook.sh
+/backup_history.log

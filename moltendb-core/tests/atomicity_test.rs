@@ -8,7 +8,7 @@ async fn test_batch_atomicity() {
 
     // 1. Create a DB and write a partial batch manually to the log
     {
-        let db = Db::open(log_path, true, false, 50000, 100, 1, 1024 * 1024, None).unwrap();
+        let db = Db::open(log_path, true, false, 50000, 100, 1, 1024 * 1024, None, None).unwrap();
         let collection = "test";
         
         // Use the storage directly to simulate a crash (no TX_COMMIT)
@@ -32,13 +32,13 @@ async fn test_batch_atomicity() {
 
     // 2. Reopen the DB. The partial batch should NOT be present.
     {
-        let db = Db::open(log_path, true, false, 50000, 100, 1, 1024 * 1024, None).unwrap();
+        let db = Db::open(log_path, true, false, 50000, 100, 1, 1024 * 1024, None, None).unwrap();
         assert!(db.get("test", "key1").is_none(), "Key1 should not exist because transaction was never committed");
     }
 
     // 3. Write a full batch using the proper API
     {
-        let db = Db::open(log_path, true, false, 50000, 100, 1, 1024 * 1024, None).unwrap();
+        let db = Db::open(log_path, true, false, 50000, 100, 1, 1024 * 1024, None, None).unwrap();
         let items = vec![
             ("key2".to_string(), json!({"data": "should exist"})),
             ("key3".to_string(), json!({"data": "also should exist"})),
@@ -51,7 +51,7 @@ async fn test_batch_atomicity() {
 
     // 4. Reopen again. The full batch should be present.
     {
-        let db = Db::open(log_path, true, false, 50000, 100, 1, 1024 * 1024, None).unwrap();
+        let db = Db::open(log_path, true, false, 50000, 100, 1, 1024 * 1024, None, None).unwrap();
         assert!(db.get("test", "key2").is_some(), "Key2 should exist after proper commit");
         assert!(db.get("test", "key3").is_some(), "Key3 should exist after proper commit");
         assert!(db.get("test", "key1").is_none(), "Key1 should still not exist");
