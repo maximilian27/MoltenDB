@@ -1,12 +1,9 @@
 ## [0.7.0](https://github.com/maximilian27/MoltenDB/compare/v0.6.3...v0.7.0) (2026-04-28)
-
 ### Features
+* **backups:** added script-based post-backup hook with automatic PowerShell ExecutionPolicy bypass on Windows
+* **backups:** switched from arbitrary shell commands to dedicated script execution for improved security
 
-* post backup hook ([e3b0f55](https://github.com/maximilian27/MoltenDB/commit/e3b0f55dca219a9b4b0c5dc59f1dd2e0155949ac))
-
-
-
-## [0.6.3](https://github.com/maximilian27/MoltenDB/compare/v0.6.2...v0.6.3) (2026-04-28)
+# [0.6.3](https://github.com/maximilian27/MoltenDB/compare/v0.6.2...v0.6.3) (2026-04-28)
 ### Features
 * **configuration:** consolidated database initialization into `DbConfig` struct for improved maintainability
 * **naming:** standardized all environment variables with `MOLTENDB_` prefix
