@@ -11,7 +11,7 @@ fn test_snapshot_versioning() {
     let log_path_str = log_path.to_str().unwrap();
     
     // 1. Open DB and write some data
-    let db = Db::open(log_path_str, true, false, 50000, 100, 60, 10485760, None).unwrap();
+    let db = Db::open(log_path_str, true, false, 50000, 100, 60, 10485760, None, None).unwrap();
     db.insert_batch("test", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();
     
     // 2. Compact for the first time -> creates snapshot.bin

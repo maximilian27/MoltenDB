@@ -494,12 +494,57 @@ impl StorageBackend for AsyncDiskStorage {
     /// Compact the log: write a binary snapshot, rewrite the log to be empty,
     /// then signal the background task to swap the file.
     fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
+        self.compact_with_hook(entries, None)
+    }
+
+    /// Internal compact implementation that can take a post-backup script.
+    fn compact_with_hook(&self, entries: Vec<LogEntry>, hook: Option<String>) -> Result<(), DbError> {
         // Step 1: Write a binary snapshot.
         // After compaction the log is reset to empty, so seq=0: all future log
         // lines written after this snapshot must be replayed from the start.
         let seq = 0u64;
         if let Err(e) = write_snapshot(&self.path, &entries, seq) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
+        } else if let Some(script_path) = hook {
+            // If snapshot was successful and we have a hook, execute it.
+            let snapshot_path = snapshot_path(&self.path);
+            let abs_snapshot_path = match std::fs::canonicalize(&snapshot_path) {
+                Ok(p) => p.to_string_lossy().to_string(),
+                Err(_) => snapshot_path,
+            };
+            
+            // Execute in background
+            tokio::spawn(async move {
+                let res = if cfg!(target_os = "windows") {
+                    tokio::process::Command::new("powershell")
+                        .arg("-ExecutionPolicy")
+                        .arg("Bypass")
+                        .arg("-Command")
+                        .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
+                        .output()
+                        .await
+                } else {
+                    tokio::process::Command::new("sh")
+                        .arg(script_path)
+                        .arg(abs_snapshot_path)
+                        .output()
+                        .await
+                };
+
+                match res {
+                    Ok(output) => {
+                        if !output.status.success() {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            tracing::error!("❌ Post-backup hook failed: {}", stderr);
+                        } else {
+                            tracing::info!("✅ Post-backup hook executed successfully");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Failed to spawn post-backup hook: {}", e);
+                    }
+                }
+            });
         }
 
         // Step 2: Write an empty compacted log to a temp file.
@@ -632,12 +677,56 @@ impl StorageBackend for SyncDiskStorage {
     /// Compact the log: write a binary snapshot, swap the log file with an
     /// empty one, then reopen the writer.
     fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
+        self.compact_with_hook(entries, None)
+    }
+
+    fn compact_with_hook(&self, entries: Vec<LogEntry>, hook: Option<String>) -> Result<(), DbError> {
         // Step 1: Write binary snapshot for fast next startup.
         // After compaction the log is reset to empty, so seq=0: all future log
         // lines written after this snapshot must be replayed from the start.
         let seq = 0u64;
         if let Err(e) = write_snapshot(&self.path, &entries, seq) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
+        } else if let Some(script_path) = hook {
+            // If snapshot was successful and we have a hook, execute it.
+            let snapshot_path = snapshot_path(&self.path);
+            let abs_snapshot_path = match std::fs::canonicalize(&snapshot_path) {
+                Ok(p) => p.to_string_lossy().to_string(),
+                Err(_) => snapshot_path,
+            };
+            
+            // Execute in background
+            tokio::spawn(async move {
+                let res = if cfg!(target_os = "windows") {
+                    tokio::process::Command::new("powershell")
+                        .arg("-ExecutionPolicy")
+                        .arg("Bypass")
+                        .arg("-Command")
+                        .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
+                        .output()
+                        .await
+                } else {
+                    tokio::process::Command::new("sh")
+                        .arg(script_path)
+                        .arg(abs_snapshot_path)
+                        .output()
+                        .await
+                };
+
+                match res {
+                    Ok(output) => {
+                        if !output.status.success() {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            tracing::error!("❌ Post-backup hook failed: {}", stderr);
+                        } else {
+                            tracing::info!("✅ Post-backup hook executed successfully");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Failed to spawn post-backup hook: {}", e);
+                    }
+                }
+            });
         }
 
         // Step 2: Write an empty compacted log to a temp file.

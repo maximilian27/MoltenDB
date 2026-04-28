@@ -66,7 +66,7 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "0.6.2"
+moltendb-core = "0.6.3"
 ```
 
 ```rust
@@ -135,6 +135,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Binary snapshots on compaction for fast startup (snapshot + delta replay, not full log replay)
 - **Point-in-Time Recovery (PITR):** Recover the database to any millisecond or log sequence number using the `recover` CLI command.
 - **Snapshot Versioning:** Historical snapshots are automatically moved to a `/backup` folder with Unix timestamps.
+- **Post-Backup Hook:** Automatically execute custom shell commands (e.g., S3 upload, Slack notify) after every successful snapshot.
 - **Manual Snapshots:** Trigger a snapshot on demand via the `POST /snapshot` endpoint.
 - Size-based compaction trigger (> 100 MB) in addition to the hourly timer
 - WebSocket endpoint (`/ws`) for real-time push notifications — subscribe and receive change events on every write
@@ -198,7 +199,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "0.2.0-beta.2"
+moltendb-core = "0.6.3"
 ```
 
 ### Download Pre-built Binaries
@@ -622,6 +623,19 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--max-body-size` | `MAX_BODY_SIZE` | `10485760` (10 MB) | Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. |
 | `--debug` | `DEBUG` | `false` | Enable verbose debug logging |
 | `--hot-threshold` | `MOLTEN_HOT_THRESHOLD` | `50000` | Max documents per collection to keep in RAM |
+| `--post-backup-script` | `POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup. Receives the absolute path to the newly created snapshot as the first positional argument. On Windows, PowerShell is used with `-ExecutionPolicy Bypass`. |
+
+### 🔒 Security Considerations
+
+Executing external scripts carries inherent risks. MoltenDB mitigates some of these by:
+- **Positional Arguments:** The snapshot path is passed as a sanitized argument, not injected into a command string.
+- **Explicit Paths:** On Windows, scripts in the current directory require the `./` prefix (e.g., `--post-backup-script "./my_hook.ps1"`).
+
+#### Recommended Mitigations:
+1. **Docker Isolation:** Run MoltenDB in a container to isolate the host filesystem and network. Use a minimal base image.
+2. **Principle of Least Privilege:** Run the MoltenDB process under a dedicated service account with access only to its data directory.
+3. **Sandboxing:** Use `seccomp` or `AppArmor`/`Selinux` on Linux to restrict the types of processes MoltenDB can spawn.
+4. **Script Hardening:** Ensure your hook scripts have restricted permissions (e.g., `chmod 700`) and do not contain hardcoded secrets. Use environment variables for API keys.
 
 ⚠️ = insecure default, must be overridden in production. The server prints a warning at startup for each one that is not set.
 

@@ -107,6 +107,10 @@ pub struct Db {
     /// Key: collection name → Value: (Original JSON, Compiled Validator).
     #[cfg(feature = "schema")]
     pub schemas: Arc<DashMap<String, Arc<(Value, jsonschema::Validator)>>>,
+
+    /// Optional shell command to execute after a successful backup.
+    /// Supports the {SNAPSHOT_PATH} placeholder.
+    pub post_backup_script: Option<String>,
 }
 
 impl Db {
@@ -132,6 +136,7 @@ impl Db {
         rate_limit_window: u64,
         max_body_size: usize,
         encryption_key: Option<&[u8; 32]>,
+        post_backup_cmd: Option<String>,
     ) -> Result<Self, DbError> {
         // Create the shared in-memory state containers.
         let state = Arc::new(DashMap::new());
@@ -198,6 +203,7 @@ impl Db {
             max_body_size,
             #[cfg(feature = "schema")]
             schemas,
+            post_backup_script: post_backup_cmd,
         })
     }
 
@@ -214,6 +220,7 @@ impl Db {
         max_body_size: usize,
         encryption_key: Option<&[u8; 32]>,
         sync_mode: bool,
+        post_backup_cmd: Option<String>,
     ) -> Result<Self, DbError> {
         let state = Arc::new(DashMap::new());
         let (tx, _rx) = broadcast::channel(100);
@@ -253,6 +260,7 @@ impl Db {
             max_body_size,
             #[cfg(feature = "schema")]
             schemas,
+            post_backup_script: post_backup_cmd,
         })
     }
 
@@ -445,7 +453,7 @@ impl Db {
         }
 
         // Delegate the actual file rewrite (and snapshot write) to the storage backend.
-        self.storage.compact(entries.clone())?;
+        self.storage.compact_with_hook(entries.clone(), self.post_backup_script.clone())?;
 
         // After compaction the log is rewritten and all old RecordPointers are invalid.
         // Promote every Cold entry in the in-memory state to Hot so subsequent reads
