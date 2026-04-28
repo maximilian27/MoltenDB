@@ -301,14 +301,16 @@ impl StorageBackend for EncryptedStorage {
     /// Each entry gets a fresh random nonce — even if the plaintext is the same
     /// as before, the ciphertext will be different (this is correct and expected).
     fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
+        self.compact_with_hook(entries, None)
+    }
+
+    fn compact_with_hook(&self, entries: Vec<LogEntry>, hook: Option<String>) -> Result<(), DbError> {
         // Encrypt every entry. If any encryption fails, the whole compaction fails
         // (we don't want a partially-encrypted compacted file).
-        // The `.collect::<Result<Vec<_>, _>>()` pattern: if any map() call returns
-        // Err, the whole collect() returns that Err immediately (short-circuits).
         let encrypted: Result<Vec<LogEntry>, DbError> =
             entries.iter().map(|e| self.encrypt_entry(e)).collect();
-        // Delegate the actual file writing to the inner backend's compact().
-        self.inner.compact(encrypted?)
+        // Delegate the actual file writing to the inner backend's compact_with_hook().
+        self.inner.compact_with_hook(encrypted?, hook)
     }
 
     /// Read exactly `length` bytes from the inner backend and decrypt the entry.

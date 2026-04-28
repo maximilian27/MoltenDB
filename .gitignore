@@ -9,3 +9,4 @@
 /web-packages
 /backup
 /moltendb-server/target
+/backup_history.log

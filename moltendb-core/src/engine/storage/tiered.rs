@@ -327,6 +327,10 @@ impl StorageBackend for TieredStorage {
     /// In both cases, a binary snapshot of the hot tier is written so the next
     /// startup can skip replaying the hot log entirely.
     fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
+        self.compact_with_hook(entries, None)
+    }
+
+    fn compact_with_hook(&self, entries: Vec<LogEntry>, hook: Option<String>) -> Result<(), DbError> {
         let hot_size = self.hot_log_size();
 
         if hot_size > HOT_TIER_MAX_BYTES {
@@ -354,7 +358,7 @@ impl StorageBackend for TieredStorage {
 
             // Signal the background task to swap the hot log file.
             // This is the same sentinel mechanism used by AsyncDiskStorage.
-            self.hot.compact(vec![])?;
+            self.hot.compact_with_hook(vec![], hook)?;
 
             tracing::info!("✅ Promotion complete. Hot tier reset to empty.");
         } else {
@@ -371,7 +375,7 @@ impl StorageBackend for TieredStorage {
             }
 
             // Delegate the actual log rewrite to the hot-tier writer.
-            self.hot.compact(entries)?;
+            self.hot.compact_with_hook(entries, hook)?;
         }
 
         Ok(())

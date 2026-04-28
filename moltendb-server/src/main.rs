@@ -149,6 +149,11 @@ struct Config {
     #[arg(long, default_value = "false", env = "DEBUG")]
     debug: bool,
 
+    /// Path to a script file to execute after a successful backup.
+    /// The script will be called with the absolute path of the snapshot as its first argument. [env: POST_BACKUP_SCRIPT]
+    #[arg(long, env = "POST_BACKUP_SCRIPT")]
+    pub post_backup_script: Option<String>,
+
     /// Maximum documents per collection to keep in RAM (Hot threshold). [env: MOLTEN_HOT_THRESHOLD]
     /// If a collection exceeds this, older documents are moved to the Cold tier (disk).
     /// Higher values use more RAM but provide sub-microsecond speeds for more documents.
@@ -385,6 +390,7 @@ async fn main() {
         rate_limit_window,
         cfg.max_body_size,
         encryption_key,
+        cfg.post_backup_script,
     ) {
         Ok(database) => database,
         Err(e) => {

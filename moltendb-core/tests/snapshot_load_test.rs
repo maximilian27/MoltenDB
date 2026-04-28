@@ -15,7 +15,7 @@ fn test_snapshot_load_with_empty_log() {
 
     {
         // 1. Create DB and insert some data
-        let db = engine::Db::open(db_path, true, false, 1000, 0, 0, 1024 * 1024, None).unwrap();
+        let db = engine::Db::open(db_path, true, false, 1000, 0, 0, 1024 * 1024, None, None).unwrap();
         db.insert_batch("users", vec![
             ("user1".to_string(), json!({"name": "Alice"})),
             ("user2".to_string(), json!({"name": "Bob"})),
@@ -33,7 +33,7 @@ fn test_snapshot_load_with_empty_log() {
 
     {
         // 4. Reopen the DB
-        let db = engine::Db::open(db_path, true, false, 1000, 0, 0, 1024 * 1024, None).unwrap();
+        let db = engine::Db::open(db_path, true, false, 1000, 0, 0, 1024 * 1024, None, None).unwrap();
         
         // 5. Try to get data
         let user1 = db.get("users", "user1");

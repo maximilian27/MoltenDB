@@ -99,6 +99,14 @@ pub trait StorageBackend: Send + Sync {
     /// replace the existing log with this minimal set.
     fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError>;
 
+    /// Compact the log and execute an optional post-backup shell hook.
+    ///
+    /// The default implementation calls `compact()` and ignores the hook.
+    /// Backends that support shell hooks should override this.
+    fn compact_with_hook(&self, entries: Vec<LogEntry>, _hook: Option<String>) -> Result<(), DbError> {
+        self.compact(entries)
+    }
+
     /// Read exactly `length` bytes starting at `offset` from the log.
     ///
     /// This is used to fetch "Cold" documents from the append-only log without
