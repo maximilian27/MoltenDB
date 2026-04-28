@@ -141,6 +141,7 @@ impl WorkerDb {
             body_size,
             master_key.as_ref(),
             sync_mode,
+            None,
         )
         .await
         .map_err(|e| JsValue::from_str(&format!("Failed to open database: {}", e)))?;

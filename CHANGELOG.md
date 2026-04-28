@@ -1,3 +1,8 @@
+# [0.6.3](https://github.com/maximilian27/MoltenDB/compare/v0.6.2...v0.6.3) (2026-04-28)
+### Features
+* **backups:** added script-based post-backup hook with automatic PowerShell ExecutionPolicy bypass on Windows
+* **backups:** switched from arbitrary shell commands to dedicated script execution for improved security
+
 # [0.6.2](https://github.com/maximilian27/MoltenDB/compare/v0.6.1...v6.0.2) (2026-04-27)
 ### Bug Fixes
 * **persistence:** fixed collections loaded from `.log` file being ignored when a snapshot also exists due to incorrect `seq` offset after compaction
