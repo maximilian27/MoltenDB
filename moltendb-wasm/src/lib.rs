@@ -130,21 +130,24 @@ impl WorkerDb {
             moltendb_core::engine::EncryptedStorage::derive_key(&pw, db_name)
         });
 
+        let db_config = moltendb_core::engine::DbConfig {
+            path: db_name.to_string(),
+            sync_mode,
+            hot_threshold: threshold,
+            rate_limit_requests: limit_reqs,
+            rate_limit_window: limit_window,
+            max_body_size: body_size,
+            encryption_key: master_key,
+            tiered_mode: false, // Tiered storage is not supported in WASM
+            post_backup_script: None, // Backup scripts are not supported in WASM
+        };
+
         // Open the database. `Db::open_wasm` creates an OpfsStorage backend,
         // reads the existing OPFS file (if any), and replays the log into memory.
         // `.map_err(...)` converts a DbError into a JsValue string for JavaScript.
-        let db = Db::open_wasm(
-            db_name,
-            threshold,
-            limit_reqs,
-            limit_window,
-            body_size,
-            master_key.as_ref(),
-            sync_mode,
-            None,
-        )
-        .await
-        .map_err(|e| JsValue::from_str(&format!("Failed to open database: {}", e)))?;
+        let db = Db::open_wasm(db_config)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to open database: {}", e)))?;
 
         // Log a success message to the browser's DevTools console.
         web_sys::console::log_1(&JsValue::from_str("✅ MoltenDB initialized in worker"));

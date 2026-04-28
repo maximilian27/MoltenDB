@@ -21,6 +21,7 @@ The runnable binary. Delegates all database logic to `moltendb-core`.
 `moltendb-server` is the runnable binary of MoltenDB. It owns everything related to the network layer and leaves all database logic to `moltendb-core`:
 
 - **Axum HTTP server** with TLS termination (`axum-server` + `rustls`).
+- **Unified Configuration** — Owns the CLI flags and environment variable parsing logic. It populates the core engine's `DbConfig` from these inputs.
 - **REST endpoints** — `POST /set`, `POST /get`, `POST /update`, `POST /delete`, `POST /snapshot`, `POST /analytics` (⚠️ analytics under development).
 - **REST-style GET** — `GET /:collection/:key` and `GET /:collection` (with query string filters).
 - **WebSocket** — `GET /ws` for real-time mutation notifications.
@@ -50,8 +51,8 @@ moltendb \
   --write-mode async \
   --storage-mode tiered \
   --jwt-secret my-awesome-secret \
-  --admin-user admin \
-  --admin-password admin123 \
+  --root-user admin \
+  --root-password admin123 \
   --cors-origin "*"
 ```
 
@@ -63,8 +64,8 @@ cargo run --package moltendb-server --bin moltendb -- \
   --write-mode async \
   --storage-mode tiered \
   --jwt-secret my-awesome-secret \
-  --admin-user admin \
-  --admin-password admin123 \
+  --root-user admin \
+  --root-password admin123 \
   --cors-origin "*"
 ```
 
@@ -72,24 +73,30 @@ cargo run --package moltendb-server --bin moltendb -- \
 
 ## CLI reference
 
+All options can be set via CLI flags or environment variables. CLI flags take priority.
+
+> **Note:** Networking and authentication flags are exclusive to the server binary. If you use `moltendb-core` as a library, you must configure it programmatically via `DbConfig`.
+
 | Flag | Env var | Default | Description |
 |---|---|---|---|
-| `--port` | `PORT` | `1538` | Port to listen on |
-| `--db-path` | `DB_PATH` | `my_database.log` | Path to the WAL log file |
-| `--cert` | `TLS_CERT` | `cert.pem` | TLS certificate PEM file |
-| `--key` | `TLS_KEY` | `key.pem` | TLS private key PEM file |
-| `--write-mode` | `WRITE_MODE` | `async` | `async` (blazing fast, buffered) or `sync` (durable, flushed to disk). `async` is recommended for most web use-cases, while `sync` is better for mission-critical data. |
-| `--storage-mode` | `STORAGE_MODE` | `standard` | `standard` or `tiered` (hot + cold log, recommended for 100k+ docs) |
-| `--encryption-key` | `ENCRYPTION_KEY` | — | At-rest encryption password (ChaCha20-Poly1305) |
-| `--jwt-secret` | `JWT_SECRET` | **required** | JWT signing secret — server refuses to start without it |
-| `--admin-user` | `MOLTENDB_ADMIN_USER` | — | Admin username seeded at startup |
-| `--admin-password` | `MOLTENDB_ADMIN_PASSWORD` | — | Admin password seeded at startup |
-| `--cors-origin` | `CORS_ORIGIN` | `*` | Allowed CORS origin(s), comma-separated |
-| `--rate-limit-requests` | `RATE_LIMIT_REQUESTS` | `100` | Max requests per IP per window |
-| `--rate-limit-window` | `RATE_LIMIT_WINDOW_SECS` | `60` | Rate limit sliding window in seconds |
-| `--max-body-size` | `MAX_BODY_SIZE` | `10485760` | Max request body size in bytes (default 10 MB) |
-| `--hot-threshold` | `MOLTEN_HOT_THRESHOLD` | `50000` | Number of documents per collection kept in RAM before paging out to disk |
-| `--disable-encryption` | — | — | Disable at-rest encryption |
+| `--cert` | `MOLTENDB_TLS_CERT` | `cert.pem` | TLS certificate PEM file |
+| `--cors-origin` | `MOLTENDB_CORS_ORIGIN` | `*` | Allowed CORS origin(s), comma-separated |
+| `--db-path` | `MOLTENDB_DB_PATH` | `my_database.log` | Path to the WAL log file |
+| `--debug` | `MOLTENDB_DEBUG` | `false` | Enable verbose debug logging |
+| `--disable-encryption` | `MOLTENDB_DISABLE_ENCRYPTION` | `false` | Disable at-rest encryption |
+| `--encryption-key` | `MOLTENDB_ENCRYPTION_KEY` | — | At-rest encryption password (ChaCha20-Poly1305) |
+| `--hot-threshold` | `MOLTENDB_HOT_THRESHOLD` | `50000` | Number of documents per collection kept in RAM before paging out to disk |
+| `--jwt-secret` | `MOLTENDB_JWT_SECRET` | **required** | JWT signing secret — server refuses to start without it |
+| `--key` | `MOLTENDB_TLS_KEY` | `key.pem` | TLS private key PEM file |
+| `--max-body-size` | `MOLTENDB_MAX_BODY_SIZE` | `10485760` | Max request body size in bytes (default 10 MB) |
+| `--port` | `MOLTENDB_PORT` | `1538` | Port to listen on |
+| `--post-backup-script` | `MOLTENDB_POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup |
+| `--rate-limit-requests` | `MOLTENDB_RATE_LIMIT_REQS` | `100` | Max requests per IP per window |
+| `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Rate limit sliding window in seconds |
+| `--root-password` | `MOLTENDB_ROOT_PASSWORD` | — | Root password seeded at startup |
+| `--root-user` | `MOLTENDB_ROOT_USER` | — | Root username seeded at startup |
+| `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` (hot + cold log, recommended for 100k+ docs) |
+| `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
 ### Point-in-Time Recovery (PITR)
 
@@ -219,7 +226,7 @@ A full API walkthrough is available in [`tests/requests.http`](../tests/requests
 
 ```toml
 [dependencies]
-moltendb-server = { version = "0.6.2", default-features = false }
+moltendb-server = { version = "0.7.0", default-features = false }
 ```
 
 Then wrap the Axum router with your own `tower::Layer` before calling `serve()`. Without the `auth` feature the server starts without requiring `--jwt-secret` and all routes are unprotected.

@@ -22,7 +22,7 @@ No knowledge of HTTP routing, TLS, or the database engine.
 
 - **Argon2 password hashing** — passwords are hashed with Argon2id before storage; plain-text passwords never leave this crate.
 - **JWT minting & validation** — tokens are signed with HMAC-SHA256 (`jsonwebtoken`). Each token carries a `sub` (username) and `exp` (expiry, 24 h).
-- **`UserStore`** — an in-memory `DashMap` mapping usernames to Argon2 hashes. Seeded at startup from CLI args (`--admin-user` / `--admin-password`).
+- **`UserStore`** — an in-memory `DashMap` mapping usernames to Argon2 hashes. Seeded at startup from CLI args (`--root-user` / `--root-password`).
 - **Axum `auth_middleware`** — a `tower` middleware layer that extracts the `Authorization: Bearer <token>` header, validates the JWT, and rejects unauthenticated requests with `401 Unauthorized`.
 
 ---
@@ -72,9 +72,9 @@ let protected = Router::new()
 
 ---
 
-## Current limitations (v0.3.x)
+## Current limitations (v0.7.0)
 
-- **Single-user only** — one admin user is configured at startup via `--admin-user` / `--admin-password`. There is no HTTP endpoint to create or delete users at runtime.
+- **Single-user only** — one root user is configured at startup via `--root-user` / `--root-password`. There is no HTTP endpoint to create or delete users at runtime.
 - **No token refresh** — tokens expire after 24 hours. Re-login is required.
 - **No token revocation** — once issued, a JWT is valid until expiry. There is no blacklist or session invalidation mechanism.
 - **JWT secret via CLI arg** — `--jwt-secret` appears in the process list. For production, pass it via the `JWT_SECRET` environment variable instead.
@@ -87,7 +87,7 @@ let protected = Router::new()
 
 ```toml
 # Cargo.toml
-moltendb-server = { version = "0.3.0-beta.2", default-features = false }
+moltendb-server = { version = "0.7.0", default-features = false }
 ```
 
 Then wrap the Axum router with your own `tower::Layer` before calling `serve()`. See the [server README](../moltendb-server/README.md) for details.

@@ -50,18 +50,23 @@ WASM-specific code (`OpfsStorage`, `Db::open_wasm`) is gated behind `#[cfg(targe
 
 ```toml
 [dependencies]
-moltendb-core = "0.6.2"
+moltendb-core = "0.7.0"
 ```
 
 ### Minimal example
 
 ```rust
-use moltendb_core::engine::Db;
+use moltendb_core::engine::{Db, DbConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Open (or create) a database log file on disk
-    let db = Db::open("./my_app.log").await?;
+    // Open (or create) a database with custom configuration
+    let config = DbConfig {
+        path: "./my_app.log".to_string(),
+        sync_mode: true,
+        ..Default::default()
+    };
+    let db = Db::open(config).await?;
 
     // Insert a document
     db.set("users", "u1", serde_json::json!({
@@ -83,7 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 use moltendb_core::{engine::Db, handlers};
 use serde_json::json;
 
-let db = Db::open("./my_app.log").await?;
+let config = DbConfig {
+    path: "./my_app.log".to_string(),
+    ..Default::default()
+};
+let db = Db::open(config).await?;
 
 let payload = json!({
     "collection": "users",
@@ -135,6 +144,7 @@ By default, any collection exceeding **50,000 documents** will automatically evi
 
 - **No longer limited by RAM.** While MoltenDB is "Memory-First," the Hybrid Bitcask model allows it to page out documents to disk while keeping only the keys and offsets in RAM. A 10GB database can now comfortably run on a machine with 512MB of RAM.
 - **No HTTP, no auth, no JWT.** This crate has zero knowledge of the network layer. It is safe to embed in any Rust application without pulling in Axum, Tokio TLS, or any auth dependency.
+- **Programmatic Configuration.** Unlike `moltendb-server`, this crate does **not** parse environment variables or CLI flags. All configuration must be passed via the `DbConfig` struct.
 - **Single writer, many readers.** The `DashMap` store is safe for concurrent reads. Writes are serialised through the storage backend.
 
 ---

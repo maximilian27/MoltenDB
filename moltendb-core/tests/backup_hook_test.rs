@@ -1,4 +1,4 @@
-use moltendb_core::engine::Db;
+use moltendb_core::engine::{Db, DbConfig};
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -30,17 +30,12 @@ async fn test_post_backup_hook_execution() {
     }
     
     // 1. Open DB with the hook
-    let db = Db::open(
-        log_path,
-        true,
-        false,
-        50000,
-        100,
-        60,
-        10485760,
-        None,
-        Some(script_path.to_string()),
-    ).expect("Failed to open db");
+    let db = Db::open(DbConfig {
+        path: log_path.to_string(),
+        sync_mode: true,
+        post_backup_script: Some(script_path.to_string()),
+        ..Default::default()
+    }).expect("Failed to open db");
     
     // 2. Insert some data so there is something to compact
     db.insert_batch("test", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();

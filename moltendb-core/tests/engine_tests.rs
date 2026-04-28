@@ -1,4 +1,4 @@
-use moltendb_core::engine::Db;
+use moltendb_core::engine::{Db, DbConfig};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -10,7 +10,11 @@ fn open_db() -> Db {
     if path.exists() {
         let _ = std::fs::remove_file(&path);
     }
-    Db::open(path.to_str().unwrap(), true, false, 50000, 100, 60, 10485760, None, None).expect("Failed to open db")
+    Db::open(DbConfig {
+        path: path.to_str().unwrap().to_string(),
+        sync_mode: true,
+        ..Default::default()
+    }).expect("Failed to open db")
 }
 
 #[test]
@@ -68,12 +72,20 @@ fn test_persistence() {
     }
 
     {
-        let db = Db::open(&path, true, false, 50000, 100, 60, 10485760, None, None).unwrap();
+        let db = Db::open(DbConfig {
+            path: path.clone(),
+            sync_mode: true,
+            ..Default::default()
+        }).unwrap();
         db.insert_batch("items", vec![("k1".to_string(), json!({"val": 100}))]).unwrap();
     }
 
     // Reopen
-    let db2 = Db::open(&path, true, false, 50000, 100, 60, 10485760, None, None).unwrap();
+    let db2 = Db::open(DbConfig {
+        path: path.clone(),
+        sync_mode: true,
+        ..Default::default()
+    }).unwrap();
     let val = db2.get("items", "k1").unwrap();
     assert_eq!(val["val"], 100);
     

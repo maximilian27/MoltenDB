@@ -1,4 +1,4 @@
-use moltendb_core::engine::{Db, DbError};
+use moltendb_core::engine::{Db, DbConfig, DbError};
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -6,7 +6,12 @@ use tempfile::tempdir;
 async fn test_insert_batch_conflict() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("test.log");
-    let db = Db::open(path.to_str().unwrap(), false, false, 1000, 100, 60, 1024 * 1024, None, None).unwrap();
+    let db = Db::open(DbConfig {
+        path: path.to_str().unwrap().to_string(),
+        hot_threshold: 1000,
+        max_body_size: 1024 * 1024,
+        ..Default::default()
+    }).unwrap();
 
     // 1. Initial insert
     db.insert_batch("users", vec![("u1".to_string(), json!({"name": "Alice"}))]).unwrap();
@@ -29,7 +34,12 @@ async fn test_insert_batch_conflict() {
 async fn test_update_conflict_guard() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("test.log");
-    let db = Db::open(path.to_str().unwrap(), false, false, 1000, 100, 60, 1024 * 1024, None, None).unwrap();
+    let db = Db::open(DbConfig {
+        path: path.to_str().unwrap().to_string(),
+        hot_threshold: 1000,
+        max_body_size: 1024 * 1024,
+        ..Default::default()
+    }).unwrap();
 
     // 1. Initial insert
     db.insert_batch("users", vec![("u1".to_string(), json!({"name": "Alice"}))]).unwrap();

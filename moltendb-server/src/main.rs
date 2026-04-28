@@ -82,82 +82,82 @@ struct Config {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Port to listen on [env: PORT]
-    #[arg(long, default_value = "1538", env = "PORT")]
+    /// Port to listen on [env: MOLTENDB_PORT]
+    #[arg(long, default_value = "1538", env = "MOLTENDB_PORT")]
     port: u16,
 
-    /// Path to the database log file [env: DB_PATH]
-    #[arg(long, default_value = "my_database.log", env = "DB_PATH")]
+    /// Path to the database log file [env: MOLTENDB_DB_PATH]
+    #[arg(long, default_value = "my_database.log", env = "MOLTENDB_DB_PATH")]
     db_path: String,
 
-    /// Path to the TLS certificate PEM file [env: TLS_CERT]
-    #[arg(long, default_value = "cert.pem", env = "TLS_CERT")]
+    /// Path to the TLS certificate PEM file [env: MOLTENDB_TLS_CERT]
+    #[arg(long, default_value = "cert.pem", env = "MOLTENDB_TLS_CERT")]
     cert: String,
 
-    /// Path to the TLS private key PEM file [env: TLS_KEY]
-    #[arg(long, default_value = "key.pem", env = "TLS_KEY")]
+    /// Path to the TLS private key PEM file [env: MOLTENDB_TLS_KEY]
+    #[arg(long, default_value = "key.pem", env = "MOLTENDB_TLS_KEY")]
     key: String,
 
-    /// Encryption password for at-rest encryption [env: ENCRYPTION_KEY]
-    #[arg(long, env = "ENCRYPTION_KEY")]
+    /// Encryption password for at-rest encryption [env: MOLTENDB_ENCRYPTION_KEY]
+    #[arg(long, env = "MOLTENDB_ENCRYPTION_KEY")]
     encryption_key: Option<String>,
 
-    /// Write mode: "async" (high throughput) or "sync" (zero data loss) [env: WRITE_MODE]
-    #[arg(long, default_value = "async", env = "WRITE_MODE")]
+    /// Write mode: "async" (high throughput) or "sync" (zero data loss) [env: MOLTENDB_WRITE_MODE]
+    #[arg(long, default_value = "async", env = "MOLTENDB_WRITE_MODE")]
     write_mode: String,
 
-    /// Storage mode: "standard" or "tiered" (hot+cold log, recommended for 100k+ docs) [env: STORAGE_MODE]
-    #[arg(long, default_value = "standard", env = "STORAGE_MODE")]
+    /// Storage mode: "standard" or "tiered" (hot+cold log, recommended for 100k+ docs) [env: MOLTENDB_STORAGE_MODE]
+    #[arg(long, default_value = "standard", env = "MOLTENDB_STORAGE_MODE")]
     storage_mode: String,
 
-    /// Maximum requests per IP per rate-limit window [env: RATE_LIMIT_REQUESTS]
-    #[arg(long, default_value = "100", env = "RATE_LIMIT_REQUESTS")]
+    /// Maximum requests per IP per rate-limit window [env: MOLTENDB_RATE_LIMIT_REQS]
+    #[arg(long, default_value = "100", env = "MOLTENDB_RATE_LIMIT_REQS")]
     rate_limit_requests: u32,
 
-    /// Rate limit sliding window size in seconds [env: RATE_LIMIT_WINDOW_SECS]
-    #[arg(long, default_value = "60", env = "RATE_LIMIT_WINDOW_SECS")]
+    /// Rate limit sliding window size in seconds [env: MOLTENDB_RATE_LIMIT_WINDOW]
+    #[arg(long, default_value = "60", env = "MOLTENDB_RATE_LIMIT_WINDOW")]
     rate_limit_window: u64,
 
-    /// JWT signing secret [env: JWT_SECRET]
-    #[arg(long, env = "JWT_SECRET")]
+    /// JWT signing secret [env: MOLTENDB_JWT_SECRET]
+    #[arg(long, env = "MOLTENDB_JWT_SECRET")]
     jwt_secret: Option<String>,
     // Note: jwt_secret is Option<String> so we can detect if it's unset and refuse to start.
 
-    /// Admin username [env: MOLTENDB_ADMIN_USER]
-    #[arg(long, env = "MOLTENDB_ADMIN_USER")]
-    admin_user: Option<String>,
+    /// Root username [env: MOLTENDB_ROOT_USER]
+    #[arg(long, env = "MOLTENDB_ROOT_USER")]
+    root_user: Option<String>,
 
-    /// Admin password [env: MOLTENDB_ADMIN_PASSWORD]
-    #[arg(long, env = "MOLTENDB_ADMIN_PASSWORD")]
-    admin_password: Option<String>,
+    /// Root password [env: MOLTENDB_ROOT_PASSWORD]
+    #[arg(long, env = "MOLTENDB_ROOT_PASSWORD")]
+    root_password: Option<String>,
 
-    /// Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. [env: MAX_BODY_SIZE]
-    #[arg(long, default_value = "10485760", env = "MAX_BODY_SIZE")]
+    /// Maximum request body size in bytes. Requests exceeding this are rejected at the HTTP layer. [env: MOLTENDB_MAX_BODY_SIZE]
+    #[arg(long, default_value = "10485760", env = "MOLTENDB_MAX_BODY_SIZE")]
     max_body_size: usize,
 
     /// Allowed CORS origin(s). Use "*" to allow any origin (default, dev only).
     /// For production, set to your frontend URL, e.g. "https://app.example.com".
-    /// Multiple origins can be separated by commas. [env: CORS_ORIGIN]
-    #[arg(long, default_value = "*", env = "CORS_ORIGIN")]
+    /// Multiple origins can be separated by commas. [env: MOLTENDB_CORS_ORIGIN]
+    #[arg(long, default_value = "*", env = "MOLTENDB_CORS_ORIGIN")]
     cors_origin: String,
 
-    /// Disable at-rest encryption (data stored as plain JSON). NOT recommended for production.
-    #[arg(long, default_value = "false", env = "DISABLE_ENCRYPTION")]
+    /// Disable at-rest encryption (data stored as plain JSON). NOT recommended for production. [env: MOLTENDB_DISABLE_ENCRYPTION]
+    #[arg(long, default_value = "false", env = "MOLTENDB_DISABLE_ENCRYPTION")]
     disable_encryption: bool,
 
-    /// Enable verbose debug logging (optimizer, indexing, compaction). [env: DEBUG]
-    #[arg(long, default_value = "false", env = "DEBUG")]
+    /// Enable verbose debug logging (optimizer, indexing, compaction). [env: MOLTENDB_DEBUG]
+    #[arg(long, default_value = "false", env = "MOLTENDB_DEBUG")]
     debug: bool,
 
     /// Path to a script file to execute after a successful backup.
-    /// The script will be called with the absolute path of the snapshot as its first argument. [env: POST_BACKUP_SCRIPT]
-    #[arg(long, env = "POST_BACKUP_SCRIPT")]
+    /// The script will be called with the absolute path of the snapshot as its first argument. [env: MOLTENDB_POST_BACKUP_SCRIPT]
+    #[arg(long, env = "MOLTENDB_POST_BACKUP_SCRIPT")]
     pub post_backup_script: Option<String>,
 
-    /// Maximum documents per collection to keep in RAM (Hot threshold). [env: MOLTEN_HOT_THRESHOLD]
+    /// Maximum documents per collection to keep in RAM (Hot threshold). [env: MOLTENDB_HOT_THRESHOLD]
     /// If a collection exceeds this, older documents are moved to the Cold tier (disk).
     /// Higher values use more RAM but provide sub-microsecond speeds for more documents.
-    #[arg(long, default_value = "50000", env = "MOLTEN_HOT_THRESHOLD")]
+    #[arg(long, default_value = "50000", env = "MOLTENDB_HOT_THRESHOLD")]
     hot_threshold: usize,
 }
 
@@ -306,20 +306,20 @@ async fn main() {
         warn!("⚠️  --encryption-key not set — using built-in default key. Set it for production!");
     }
 
-    // MOLTENDB_ADMIN_USER and MOLTENDB_ADMIN_PASSWORD are required for the built-in admin account.
+    // MOLTENDB_ROOT_USER and MOLTENDB_ROOT_PASSWORD are required for the built-in root account.
     // If not set, we stop the app for security reasons.
-    if cfg.admin_user.is_none() {
-        error!("🔥 CRITICAL: --admin-user (MOLTENDB_ADMIN_USER) not set! This is required for security.");
+    if cfg.root_user.is_none() {
+        error!("🔥 CRITICAL: --root-user (MOLTENDB_ROOT_USER) not set! This is required for security.");
         std::process::exit(1);
     }
 
-    if cfg.admin_password.is_none() {
-        error!("🔥 CRITICAL: --admin-password (MOLTENDB_ADMIN_PASSWORD) not set! This is required for security.");
+    if cfg.root_password.is_none() {
+        error!("🔥 CRITICAL: --root-password (MOLTENDB_ROOT_PASSWORD) not set! This is required for security.");
         std::process::exit(1);
     }
 
-    let admin_user = cfg.admin_user.unwrap();
-    let admin_password = cfg.admin_password.unwrap();
+    let root_user = cfg.root_user.unwrap();
+    let root_password = cfg.root_password.unwrap();
 
     // Unpack the parsed config into local variables.
     // These are used throughout the rest of main() to configure the server.
@@ -361,9 +361,11 @@ async fn main() {
     //   Db::open(). The reference cannot outlive the owned value, so both must
     //   be declared in the same scope.
     //
-    // If we wrote `let key = Some(derive_key(...)); Db::open(..., key.as_ref())`
-    // in a single expression, the temporary `key` would be dropped before
-    // Db::open() could use the reference — the borrow checker prevents this.
+    // If we wrote `let key = Some(derive_key(...)); Db::open(db_config)`
+    // in a single expression, and db_config used key.as_ref(), the temporary 
+    // `key` would be dropped before Db::open() could use the reference.
+    // However, since DbConfig now takes an owned Option<[u8; 32]>, this 
+    // specific borrow checker issue is simplified.
     let encryption_key_storage;
     let encryption_key: Option<&[u8; 32]> = if cfg.disable_encryption {
         warn!("⚠️  Encryption is DISABLED — data will be stored as plain JSON!");
@@ -381,17 +383,19 @@ async fn main() {
     //   2. Wraps it in EncryptedStorage if encryption_key is Some.
     //   3. Streams the log file line-by-line, replaying entries into RAM.
     //   4. Returns a Db handle (cheap to clone — it's Arc-backed internally).
-    let db = match engine::Db::open(
-        &db_path,
-        is_sync_mode,
-        is_tiered_mode,
-        cfg.hot_threshold,
+    let db_config = engine::DbConfig {
+        path: db_path.clone(),
+        sync_mode: is_sync_mode,
+        tiered_mode: is_tiered_mode,
+        hot_threshold: cfg.hot_threshold,
         rate_limit_requests,
         rate_limit_window,
-        cfg.max_body_size,
-        encryption_key,
-        cfg.post_backup_script,
-    ) {
+        max_body_size: cfg.max_body_size,
+        encryption_key: encryption_key.cloned(),
+        post_backup_script: cfg.post_backup_script,
+    };
+
+    let db = match engine::Db::open(db_config) {
         Ok(database) => database,
         Err(e) => {
             error!("🔥 CRITICAL: Failed to start MoltenDB! Details: {}", e);
@@ -436,7 +440,7 @@ async fn main() {
 
     // Initialize the user store with the admin user and password from Config.
     // We've already verified they are present above.
-    let users = auth::UserStore::new(admin_user, admin_password);
+    let users = auth::UserStore::new(root_user, root_password);
     info!("👤 User authentication initialized");
 
     // Initialize the rate limiter with the configured limits.

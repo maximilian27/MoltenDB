@@ -512,7 +512,7 @@ impl StorageBackend for AsyncDiskStorage {
                 Ok(p) => p.to_string_lossy().to_string(),
                 Err(_) => snapshot_path,
             };
-            
+
             // Execute in background
             tokio::spawn(async move {
                 let res = if cfg!(target_os = "windows") {
@@ -694,7 +694,7 @@ impl StorageBackend for SyncDiskStorage {
                 Ok(p) => p.to_string_lossy().to_string(),
                 Err(_) => snapshot_path,
             };
-            
+
             // Execute in background
             tokio::spawn(async move {
                 let res = if cfg!(target_os = "windows") {
