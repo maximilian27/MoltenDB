@@ -20,6 +20,8 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::collections::HashMap as QueryMap;
+// Duration and Instant are used in handle_revoke to compute the prune deadline.
+use std::time::{Duration, Instant};
 
 /// POST /auth/delegate — mint a scoped JWT for a client.
 ///
@@ -67,7 +69,7 @@ pub async fn handle_delegate(
     }
 
     let ttl = payload.ttl_secs.unwrap_or(3600);
-    let token = auth::create_scoped_token(&payload.client_id, payload.scopes.clone(), ttl)
+    let (token, jti) = auth::create_scoped_token(&payload.client_id, payload.scopes.clone(), ttl)
         .map_err(|e| (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("Token creation failed: {}", e)})),
@@ -77,6 +79,7 @@ pub async fn handle_delegate(
         token,
         client_id: payload.client_id,
         scopes: payload.scopes,
+        jti,
     }))
 }
 
@@ -329,4 +332,59 @@ pub async fn handle_rest_get_collection(
     }
     let (code, body) = handlers::process_get(&db, &payload, max_body_size);
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+}
+
+/// DELETE /auth/tokens/:jti — revoke a JWT by its unique token ID.
+///
+/// Only admin-scoped tokens may call this endpoint.
+/// Once revoked, the token is rejected by auth_middleware on every subsequent
+/// request, even if it has not yet expired.
+///
+/// Request body (JSON):
+///   { "exp": <unix_timestamp> }   — the token's expiry (used to set the prune deadline)
+///
+/// Returns 200 on success, 403 if the caller lacks admin privileges.
+pub async fn handle_revoke(
+    Extension(claims): Extension<auth::Claims>,
+    Extension(revocation_store): Extension<auth::RevocationStore>,
+    Extension(revocations_path): Extension<auth::RevocationsPath>,
+    Path(jti): Path<String>,
+    Json(payload): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    // Only root/admin tokens may revoke tokens.
+    if !claims.is_admin() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Admin access required to revoke tokens"})),
+        );
+    }
+
+    if jti.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "jti must not be empty"})),
+        );
+    }
+
+    // Compute the prune deadline from the caller-supplied `exp` field.
+    // If not provided, default to 24 hours from now (safe upper bound).
+    let prune_after = if let Some(exp_secs) = payload.get("exp").and_then(|v| v.as_u64()) {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let remaining = exp_secs.saturating_sub(now_secs);
+        Instant::now() + Duration::from_secs(remaining)
+    } else {
+        Instant::now() + Duration::from_secs(86400)
+    };
+
+    revocation_store.revoke(&jti, prune_after);
+    // Persist immediately so the revocation survives a server restart.
+    revocation_store.save_to_file(&revocations_path.0);
+
+    (
+        StatusCode::OK,
+        Json(json!({"revoked": jti, "message": "Token has been revoked successfully"})),
+    )
 }

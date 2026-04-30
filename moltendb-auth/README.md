@@ -25,6 +25,7 @@ No knowledge of HTTP routing, TLS, or the database engine.
 - **Argon2 password hashing** — passwords are hashed with Argon2id; plain-text passwords never leave this crate.
 - **JWT minting & validation** — tokens are signed with HMAC-SHA256 (`jsonwebtoken`). Each token carries a `sub` (username), `exp` (expiry), and `scopes` (permission list).
 - **Scoped token delegation** — the root user can mint narrow-permission JWTs for clients via `create_scoped_token`. Clients only ever receive a token scoped to exactly what they need.
+- **Token revocation (JTI blacklist)** — every JWT carries a `jti` (UUID). Compromised tokens can be immediately invalidated via `DELETE /auth/tokens/:jti` before their TTL expires. The revocation store is persisted to disk and survives server restarts.
 - **`UserStore`** — an in-memory `DashMap` mapping usernames to Argon2 hashes. Seeded at startup from CLI args (`--root-user` / `--root-password`).
 - **Axum `auth_middleware`** — a `tower` middleware layer that extracts the `Authorization: Bearer <token>` header, validates the JWT, and rejects unauthenticated requests with `401 Unauthorized`.
 
@@ -75,7 +76,8 @@ let store = UserStore::new("root".into(), "my-secret-password".into());
 let token = moltendb_auth::create_token("root")?;
 
 // Mint a scoped JWT for a client (custom scopes + TTL)
-let token = moltendb_auth::create_scoped_token(
+// Returns (token, jti) — store the jti if you need to revoke this token later
+let (token, jti) = moltendb_auth::create_scoped_token(
     "laptop-service",
     vec!["read:laptops:*".to_string(), "write:laptops:*".to_string()],
     3600, // TTL in seconds
@@ -96,6 +98,12 @@ if claims.is_admin() { /* *:*:* scope present */ }
 // Get the list of document keys a token may access for a given action + collection
 let keys: Vec<String> = claims.allowed_keys("read", "laptops");
 // → ["lp1", "lp2"] for a token with read:laptops:lp1 and read:laptops:lp2
+
+// Revoke a token by its jti (blocks it immediately, before TTL expires)
+revocation_store.revoke(&jti, std::time::Instant::now() + std::time::Duration::from_secs(ttl));
+
+// Check if a jti has been revoked (called automatically inside auth_middleware)
+if revocation_store.is_revoked(&jti) { /* reject */ }
 
 // Hash a password (Argon2id)
 let hash = moltendb_auth::hash_password("my-secret-password")?;
@@ -128,7 +136,8 @@ let protected = Router::new()
 | `LoginRequest` | `{ username: String, password: String }` |
 | `LoginResponse` | `{ token: String }` |
 | `DelegateRequest` | `{ client_id: String, scopes: Vec<String>, ttl_secs: Option<u64> }` |
-| `DelegateResponse` | `{ token: String, client_id: String, scopes: Vec<String> }` |
+| `DelegateResponse` | `{ token: String, jti: String, client_id: String, scopes: Vec<String> }` — `jti` is the UUID to use for revocation |
+| `RevocationStore` | In-memory `DashMap<String, Instant>` — revoked JTIs with their prune deadline |
 
 ---
 
@@ -160,7 +169,7 @@ The root token never leaves your backend. Clients only ever receive a narrowly s
 
 - **Single root user** — one root user is configured at startup via `--root-user` / `--root-password`. There is no HTTP endpoint to create or delete users at runtime. Your own user table handles that.
 - **No token refresh** — tokens expire after the configured TTL. Re-mint via `/auth/delegate` when needed.
-- **No token revocation** — once issued, a JWT is valid until expiry. There is no blacklist or session invalidation mechanism. Use short TTLs for sensitive scopes.
+- **In-memory revocation only** — the revocation store is persisted to a `.revocations.json` file alongside the WAL and reloaded on startup, but revocations are not replicated across nodes.
 - **JWT secret via CLI arg** — `--jwt-secret` appears in the process list. For production, pass it via the `MOLTENDB_JWT_SECRET` environment variable instead.
 
 ---

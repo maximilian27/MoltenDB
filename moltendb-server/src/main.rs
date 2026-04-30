@@ -29,7 +29,7 @@ mod ws;               // WebSocket upgrade handler and per-connection logic
 // Re-export handlers into scope for use in the router below.
 use route_handlers::{
     handle_delegate, handle_delete, handle_get, handle_login, handle_rest_get,
-    handle_rest_get_collection, handle_set, handle_snapshot, handle_update,
+    handle_rest_get_collection, handle_revoke, handle_set, handle_snapshot, handle_update,
 };
 use ws::ws_handler;
 
@@ -41,7 +41,8 @@ use axum::{
     // middleware = lets us insert async functions between the router and handlers.
     middleware,
     // routing = defines which HTTP methods map to which handlers.
-    routing::{get, post},
+    routing::{delete, get, post},
+    Extension,
     Router,
 };
 // RustlsConfig = TLS configuration loaded from PEM certificate and key files.
@@ -429,6 +430,34 @@ async fn main() {
     let users = auth::UserStore::new(root_user.clone(), root_password);
     info!("👤 User authentication initialized");
 
+    // Derive the revocation store file path from the database path.
+    // e.g. "my_database.log" → "my_database.revocations.json"
+    let revocations_path = {
+        let base = std::path::Path::new(&db_path);
+        let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("my_database");
+        let dir = base.parent().and_then(|p| p.to_str()).filter(|s| !s.is_empty()).unwrap_or(".");
+        format!("{}/{}.revocations.json", dir, stem)
+    };
+
+    // Initialize the token revocation store, loading any previously revoked JTIs
+    // from disk so revocations survive server restarts.
+    let revocation_store = auth::RevocationStore::load_from_file(&revocations_path);
+    info!("🔒 Revocation store loaded from '{}'", revocations_path);
+
+    // Spawn a background task to prune expired revocation entries every 60 seconds
+    // and persist the updated store to disk so the file stays clean.
+    let prune_store = revocation_store.clone();
+    let prune_revocations_path = revocations_path.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            prune_store.prune();
+            prune_store.save_to_file(&prune_revocations_path);
+        }
+    });
+    info!("🔒 Token revocation store initialized");
+
     // Initialize the rate limiter with the configured limits.
     let rate_limiter = rate_limit::RateLimiter::new(rate_limit_requests as usize, rate_limit_window);
     info!("🚦 Rate limiting: {} requests per {} seconds", rate_limit_requests, rate_limit_window);
@@ -457,7 +486,8 @@ async fn main() {
         .route("/get", post(handle_get))           // Query documents (with WHERE, fields, joins, etc.)
         .route("/collections/{collection}", get(handle_rest_get_collection))       // GET all docs (paginated)
         .route("/collections/{collection}/docs/{key}", get(handle_rest_get))       // GET single doc
-        .route("/auth/delegate", post(handle_delegate));                           // Mint scoped tokens (admin only)
+        .route("/auth/delegate", post(handle_delegate))                            // Mint scoped tokens (admin only)
+        .route("/auth/tokens/{jti}", delete(handle_revoke));                       // Revoke a token by JTI (admin only)
 
     #[cfg(feature = "schema")]
     {
@@ -466,9 +496,14 @@ async fn main() {
     }
 
     let protected_routes = protected_routes
-        // Apply the auth middleware to all routes in this sub-router.
+        // Apply the auth middleware first (innermost layer — runs after extensions are set).
         // `from_fn` wraps an async function as an Axum middleware layer.
-        .layer(middleware::from_fn(auth::auth_middleware));
+        .layer(middleware::from_fn(auth::auth_middleware))
+        // Inject the RevocationStore as an extension — must wrap auth_middleware so it is
+        // available in request.extensions() when auth_middleware executes.
+        .layer(Extension(revocation_store))
+        // Inject the revocations file path so handle_revoke can persist after revoking.
+        .layer(Extension(auth::RevocationsPath(revocations_path)));
 
     // Public routes are accessible without authentication.
     let public_routes = Router::new()

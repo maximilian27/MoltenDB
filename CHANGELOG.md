@@ -1,4 +1,5 @@
 ## [0.8.0](https://github.com/maximilian27/MoltenDB/compare/v0.7.0...v0.8.0) (2026-04-30)
+* **auth:** persistent token revocation — revoked JTIs are written to `<db_name>.revocations.json` immediately on `DELETE /auth/tokens/:jti` and reloaded on server startup so revocations survive restarts; background prune task also saves the file every 60 seconds (`RevocationsPath` newtype, `save_to_file`, `load_from_file` in `moltendb-auth`)
 ### Features
 * **auth:** added `scopes` field to JWT `Claims` with `has_access(action, collection, key)`, `has_collection_access`, and `is_admin` helpers for document-level permission checks
 * **auth:** added `create_scoped_token(username, scopes, ttl_secs)` — root `create_token` now delegates to this internally with the `admin` scope and a 24-hour TTL
@@ -6,6 +7,10 @@
 * **auth:** added `DelegateRequest` and `DelegateResponse` types to `moltendb-auth` for easy integration with any external auth system
 * **auth:** enforced scope checks on every protected endpoint — `POST /set` and `POST /update` require `write:{collection}:*`; `POST /get` and `GET /collections/{col}` require `read:{collection}:*`; `GET /collections/{col}/docs/{key}` requires `read:{collection}:{key}` (document-level tokens now work correctly); `POST /delete` requires `delete:{collection}:*`; `POST /snapshot` requires `admin`
 * **auth:** `moltendb-auth` crate is now explicitly excluded from WASM compilation — `#![cfg(not(target_arch = "wasm32"))]` gates the entire crate and all dependencies are under `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`
+* **auth:** added `jti` (UUID) field to `Claims` — every token minted by `create_scoped_token` now carries a unique JWT ID for revocation tracking; legacy tokens without `jti` deserialize safely via `#[serde(default)]`
+* **auth:** added `RevocationStore` — an in-memory `DashMap<String, Instant>` of revoked JTIs; entries are pruned automatically by a background task every 60 seconds once the token's original TTL has passed
+* **auth:** added `DELETE /auth/tokens/:jti` endpoint (admin-only) — accepts `{ "exp": <unix_timestamp> }` to set the prune deadline; revoked tokens are immediately rejected by `auth_middleware` with `401 Unauthorized`
+* **auth:** `auth_middleware` now checks the `RevocationStore` extension on every request — revoked tokens are rejected even if their signature and expiry are still valid
 
 ### Breaking Changes
 * **auth:** existing JWTs issued before this release have no `scopes` field — they will deserialize with `scopes: []` (via `#[serde(default)]`) and will be rejected by all scope-aware endpoints; re-issue tokens after upgrading

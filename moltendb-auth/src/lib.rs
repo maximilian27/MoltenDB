@@ -45,7 +45,9 @@ use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey}
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 // SystemTime and UNIX_EPOCH for computing token expiry timestamps.
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Instant};
+// UUID for generating unique JWT IDs (jti).
+use uuid::Uuid;
 
 // ─── JWT data structures ──────────────────────────────────────────────────────
 
@@ -69,6 +71,10 @@ pub struct Claims {
     /// Examples: "read:laptops:lp1", "write:users:*", "read:*:*", "*:*:*"
     #[serde(default)]
     pub scopes: Vec<String>,
+    /// Unique JWT ID — used for token revocation.
+    /// Generated automatically by create_scoped_token; absent in legacy tokens.
+    #[serde(default)]
+    pub jti: String,
 }
 
 impl Claims {
@@ -184,6 +190,9 @@ pub struct DelegateResponse {
     pub token: String,
     pub client_id: String,
     pub scopes: Vec<String>,
+    /// The unique JWT ID embedded in the token.
+    /// Use this value as the :jti path parameter when calling DELETE /auth/tokens/:jti.
+    pub jti: String,
 }
 
 /// The JSON body expected by the POST /login endpoint.
@@ -217,7 +226,7 @@ fn get_secret() -> String {
 /// The token expires 24 hours (86400 seconds) from now.
 /// Returns the compact serialization: "header.payload.signature"
 pub fn create_token(username: &str) -> Result<String, jsonwebtoken::errors::Error> {
-    create_scoped_token(username, vec!["*:*:*".to_string()], 86400)
+    create_scoped_token(username, vec!["*:*:*".to_string()], 86400).map(|(token, _)| token)
 }
 
 /// Create a scoped delegate token with a custom TTL (in seconds).
@@ -225,27 +234,36 @@ pub fn create_token(username: &str) -> Result<String, jsonwebtoken::errors::Erro
 /// Used by POST /auth/delegate to mint narrow-permission tokens for clients.
 /// The root user calls this on behalf of a client; the client never sees the
 /// root credentials.
+///
+/// Returns `(token_string, jti)` — the jti is included in the DelegateResponse
+/// so callers can revoke the token via DELETE /auth/tokens/:jti without having
+/// to decode the JWT themselves.
 pub fn create_scoped_token(
     username: &str,
     scopes: Vec<String>,
     ttl_secs: u64,
-) -> Result<String, jsonwebtoken::errors::Error> {
+) -> Result<(String, String), jsonwebtoken::errors::Error> {
     let expiration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs() + ttl_secs;
 
+    let jti = Uuid::new_v4().to_string();
+
     let claims = Claims {
         sub: username.to_string(),
         exp: expiration,
         scopes,
+        jti: jti.clone(),
     };
 
-    encode(
+    let token = encode(
         &Header::default(),
         &claims,
         &EncodingKey::from_secret(get_secret().as_bytes()),
-    )
+    )?;
+
+    Ok((token, jti))
 }
 
 /// Verify a JWT token and return the decoded Claims if valid.
@@ -282,6 +300,136 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::Bcryp
     bcrypt::verify(password, hash)
 }
 
+// ─── Token revocation ────────────────────────────────────────────────────────
+
+/// Newtype wrapper for the revocation store file path.
+///
+/// Injected as an Axum `Extension` so `handle_revoke` can call
+/// `save_to_file` after adding a new entry, without needing to
+/// thread the path through the app state tuple.
+#[derive(Clone, Debug)]
+pub struct RevocationsPath(pub String);
+
+/// In-memory store of revoked JWT IDs (jti).
+///
+/// When a token is revoked via DELETE /auth/tokens/:jti, its jti is added here.
+/// The auth_middleware checks this store on every request and rejects revoked tokens
+/// even if they have not yet expired.
+///
+/// Entries are pruned automatically by a background task every 60 seconds once
+/// the token's original expiry has passed (no need to keep them forever).
+#[derive(Clone, Default)]
+pub struct RevocationStore {
+    /// Maps jti → the Instant at which the entry can be safely pruned
+    /// (i.e. when the original token would have expired anyway).
+    revoked: Arc<DashMap<String, Instant>>,
+}
+
+impl RevocationStore {
+    /// Create a new, empty revocation store.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Revoke a token by its jti. `prune_after` is when the entry can be
+    /// discarded (typically the token's own expiry time).
+    pub fn revoke(&self, jti: &str, prune_after: Instant) {
+        self.revoked.insert(jti.to_string(), prune_after);
+    }
+
+    /// Returns true if the given jti has been revoked.
+    pub fn is_revoked(&self, jti: &str) -> bool {
+        self.revoked.contains_key(jti)
+    }
+
+    /// Remove entries whose prune_after time has passed.
+    /// Call this from a background task every 60 seconds.
+    pub fn prune(&self) {
+        self.revoked.retain(|_, prune_at| *prune_at > Instant::now());
+    }
+
+    /// Persist the current revocation list to a JSON file.
+    ///
+    /// The file stores a map of `jti → unix_timestamp_secs` (the prune deadline).
+    /// Call this after every `revoke()` and after every `prune()` so the on-disk
+    /// state always reflects the in-memory state.
+    pub fn save_to_file(&self, path: &str) {
+        // Convert Instant → u64 unix seconds for serialization.
+        // Instant is not directly serializable, so we compute the remaining
+        // duration from now and add it to the current unix timestamp.
+        let now_instant = Instant::now();
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let map: std::collections::HashMap<String, u64> = self
+            .revoked
+            .iter()
+            .map(|entry| {
+                let jti = entry.key().clone();
+                let prune_at = *entry.value();
+                // How many seconds remain until prune_at from now?
+                let remaining_secs = if prune_at > now_instant {
+                    prune_at.duration_since(now_instant).as_secs()
+                } else {
+                    0
+                };
+                (jti, now_unix + remaining_secs)
+            })
+            .collect();
+
+        match serde_json::to_string(&map) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(path, json) {
+                    eprintln!("⚠️  Failed to persist revocation store to '{}': {}", path, e);
+                }
+            }
+            Err(e) => eprintln!("⚠️  Failed to serialize revocation store: {}", e),
+        }
+    }
+
+    /// Load the revocation list from a JSON file written by `save_to_file`.
+    ///
+    /// Entries whose prune deadline has already passed are silently skipped —
+    /// they would have been pruned anyway. Missing file is treated as an empty
+    /// store (normal on first startup).
+    pub fn load_from_file(path: &str) -> Self {
+        let store = Self::default();
+
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return store, // File missing — fresh start, nothing to load.
+        };
+
+        let map: std::collections::HashMap<String, u64> = match serde_json::from_str(&contents) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("⚠️  Failed to parse revocation store '{}': {}", path, e);
+                return store;
+            }
+        };
+
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let now_instant = Instant::now();
+
+        for (jti, prune_unix) in map {
+            if prune_unix <= now_unix {
+                // Already expired — skip it.
+                continue;
+            }
+            let remaining = std::time::Duration::from_secs(prune_unix - now_unix);
+            let prune_instant = now_instant + remaining;
+            store.revoked.insert(jti, prune_instant);
+        }
+
+        store
+    }
+}
+
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
 /// Axum middleware that enforces JWT authentication on protected routes.
@@ -293,8 +441,9 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::Bcryp
 ///   1. Read the Authorization header.
 ///   2. Extract the Bearer token.
 ///   3. Verify the token's signature and expiry.
-///   4. If valid: attach the Claims to the request and call next.run(request).
-///   5. If invalid: return 401 Unauthorized immediately.
+///   4. Check the token's jti against the RevocationStore.
+///   5. If valid and not revoked: attach the Claims to the request and call next.run(request).
+///   6. If invalid or revoked: return 401 Unauthorized immediately.
 pub async fn auth_middleware(
     headers: HeaderMap,
     mut request: Request,
@@ -318,20 +467,43 @@ pub async fn auth_middleware(
         }
     };
 
-    // Verify the token. If valid, attach the Claims to the request so
-    // downstream handlers can read the authenticated username via:
-    //   request.extensions().get::<Claims>()
-    match verify_token(token) {
-        Ok(claims) => {
-            request.extensions_mut().insert(claims);
-            // Pass the request to the next handler/middleware in the chain.
-            Ok(next.run(request).await)
-        }
-        Err(_) => Err((
+    // Verify the token signature and expiry.
+    let claims = match verify_token(token) {
+        Ok(c) => c,
+        Err(_) => return Err((
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "Invalid or expired token"})),
         )),
+    };
+
+    // Check the revocation store — reject tokens that have been explicitly revoked.
+    // The RevocationStore is always injected as an Extension by main.rs.
+    // If it is somehow missing, fail closed (reject the request) rather than
+    // silently skipping the revocation check.
+    match request.extensions().get::<RevocationStore>() {
+        Some(store) => {
+            if !claims.jti.is_empty() && store.is_revoked(&claims.jti) {
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error": "Token has been revoked"})),
+                ));
+            }
+        }
+        None => {
+            // RevocationStore not found in extensions — this is a server
+            // misconfiguration. Fail closed to avoid bypassing revocation.
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Internal error: revocation store unavailable"})),
+            ));
+        }
     }
+
+    // Attach the Claims to the request so downstream handlers can read them via:
+    //   Extension(claims): Extension<Claims>
+    request.extensions_mut().insert(claims);
+    // Pass the request to the next handler/middleware in the chain.
+    Ok(next.run(request).await)
 }
 
 // ─── User store ───────────────────────────────────────────────────────────────

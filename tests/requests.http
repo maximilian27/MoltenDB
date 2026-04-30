@@ -1558,3 +1558,99 @@ Authorization: Bearer {{admin_token}}
   "ttl_secs": 1800
 }
 
+###
+
+
+### ══════════════════════════════════════════════════════════════════════════════
+### TOKEN REVOCATION — DELETE /auth/tokens/:jti
+###
+### Every token minted by /auth/delegate contains a unique `jti` (JWT ID).
+### If a scoped token is leaked or needs to be invalidated before it expires,
+### an admin token can revoke it immediately via DELETE /auth/tokens/:jti.
+###
+### How to find the jti:
+###   1. Copy the token from the /auth/delegate response.
+###   2. Paste it into https://jwt.io — the decoded payload shows the `jti` field.
+###   3. Or decode manually: take the middle segment (between the two dots)
+###      and base64-decode it. The `jti` is a UUID, e.g. "a1b2c3d4-...".
+###
+###   ⚠️  The :jti path parameter must be the UUID string from the payload,
+###       NOT the raw base64 segment of the token.
+###
+###   Example decoded payload:
+###     { "sub": "temp-client", "exp": 1777562878, "scopes": [...], "jti": "40017835-bf5a-41b8-a492-6bfd124f1d27" }
+###   Correct revoke URL:
+###     DELETE /auth/tokens/40017835-bf5a-41b8-a492-6bfd124f1d27   ✅
+###   Wrong (do NOT use the base64 segment):
+###     DELETE /auth/tokens/eyJzdWIiOiJ0ZW1wLWNsaWVudC...          ❌
+###
+### After revocation:
+###   Any request using the revoked token returns 401 Unauthorized.
+###   The revocation entry is pruned automatically once the token's TTL expires.
+###
+### Only admin (*:*:*) tokens can revoke tokens.
+### ══════════════════════════════════════════════════════════════════════════════
+
+### Step 1 — Mint a short-lived scoped token to demonstrate revocation
+### Run this request, copy the token from the response, then:
+###   - Paste it into https://jwt.io to read the `jti` UUID from the payload.
+###   - Set @revoke_token below to the full token string.
+###   - Set @revoke_jti below to the UUID value of the `jti` field.
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "temp-client",
+  "scopes": ["read:laptops:*"],
+  "ttl_secs": 3600
+}
+
+###
+
+### Paste the token from Step 1 here:
+@revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZW1wLWNsaWVudCIsImV4cCI6MTc3NzU2MzI2MCwic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6IjU1ZWZhNTA3LWIwZGUtNGE5My05OGJhLTMwODZiZjdiOWRjMCJ9.q8Ct6UVm-6RHH06VjQug91i8I5WZpoH31Nw_1pS37qo
+### Paste only the jti UUID from the decoded payload here (NOT the base64 segment):
+@revoke_jti = 55efa507-b0de-4a93-98ba-3086bf7b9dc0
+
+###
+
+### Step 2 — Confirm the token works before revocation
+### ✅ Should return 200 OK
+GET https://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{revoke_token}}
+
+###
+
+### Step 3 — Revoke the token by its jti UUID
+### The `exp` field (Unix timestamp from the decoded payload) sets the prune deadline —
+### the revocation entry is automatically cleaned up after the token would have expired.
+### ✅ Returns: { "revoked": "<jti>", "message": "Token has been revoked successfully" }
+DELETE https://localhost:1538/auth/tokens/{{revoke_jti}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "exp": 9999999999
+}
+
+###
+
+### Step 4 — Confirm the token is now rejected
+### ❌ Should return 401 Unauthorized: "Token has been revoked"
+### Uses the same token as Step 2 — same jti, now in the revocation store.
+GET https://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{revoke_token}}
+
+###
+
+### ❌ Non-admin token cannot revoke — 403 Forbidden
+### Mint a read-only token first (§A2 above), then try to use it to revoke.
+DELETE https://localhost:1538/auth/tokens/some-jti
+Content-Type: application/json
+Authorization: Bearer {{col_token}}
+
+{
+  "exp": 9999999999
+}
+

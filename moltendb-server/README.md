@@ -156,7 +156,7 @@ Content-Type: application/json
 }
 ```
 
-Returns `{ "token": "<scoped-jwt>", "client_id": "laptop-service", "scopes": [...] }`.
+Returns `{ "token": "<scoped-jwt>", "jti": "<uuid>", "client_id": "laptop-service", "scopes": [...] }`. Save the `jti` — you will need it to revoke this token.
 
 **Scope format:** `action:collection:document_key`
 
@@ -170,6 +170,22 @@ Returns `{ "token": "<scoped-jwt>", "client_id": "laptop-service", "scopes": [..
 | `*:*:*` | Full admin — root only |
 
 Every endpoint enforces scopes. A token missing the required scope receives `403 Forbidden`.
+
+### Revoke a token (`DELETE /auth/tokens/:jti`)
+
+Immediately invalidates a JWT before its TTL expires. Requires a `*:*:*` (admin) token.
+
+```http
+DELETE /auth/tokens/da5e155d-6a47-48eb-9cc3-7fc440cd2e39
+Authorization: Bearer <admin-jwt>
+Content-Type: application/json
+
+{ "exp": 1777562342 }
+```
+
+The `exp` value is the Unix timestamp from the token's payload — used as the prune deadline so the revocation entry is cleaned up automatically once the token would have expired anyway. The revocation store is persisted to `<db-path>.revocations.json` and reloaded on server restart, so revocations survive restarts.
+
+To extract the `jti` from a token, decode the middle segment of the JWT (base64url) or read it directly from the `POST /auth/delegate` response.
 
 ### Insert / upsert
 
