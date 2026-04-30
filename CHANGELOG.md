@@ -5,6 +5,7 @@
 * **auth:** added `POST /auth/delegate` endpoint (admin-only) that mints narrow-scoped JWTs for clients; accepts `client_id`, `scopes`, and optional `ttl_secs`; validates scope format before signing
 * **auth:** added `DelegateRequest` and `DelegateResponse` types to `moltendb-auth` for easy integration with any external auth system
 * **auth:** enforced scope checks on every protected endpoint — `POST /set` and `POST /update` require `write:{collection}:*`; `POST /get` and `GET /collections/{col}` require `read:{collection}:*`; `GET /collections/{col}/docs/{key}` requires `read:{collection}:{key}` (document-level tokens now work correctly); `POST /delete` requires `delete:{collection}:*`; `POST /snapshot` requires `admin`
+* **auth:** `moltendb-auth` crate is now explicitly excluded from WASM compilation — `#![cfg(not(target_arch = "wasm32"))]` gates the entire crate and all dependencies are under `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`
 
 ### Breaking Changes
 * **auth:** existing JWTs issued before this release have no `scopes` field — they will deserialize with `scopes: []` (via `#[serde(default)]`) and will be rejected by all scope-aware endpoints; re-issue tokens after upgrading

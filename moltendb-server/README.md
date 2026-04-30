@@ -5,7 +5,7 @@
 
 ### 🚀 The Network Layer Crate
 
-**Axum HTTP server · TLS · JWT auth · CORS · Rate limiting · WebSocket · CLI config**  
+**Axum HTTP server · TLS · Scoped JWT auth · Token delegation · CORS · Rate limiting · WebSocket · CLI config**  
 The runnable binary. Delegates all database logic to `moltendb-core`.
 
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
@@ -23,10 +23,11 @@ The runnable binary. Delegates all database logic to `moltendb-core`.
 - **Axum HTTP server** with TLS termination (`axum-server` + `rustls`).
 - **Unified Configuration** — Owns the CLI flags and environment variable parsing logic. It populates the core engine's `DbConfig` from these inputs.
 - **REST endpoints** — `POST /set`, `POST /get`, `POST /update`, `POST /delete`, `POST /snapshot`, `POST /analytics` (⚠️ analytics under development).
-- **REST-style GET** — `GET /:collection/:key` and `GET /:collection` (with query string filters).
+- **REST-style GET** — `GET /collections/:collection/docs/:key` and `GET /collections/:collection` (paginated).
+- **Token delegation** — `POST /auth/delegate` (root-only) mints narrow-scoped JWTs for clients; every endpoint enforces scopes on every request.
 - **WebSocket** — `GET /ws` for real-time mutation notifications.
 - **CLI Utility** — `moltendb recover` subcommand for Point-in-Time Recovery.
-- **JWT auth middleware** — all protected routes require a valid `Authorization: Bearer <token>` header.
+- **JWT auth middleware** — all protected routes require a valid `Authorization: Bearer <token>` header; scopes are checked per-endpoint.
 - **Per-IP rate limiting** — sliding-window rate limiter, configurable via CLI.
 - **CORS** — configurable allowed origins.
 - **Request body size limit** — oversized requests are rejected at the HTTP layer before application code sees them.
@@ -124,7 +125,7 @@ Authorization: Bearer <jwt>
 
 ## HTTP API
 
-### Authentication
+### Authentication & Token Delegation
 
 ```http
 POST /login
@@ -133,11 +134,42 @@ Content-Type: application/json
 { "username": "admin", "password": "admin123" }
 ```
 
-Returns `{ "token": "<jwt>" }`. Include the token in all subsequent requests:
+Returns `{ "token": "<jwt>" }`. The root token carries the `*:*:*` scope (full admin access). Include it in all subsequent requests:
 
 ```http
 Authorization: Bearer <jwt>
 ```
+
+### Delegate a scoped token (`POST /auth/delegate`)
+
+The root user can mint narrow-permission JWTs for clients. Only the root user can call this endpoint.
+
+```http
+POST /auth/delegate
+Authorization: Bearer <root-jwt>
+Content-Type: application/json
+
+{
+  "client_id": "laptop-service",
+  "scopes": ["read:laptops:*", "write:laptops:*"],
+  "ttl_secs": 3600
+}
+```
+
+Returns `{ "token": "<scoped-jwt>", "client_id": "laptop-service", "scopes": [...] }`.
+
+**Scope format:** `action:collection:document_key`
+
+| Scope | Meaning |
+|---|---|
+| `read:laptops:lp1` | Read only document `lp1` in `laptops` |
+| `read:laptops:*` | Read any document in `laptops` |
+| `write:laptops:*` | Write any document in `laptops` |
+| `delete:laptops:*` | Delete any document in `laptops` |
+| `read:*:*` | Read any document in any collection |
+| `*:*:*` | Full admin — root only |
+
+Every endpoint enforces scopes. A token missing the required scope receives `403 Forbidden`.
 
 ### Insert / upsert
 
@@ -195,8 +227,12 @@ Content-Type: application/json
 ### REST-style GET
 
 ```http
-GET /users/u1
-GET /users
+# Fetch a single document (requires read:users:u1 or read:users:* or *:*:*)
+GET /collections/users/docs/u1
+Authorization: Bearer <jwt>
+
+# Fetch all documents in a collection (requires read:users:* or *:*:*)
+GET /collections/users?limit=100&offset=0
 Authorization: Bearer <jwt>
 ```
 
@@ -216,20 +252,17 @@ Emits a JSON message for every mutation:
 
 ## Testing
 
-A full API walkthrough is available in [`tests/requests.http`](../tests/requests.http). Run it with any HTTP client that supports `.http` files (JetBrains HTTP Client, REST Client for VS Code, etc.).
+A full API walkthrough — including all six privilege levels from document-level read to full admin — is available in [`tests/requests.http`](../tests/requests.http). Run it with any HTTP client that supports `.http` files (JetBrains HTTP Client, REST Client for VS Code, etc.).
+
+For a quick test, start the server with `--root-user admin --root-password admin123`, log in via `POST /login`, and paste the token into the `@token` variable at the top of the file.
 
 ---
 
 ## Making auth optional
 
-`moltendb-auth` is compiled behind the `auth` Cargo feature, which is enabled by default. To bring your own auth layer, disable the default feature:
+`moltendb-auth` handles all identity concerns — JWT minting, Argon2 hashing, scope enforcement. MoltenDB is designed to work alongside your own user table: your backend validates credentials against your database, then calls `POST /auth/delegate` with the root token to mint a scoped JWT for the client. The root token never leaves your backend.
 
-```toml
-[dependencies]
-moltendb-server = { version = "0.7.0", default-features = false }
-```
-
-Then wrap the Axum router with your own `tower::Layer` before calling `serve()`. Without the `auth` feature the server starts without requiring `--jwt-secret` and all routes are unprotected.
+See the [`moltendb-auth` README](../moltendb-auth/README.md) for the full integration pattern and scope reference.
 
 ---
 

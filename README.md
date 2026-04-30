@@ -123,9 +123,11 @@ In summary: **the server flags are just a user interface for the standalone bina
 
 ### `moltendb-auth` — The Identity Layer
 
-Handles everything related to identity: Argon2 password hashing, JWT minting and validation (HMAC-SHA256), and the `UserStore`. Depends only on `moltendb-core` — it has no knowledge of HTTP routing or the server binary.
+Handles everything related to identity: Argon2 password hashing, JWT minting and validation (HMAC-SHA256), the `UserStore`, and **scoped token delegation**. Depends only on `moltendb-core` — it has no knowledge of HTTP routing or the server binary.
 
-**v1 is single-user only.** One root user is configured at startup via `--root-user` / `--root-password`. There is no user management API — to change credentials, restart the server with updated values.
+**Single root user.** One root user is configured at startup via `--root-user` / `--root-password`. There is no user management API — MoltenDB is designed to work alongside your own user table. Your backend validates credentials against your database, then calls `POST /auth/delegate` to mint a narrow-scoped JWT for the client. The root token never leaves your backend.
+
+**WASM excluded.** The entire crate is gated with `#![cfg(not(target_arch = "wasm32"))]` — auth is irrelevant for local browser storage and adds no weight to the WASM bundle.
 
 ### `moltendb-server` — The Network Layer
 
@@ -201,10 +203,13 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Inline reference embedding (`extends`): embed data from another collection at insert time
 
 ### ✅ Security
-- Passwords hashed with bcrypt / argon2
-- JWT tokens signed with HMAC-SHA256, 24-hour expiry
+- Passwords hashed with Argon2id
+- JWT tokens signed with HMAC-SHA256; root tokens carry `*:*:*` scope (24-hour expiry)
+- **Scoped token delegation:** root user mints narrow-permission JWTs for clients via `POST /auth/delegate`. Scope format: `action:collection:document_key` (e.g. `read:laptops:lp1`, `write:users:*`, `read:*:*`). Every endpoint enforces scopes — tokens missing the required scope receive `403 Forbidden`.
+- **Document-level access control:** a token with `read:laptops:lp1` can only read that one document. `POST /get` without a key filter automatically returns only the documents the token is permitted to see.
+- **Only the root user can mint `*:*:*` (admin) tokens** — non-root admin tokens cannot escalate their own privileges.
 - Credentials loaded from environment variables at startup (no hardcoded defaults in production)
-- **Single-user mode only (v1):** MoltenDB supports exactly one root user. There is no user management API — to change credentials, restart the server with updated `--root-user` / `--root-password` values.
+- **Single root user:** MoltenDB supports exactly one root user. Your own user table handles the rest — MoltenDB never stores your application users.
 - Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch size (max 1000 keys)
 - Security headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `HSTS`, `CSP`, etc.
 - Graceful shutdown: drains in-flight requests (up to 30 s), then awaits the async writer task to fully flush all buffered log entries before exit
@@ -318,7 +323,7 @@ The resulting `recovered.snapshot.bin` can then be renamed to `my_database.log.s
 
 ## HTTP API
 
-All endpoints except `/login` require an `Authorization: Bearer <token>` header.  
+All endpoints except `POST /login` require an `Authorization: Bearer <token>` header. Every endpoint also enforces **scopes** — the token must carry the appropriate `action:collection:key` scope or the request is rejected with `403 Forbidden`.  
 All endpoints return a consistent JSON envelope with a `statusCode` field:
 
 ```json
@@ -340,7 +345,36 @@ Content-Type: application/json
 { "username": "myuser", "password": "str0ng-p4ssw0rd" }
 ```
 
-Returns `{ "token": "<jwt>" }`.
+Returns `{ "token": "<jwt>" }`. The root token carries `*:*:*` scope (full access).
+
+### Delegate a scoped token
+
+The root user can mint narrow-permission JWTs for clients. Only the root user can call this endpoint.
+
+```http
+POST /auth/delegate
+Authorization: Bearer <root-token>
+Content-Type: application/json
+
+{
+  "client_id": "laptop-service",
+  "scopes": ["read:laptops:*", "write:laptops:*"],
+  "ttl_secs": 3600
+}
+```
+
+Returns `{ "token": "<scoped-jwt>", "client_id": "laptop-service", "scopes": [...] }`.
+
+**Scope format:** `action:collection:document_key`
+
+| Scope | Meaning |
+|---|---|
+| `read:laptops:lp1` | Read only document `lp1` in `laptops` |
+| `read:laptops:*` | Read any document in `laptops` |
+| `write:laptops:*` | Write any document in `laptops` |
+| `delete:laptops:*` | Delete any document in `laptops` |
+| `read:*:*` | Read any document in any collection |
+| `*:*:*` | Full admin — root only |
 
 ### Insert / Upsert
 
@@ -803,9 +837,9 @@ MoltenDB/
 │           ├── process_delete.rs     — DELETE handler (single, batch, drop)
 │           └── process_analytics.rs  — analytics handler (⚠️ under development, not ready for use)
 │
-├── moltendb-auth/                    — identity crate (JWT, Argon2, UserStore)
+├── moltendb-auth/                    — identity crate (JWT, Argon2, scoped token delegation) — excluded from WASM
 │   └── src/
-│       └── lib.rs                    — JWT minting/validation, password hashing, UserStore
+│       └── lib.rs                    — JWT minting/validation, scoped tokens, has_access(), UserStore, DelegateRequest/Response
 │
 ├── moltendb-server/                  — network crate (Axum, TLS, CLI, rate limiting)
 │   ├── src/
@@ -850,8 +884,8 @@ MoltenDB is currently in **Beta**. The core engine is stable, fast, and feature-
 - **Hardened Analytics:** The `COUNT/SUM/AVG/MIN/MAX` analytics engine exists in the codebase but is **currently under development and not ready for production use**. Expanding and rigorously testing it, accompanied by a comprehensive, interactive live demo, is a key roadmap item.
 
 ### 3. Security, Tooling & Polish
-- **Schema Validation:** Optional, opt-in per-collection type constraints (enforcing strings, numbers, required fields).
-- **Granular ACLs:** User management and role-based access control for individual collections.
+- **Schema Validation:** Optional, opt-in per-collection type constraints (enforcing strings, numbers, required fields). ✅ Shipped in v0.6.2.
+- **Granular Access Control:** Document-level scoped JWTs, `POST /auth/delegate`, per-endpoint scope enforcement. ✅ Shipped in v0.8.0.
 - **MoltenDB Studio (Premium):** A paid, official GUI dashboard to visually manage your databases, inspect collections, and execute queries without touching the CLI.
 - **Comprehensive Changelog:** Establishing a clear, detailed changelog so the community can easily track new features, API adjustments, and performance improvements release by release.
 - **A "Professional" Logo:** I know the current logo isn't exactly boring and corporate enough for an enterprise database, but I wanted the Beta release to have a bit of personality!
