@@ -21,23 +21,24 @@
 * **backups:** added script-based post-backup hook with automatic PowerShell ExecutionPolicy bypass on Windows
 * **backups:** switched from arbitrary shell commands to dedicated script execution for improved security
 
-# [0.6.3](https://github.com/maximilian27/MoltenDB/compare/v0.6.2...v0.6.3) (2026-04-28)
 ### Features
-* **configuration:** consolidated database initialization into `DbConfig` struct for improved maintainability
-* **naming:** standardized all environment variables with `MOLTENDB_` prefix
 
-### Breaking Changes
-* **identity:** renamed `--admin-user` to `--root-user` and `--admin-password` to `--root-password` (env vars also updated to `MOLTENDB_ROOT_USER` and `MOLTENDB_ROOT_PASSWORD`)
-* **configuration:** `Db::open` and `Db::open_wasm` now accept a `DbConfig` struct instead of individual arguments
+* post backup hook ([99f95e7](https://github.com/maximilian27/MoltenDB/commit/99f95e7b4f90025b7ff5f7a385a62b9bc467ec6e))
 
-# [0.6.3](https://github.com/maximilian27/MoltenDB/compare/v0.6.2...v0.6.3) (2026-04-28)
+
+
+## [0.6.3](https://github.com/maximilian27/MoltenDB/compare/v0.6.2...v0.6.3) (2026-04-28)
+
 
 ### Features
 
-* **backups:** added script-based post-backup hook with automatic PowerShell ExecutionPolicy bypass on Windows
-* **backups:** switched from arbitrary shell commands to dedicated script execution for improved security
+* post backup hook ([e3b0f55](https://github.com/maximilian27/MoltenDB/commit/e3b0f55dca219a9b4b0c5dc59f1dd2e0155949ac))
 
-# [0.6.2](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.6.2) (2026-04-27)
+
+
+## [0.6.2](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.6.2) (2026-04-27)
+
+
 ### Bug Fixes
 
 * add transactions to update ([0c4681d](https://github.com/maximilian27/MoltenDB/commit/0c4681d8b4bec2e89bf81a0cefe7fb5c30db0bb5))
@@ -81,15 +82,6 @@
 
 * missing import ([6c47a3b](https://github.com/maximilian27/MoltenDB/commit/6c47a3b702f73b297c850c7cda1b2952744c0d8e))
 * missing import ([2b3e531](https://github.com/maximilian27/MoltenDB/commit/2b3e53171ad173ca6448affd800c796b480fa7b1))
-
-
-
-# [0.2.0-beta.4](https://github.com/maximilian27/MoltenDB/compare/v0.1.0-beta.2...v0.2.0-beta.4) (2026-04-16)
-
-
-### Bug Fixes
-
-* wasm module ([fc4101c](https://github.com/maximilian27/MoltenDB/commit/fc4101c15a99079cc0fff0abc045e45c93fd8b41))
 
 
 
