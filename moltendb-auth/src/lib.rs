@@ -138,9 +138,34 @@ impl Claims {
         }).collect()
     }
 
+    /// Extracts the key prefixes this token is allowed to access for a given
+    /// action + collection. Only returns prefixes from prefix-wildcard scopes
+    /// (e.g. `read:laptops:store_A_*` → `"store_A_"`).
+    ///
+    /// Returns an empty Vec if the token has full collection access (`*`) or
+    /// admin (`*:*:*`) — callers should skip prefix filtering in that case.
+    pub fn extract_prefixes(&self, action: &str, collection: &str) -> Vec<String> {
+        if self.is_admin() {
+            return vec![];
+        }
+        self.scopes.iter().filter_map(|scope| {
+            let parts: Vec<&str> = scope.splitn(3, ':').collect();
+            if parts.len() != 3 { return None; }
+            let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
+            if s_action != action { return None; }
+            if s_col != "*" && s_col != collection { return None; }
+            // Only prefix wildcards (e.g. "store_A_*"), not full wildcard ("*").
+            if s_key.ends_with('*') && s_key != "*" {
+                Some(s_key.trim_end_matches('*').to_string())
+            } else {
+                None
+            }
+        }).collect()
+    }
+
     /// Returns true if this token has any prefix-wildcard scope for the given
     /// action + collection (e.g. "read:laptops:store_A_*").
-    /// Used by handle_get to decide whether post-query filtering is needed.
+    /// Used by handle_get to decide whether pre-injection of _allowed_prefixes is needed.
     pub fn has_prefix_wildcard(&self, action: &str, collection: &str) -> bool {
         self.scopes.iter().any(|scope| {
             let parts: Vec<&str> = scope.splitn(3, ':').collect();

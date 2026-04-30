@@ -1048,7 +1048,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzc1NTA1OTUsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdfQ.5ITS4wtwb33Qw7_VE7DVRq1-O2FReZcl8hKQ0gjK7E8
+@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzc1Njg2MjksInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdLCJqdGkiOiJlOGFkMzM4NS1lNDhkLTQ1ZmQtOGUwNi00N2Y5MTRlM2IzOGYifQ.Vo-IzSDCWFkGEbYcnn4xzITPVa4qJP4HGqn794HAvNo
 
 ### ✅ Fetch lp1 — in scope
 GET https://localhost:1538/collections/laptops/docs/lp1
@@ -1609,9 +1609,9 @@ Authorization: Bearer {{token}}
 ###
 
 ### Paste the token from Step 1 here:
-@revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZW1wLWNsaWVudCIsImV4cCI6MTc3NzU2MzI2MCwic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6IjU1ZWZhNTA3LWIwZGUtNGE5My05OGJhLTMwODZiZjdiOWRjMCJ9.q8Ct6UVm-6RHH06VjQug91i8I5WZpoH31Nw_1pS37qo
+@revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZW1wLWNsaWVudCIsImV4cCI6MTc3NzU2ODY4Miwic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6ImZkMWNjNWMzLTgzYTQtNDQzZS04NmU1LWQzZTczNmJmMjViZiJ9.7TvdjVFHO-h1KrtILoBiBA_AMrVGL-b0QvtLncJsbAQ
 ### Paste only the jti UUID from the decoded payload here (NOT the base64 segment):
-@revoke_jti = 55efa507-b0de-4a93-98ba-3086bf7b9dc0
+@revoke_jti = fd1cc5c3-83a4-443e-86e5-d3e736bf25bf
 
 ###
 
