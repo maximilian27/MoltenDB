@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 // fmt is used to implement the Display trait (human-readable error messages).
 use std::fmt;
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 /// A pointer to a document's location in the persistent log file.
 /// Used in the "Cold" state of the hybrid storage model.
@@ -111,7 +111,7 @@ impl LogEntry {
         let _t = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .unwrap_or(0); // web_time::SystemTime is WASM-safe (uses JS Date.now() under the hood)
         Self {
             cmd,
             collection,
