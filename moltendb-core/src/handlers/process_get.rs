@@ -58,6 +58,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
     const GET_ALLOWED: &[&str] = &[
         "collection", "keys", "where", "fields", "excludedFields",
         "joins", "sort", "count", "offset",
+        "_allowed_prefixes", // internal: injected server-side by handle_get for prefix-scoped tokens
     ];
     if let Err(e) = validation::validate_allowed_properties(payload, GET_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
@@ -278,6 +279,19 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u
                         }
                     }
                 }
+            }
+        }
+
+        // ── Prefix Gatekeeper ─────────────────────────────────────────────────
+        // Fast key.starts_with() check injected by handle_get for prefix-scoped tokens
+        // (e.g. "read:laptops:store_A_*"). Runs before the expensive AST evaluator so
+        // unauthorised keys are skipped without ever entering evaluate_where.
+        if let Some(prefixes) = payload.get("_allowed_prefixes").and_then(|p| p.as_array()) {
+            if !prefixes.is_empty() {
+                let allowed = prefixes.iter()
+                    .filter_map(|p| p.as_str())
+                    .any(|prefix| key.starts_with(prefix));
+                if !allowed { continue; }
             }
         }
 

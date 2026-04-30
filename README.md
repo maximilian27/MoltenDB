@@ -66,7 +66,7 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "0.7.0"
+moltendb-core = "0.8.0"
 ```
 
 ```rust
@@ -123,9 +123,11 @@ In summary: **the server flags are just a user interface for the standalone bina
 
 ### `moltendb-auth` — The Identity Layer
 
-Handles everything related to identity: Argon2 password hashing, JWT minting and validation (HMAC-SHA256), and the `UserStore`. Depends only on `moltendb-core` — it has no knowledge of HTTP routing or the server binary.
+Handles everything related to identity: Argon2 password hashing, JWT minting and validation (HMAC-SHA256), the `UserStore`, and **scoped token delegation**. Depends only on `moltendb-core` — it has no knowledge of HTTP routing or the server binary.
 
-**v1 is single-user only.** One root user is configured at startup via `--root-user` / `--root-password`. There is no user management API — to change credentials, restart the server with updated values.
+**Single root user.** One root user is configured at startup via `--root-user` / `--root-password`. There is no user management API — MoltenDB is designed to work alongside your own user table. Your backend validates credentials against your database, then calls `POST /auth/delegate` to mint a narrow-scoped JWT for the client. The root token never leaves your backend.
+
+**WASM excluded.** The entire crate is gated with `#![cfg(not(target_arch = "wasm32"))]` — auth is irrelevant for local browser storage and adds no weight to the WASM bundle.
 
 ### `moltendb-server` — The Network Layer
 
@@ -201,10 +203,14 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Inline reference embedding (`extends`): embed data from another collection at insert time
 
 ### ✅ Security
-- Passwords hashed with bcrypt / argon2
-- JWT tokens signed with HMAC-SHA256, 24-hour expiry
+- Passwords hashed with Argon2id
+- JWT tokens signed with HMAC-SHA256; root tokens carry `*:*:*` scope (24-hour expiry)
+- **Scoped token delegation:** root user mints narrow-permission JWTs for clients via `POST /auth/delegate`. Scope format: `action:collection:document_key` (e.g. `read:laptops:lp1`, `write:users:*`, `read:*:*`). Every endpoint enforces scopes — tokens missing the required scope receive `403 Forbidden`.
+- **Document-level access control:** a token with `read:laptops:lp1` can only read that one document. `POST /get` without a key filter automatically returns only the documents the token is permitted to see.
+- **Only the root user can mint `*:*:*` (admin) tokens** — non-root admin tokens cannot escalate their own privileges.
+- **Token revocation (JTI blacklist):** every JWT carries a unique `jti` (UUID). Compromised or leaked tokens can be immediately invalidated via `DELETE /auth/tokens/:jti` (admin-only) before their TTL expires. The revocation store is persisted to `<db-path>.revocations.json` and reloaded on server restart — revocations survive restarts.
 - Credentials loaded from environment variables at startup (no hardcoded defaults in production)
-- **Single-user mode only (v1):** MoltenDB supports exactly one root user. There is no user management API — to change credentials, restart the server with updated `--root-user` / `--root-password` values.
+- **Single root user:** MoltenDB supports exactly one root user. Your own user table handles the rest — MoltenDB never stores your application users.
 - Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch size (max 1000 keys)
 - Security headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `HSTS`, `CSP`, etc.
 - Graceful shutdown: drains in-flight requests (up to 30 s), then awaits the async writer task to fully flush all buffered log entries before exit
@@ -243,7 +249,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "0.7.0"
+moltendb-core = "0.8.0"
 ```
 
 ### Download Pre-built Binaries
@@ -318,7 +324,7 @@ The resulting `recovered.snapshot.bin` can then be renamed to `my_database.log.s
 
 ## HTTP API
 
-All endpoints except `/login` require an `Authorization: Bearer <token>` header.  
+All endpoints except `POST /login` require an `Authorization: Bearer <token>` header. Every endpoint also enforces **scopes** — the token must carry the appropriate `action:collection:key` scope or the request is rejected with `403 Forbidden`.  
 All endpoints return a consistent JSON envelope with a `statusCode` field:
 
 ```json
@@ -340,7 +346,36 @@ Content-Type: application/json
 { "username": "myuser", "password": "str0ng-p4ssw0rd" }
 ```
 
-Returns `{ "token": "<jwt>" }`.
+Returns `{ "token": "<jwt>" }`. The root token carries `*:*:*` scope (full access).
+
+### Delegate a scoped token
+
+The root user can mint narrow-permission JWTs for clients. Only the root user can call this endpoint.
+
+```http
+POST /auth/delegate
+Authorization: Bearer <root-token>
+Content-Type: application/json
+
+{
+  "client_id": "laptop-service",
+  "scopes": ["read:laptops:*", "write:laptops:*"],
+  "ttl_secs": 3600
+}
+```
+
+Returns `{ "token": "<scoped-jwt>", "client_id": "laptop-service", "scopes": [...] }`.
+
+**Scope format:** `action:collection:document_key`
+
+| Scope | Meaning |
+|---|---|
+| `read:laptops:lp1` | Read only document `lp1` in `laptops` |
+| `read:laptops:*` | Read any document in `laptops` |
+| `write:laptops:*` | Write any document in `laptops` |
+| `delete:laptops:*` | Delete any document in `laptops` |
+| `read:*:*` | Read any document in any collection |
+| `*:*:*` | Full admin — root only |
 
 ### Insert / Upsert
 
@@ -782,17 +817,31 @@ MoltenDB/
 ├── moltendb-core/                    — pure engine crate (no HTTP, no auth)
 │   └── src/
 │       ├── lib.rs                    — crate root
-│       ├── worker.rs                 — WASM entry point (cfg-gated)
-│       ├── analytics.rs              — COUNT/SUM/AVG/MIN/MAX analytics engine (⚠️ under development)
+│       ├── analytics.rs              — COUNT/SUM/AVG/MIN/MAX analytics engine
+│       ├── query.rs                  — query AST evaluator ($eq, $in, $regex, $contains, $or, $and, …)
+│       ├── validation.rs             — collection name / document depth / size guards
 │       ├── engine/
 │       │   ├── mod.rs                — Db struct, open() / open_wasm()
-│       │   ├── operations.rs         — insert_batch, update, delete, versioning, WS broadcast
+│       │   ├── config.rs             — DbConfig (path, encryption key, storage options)
 │       │   ├── indexing.rs           — auto-indexing, query heatmap
+│       │   ├── schema.rs             — JSON Schema validation per collection
 │       │   ├── types.rs              — LogEntry, DbError
+│       │   ├── operations/           — CRUD operations (split module)
+│       │   │   ├── mod.rs            — re-exports: get, insert_batch, update, delete, …
+│       │   │   ├── common.rs         — shared helpers (now_iso())
+│       │   │   ├── read.rs           — get, get_all, get_batch
+│       │   │   ├── insert.rs         — insert_batch (versioning, schema validation, WAL)
+│       │   │   ├── update.rs         — update (partial patch, _v optimistic lock, WAL)
+│       │   │   └── delete.rs         — delete, delete_batch, delete_collection
 │       │   └── storage/
-│       │       ├── mod.rs            — StorageBackend trait, startup replay
-│       │       ├── disk.rs           — AsyncDiskStorage, SyncDiskStorage, snapshots
-│       │       ├── encrypted.rs      — XChaCha20-Poly1305 encryption wrapper
+│       │       ├── mod.rs            — StorageBackend trait, startup WAL replay
+│       │       ├── disk/             — disk storage (split module)
+│       │       │   ├── mod.rs        — re-exports: AsyncDiskStorage, SyncDiskStorage, helpers
+│       │       │   ├── async_storage.rs — MPSC channel + background Tokio flush task
+│       │       │   ├── sync_storage.rs  — Mutex-guarded BufWriter, immediate flush
+│       │       │   ├── log.rs        — stream_log_entries, write_compacted_log, count_log_lines
+│       │       │   └── snapshot.rs   — write_snapshot, load_snapshot, atomic rename, backup rotation
+│       │       ├── encrypted.rs      — XChaCha20-Poly1305 + Argon2id encryption wrapper
 │       │       ├── tiered.rs         — TieredStorage, MmapLogReader
 │       │       └── wasm.rs           — OpfsStorage (browser OPFS backend)
 │       └── handlers/
@@ -801,27 +850,39 @@ MoltenDB/
 │           ├── process_set.rs        — SET handler (insert/upsert, extends resolution)
 │           ├── process_update.rs     — UPDATE handler (partial merge, $unset)
 │           ├── process_delete.rs     — DELETE handler (single, batch, drop)
-│           └── process_analytics.rs  — analytics handler (⚠️ under development, not ready for use)
+│           ├── process_snapshot.rs   — SNAPSHOT handler (PITR trigger)
+│           ├── process_schema.rs     — SCHEMA handler (define / update collection schema)
+│           └── process_analytics.rs  — ANALYTICS handler (COUNT/SUM/AVG/MIN/MAX)
 │
-├── moltendb-auth/                    — identity crate (JWT, Argon2, UserStore)
+├── moltendb-auth/                    — identity crate (JWT, Argon2, scoped delegation) — excluded from WASM
 │   └── src/
-│       └── lib.rs                    — JWT minting/validation, password hashing, UserStore
+│       └── lib.rs                    — Claims (jti, scopes), has_access(), key_matches(),
+│                                       create_scoped_token(), RevocationStore,
+│                                       UserStore, DelegateRequest/Response,
+│                                       auth_middleware (JWT validation + revocation check)
 │
 ├── moltendb-server/                  — network crate (Axum, TLS, CLI, rate limiting)
 │   ├── src/
-│   │   ├── main.rs                   — server entry point, router, middleware, CLI config
+│   │   ├── main.rs                   — server entry point, router wiring, CLI config, background tasks
 │   │   ├── lib.rs                    — library root (re-exports for integration tests)
-│   │   ├── validation.rs             — input validation (collection names, depth, size)
+│   │   ├── route_handlers.rs         — all HTTP handlers (login, delegate, revoke, set, get, update,
+│   │   │                               delete, snapshot, schema, analytics, REST get/collection)
+│   │   ├── ws.rs                     — WebSocket upgrade, per-connection authenticated push
+│   │   ├── server.rs                 — TLS config loader, graceful shutdown signal
 │   │   └── rate_limit.rs             — per-IP sliding window rate limiter
 │   ├── tests/
-│   │   └── integration.rs            — 56 integration tests
+│   │   └── integration.rs            — integration test suite
 │   └── examples/
 │       ├── generate_stress_data.rs   — generates 100 000 synthetic documents
 │       ├── stress_insert.rs          — bulk-inserts the dataset into a live server
 │       └── stress_fetch.rs           — fires concurrent GET requests, reports latency percentiles
 │
+├── moltendb-wasm/                    — WASM crate (browser / Node.js bundle)
+│   └── src/
+│       └── lib.rs                    — wasm-bindgen entry point, OPFS-backed Db
+│
 ├── tests/
-│   └── requests.http                 — 57+ documented example requests for every endpoint
+│   └── requests.http                 — documented example requests for every endpoint
 ├── pkg/                              — generated WASM package (wasm-pack output)
 └── assets/
     └── logo.png
@@ -831,13 +892,7 @@ MoltenDB/
 
 ## What's Next? (The Roadmap)
 
-MoltenDB is currently in **Beta**. The core engine is stable, fast, and feature-rich, but the road to `v1.0` is going to be heavily driven by following roadmap and community feedback.
-
-### 0. Point-in-Time Recovery (PITR) & Recovery Tooling
-- **Engine-level Timestamps:** Every write (INSERT, DELETE, DROP) now includes a hidden `_t` millisecond timestamp for precise recovery.
-- **Snapshot Versioning:** Compaction now preserves historical snapshots in a `/backup` folder before overwriting the active `snapshot.bin`.
-- **`recover` CLI:** A standalone utility to rebuild your database to an exact millisecond or log sequence number.
-- **Manual Snapshots:** A new `POST /snapshot` endpoint to trigger an atomic snapshot on demand.
+MoltenDB is currently in **RC Stage**. The core engine is stable, fast, and feature-rich.
 
 ### 1. Scaling & Ecosystem
 - **Mobile Native Modules:** Compiling the exact same Rust core to run natively on iOS and Android (via FFI/JNI). This will bring blazing-fast, local-first embedded databases to React Native and Flutter.
@@ -846,16 +901,10 @@ MoltenDB is currently in **Beta**. The core engine is stable, fast, and feature-
 
 ### 2. Distributed Systems & Core
 - **Robust Sync:** Two-way browser ↔ server delta sync with automatic conflict resolution (server-wins on `_v` collision).
-- **Transactions:** ACID multi-key writes with optimistic locking (`BEGIN`, `COMMIT`, `ROLLBACK`).
 - **Hardened Analytics:** The `COUNT/SUM/AVG/MIN/MAX` analytics engine exists in the codebase but is **currently under development and not ready for production use**. Expanding and rigorously testing it, accompanied by a comprehensive, interactive live demo, is a key roadmap item.
 
 ### 3. Security, Tooling & Polish
-- **Schema Validation:** Optional, opt-in per-collection type constraints (enforcing strings, numbers, required fields).
-- **Granular ACLs:** User management and role-based access control for individual collections.
 - **MoltenDB Studio (Premium):** A paid, official GUI dashboard to visually manage your databases, inspect collections, and execute queries without touching the CLI.
-- **Comprehensive Changelog:** Establishing a clear, detailed changelog so the community can easily track new features, API adjustments, and performance improvements release by release.
-- **A "Professional" Logo:** I know the current logo isn't exactly boring and corporate enough for an enterprise database, but I wanted the Beta release to have a bit of personality!
-As we approach `v1.0`, MoltenDB will get a clean, professional brand identity.
 
 
 ### What's NOT on the Roadmap (The Anti-Goals)
