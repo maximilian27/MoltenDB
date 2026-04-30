@@ -106,6 +106,9 @@ pub struct Db {
     /// Maximum request body size in bytes.
     pub max_body_size: usize,
 
+    /// Maximum keys allowed per request.
+    pub max_keys_per_request: usize,
+
     /// Registered JSON schemas per collection.
     /// Key: collection name → Value: (Original JSON, Compiled Validator).
     #[cfg(feature = "schema")]
@@ -138,6 +141,7 @@ impl Db {
         let rate_limit_requests = config.rate_limit_requests;
         let rate_limit_window = config.rate_limit_window;
         let max_body_size = config.max_body_size;
+        let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
         let post_backup_script = config.post_backup_script;
 
@@ -204,6 +208,7 @@ impl Db {
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
+            max_keys_per_request,
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,
@@ -221,6 +226,7 @@ impl Db {
         let rate_limit_requests = config.rate_limit_requests;
         let rate_limit_window = config.rate_limit_window;
         let max_body_size = config.max_body_size;
+        let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
         let sync_mode = config.sync_mode;
         let post_backup_script = config.post_backup_script;
@@ -261,6 +267,7 @@ impl Db {
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
+            max_keys_per_request,
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,

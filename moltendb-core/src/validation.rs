@@ -297,7 +297,7 @@ pub fn validate_allowed_properties(payload: &Value, allowed: &[&str]) -> Result<
 ///   5. Field name validity (projections, joins, WHERE clause)
 ///
 /// Returns Ok(()) if all checks pass, or the first ValidationError found.
-pub fn validate_request(payload: &Value, max_body_size: usize) -> Result<(), ValidationError> {
+pub fn validate_request(payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> Result<(), ValidationError> {
     // Check 1: Payload size — reject before doing any other work.
     validate_payload_size(payload, max_body_size)?;
 
@@ -315,7 +315,7 @@ pub fn validate_request(payload: &Value, max_body_size: usize) -> Result<(), Val
             Value::String(key) => validate_key_name(key)?,
             Value::Array(arr) => {
                 // Reject if too many keys in one request.
-                validate_key_count(arr.len(), 1000)?;
+                validate_key_count(arr.len(), max_keys_per_request)?;
                 for key in arr {
                     if let Some(key_str) = key.as_str() {
                         validate_key_name(key_str)?;
@@ -329,7 +329,7 @@ pub fn validate_request(payload: &Value, max_body_size: usize) -> Result<(), Val
     // Check 4b: Data map keys in insert/update operations.
     if let Some(data) = payload.get("data") {
         if let Value::Object(map) = data {
-            validate_key_count(map.len(), 1000)?;
+            validate_key_count(map.len(), max_keys_per_request)?;
             for key in map.keys() {
                 validate_key_name(key)?;
             }

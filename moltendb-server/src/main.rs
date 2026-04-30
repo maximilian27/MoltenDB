@@ -122,6 +122,10 @@ struct Config {
     #[arg(long, default_value = "10485760", env = "MOLTENDB_MAX_BODY_SIZE")]
     max_body_size: usize,
 
+    /// Maximum keys allowed per request. [env: MOLTENDB_MAX_KEYS_PER_REQUEST]
+    #[arg(long, default_value = "1000", env = "MOLTENDB_MAX_KEYS_PER_REQUEST")]
+    max_keys_per_request: usize,
+
     /// Allowed CORS origin(s). Use "*" to allow any origin (default, dev only).
     /// For production, set to your frontend URL, e.g. "https://app.example.com".
     /// Multiple origins can be separated by commas. [env: MOLTENDB_CORS_ORIGIN]
@@ -378,6 +382,7 @@ async fn main() {
         rate_limit_requests,
         rate_limit_window,
         max_body_size: cfg.max_body_size,
+        max_keys_per_request: cfg.max_keys_per_request,
         encryption_key: encryption_key.cloned(),
         post_backup_script: cfg.post_backup_script,
     };
@@ -476,7 +481,7 @@ async fn main() {
 
     // The app state is a tuple of (Db, UserStore, max_body_size) injected into every handler via State<...>.
     // Axum clones this for each request — Db and UserStore are cheap to clone (Arc-backed).
-    let app_state = (db.clone(), users, cfg.max_body_size, root_user);
+    let app_state = (db.clone(), users, cfg.max_body_size, cfg.max_keys_per_request, root_user);
 
     let mut protected_routes = Router::new()
         .route("/set", post(handle_set))           // Insert/upsert documents

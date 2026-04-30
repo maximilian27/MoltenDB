@@ -105,6 +105,7 @@ impl WorkerDb {
     /// * `rate_limit_requests` — Optional max requests per window (default: 100).
     /// * `rate_limit_window` — Optional window size in seconds (default: 60).
     /// * `max_body_size` — Optional maximum request body size in bytes (default: 10MB).
+    /// * `max_keys_per_request` — Optional maximum keys allowed per request (default: 1000).
     #[wasm_bindgen]
     pub async fn create(
         db_name: &str,
@@ -114,6 +115,7 @@ impl WorkerDb {
         rate_limit_requests: Option<u32>,
         rate_limit_window: Option<u64>,
         max_body_size: Option<usize>,
+        max_keys_per_request: Option<usize>,
     ) -> Result<WorkerDb, JsValue> {
         // Install a panic hook that converts Rust panics into readable JS error messages.
         // Without this, a Rust panic in WASM produces an unhelpful "unreachable" error.
@@ -125,6 +127,7 @@ impl WorkerDb {
         let limit_reqs = rate_limit_requests.unwrap_or(100);
         let limit_window = rate_limit_window.unwrap_or(60);
         let body_size = max_body_size.unwrap_or(10 * 1024 * 1024);
+        let keys_limit = max_keys_per_request.unwrap_or(1000);
 
         let master_key = encryption_key.map(|pw| {
             moltendb_core::engine::EncryptedStorage::derive_key(&pw, db_name)
@@ -137,6 +140,7 @@ impl WorkerDb {
             rate_limit_requests: limit_reqs,
             rate_limit_window: limit_window,
             max_body_size: body_size,
+            max_keys_per_request: keys_limit,
             encryption_key: master_key,
             tiered_mode: false, // Tiered storage is not supported in WASM
             post_backup_script: None, // Backup scripts are not supported in WASM
@@ -254,7 +258,7 @@ impl WorkerDb {
     /// Equivalent to POST /get on the server.
     ///   { "collection": "laptops", "where": { "brand": "Apple" }, "fields": ["brand", "model"] }
     fn handle_get(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_get::process_get(&self.db, request, self.db.max_body_size);
+        let (code, mut body): (u16, Value) = handlers::process_get::process_get(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -263,7 +267,7 @@ impl WorkerDb {
     /// Insert/upsert documents. Equivalent to POST /set on the server.
     ///   { "collection": "laptops", "data": { "lp1": { ... }, "lp2": { ... } } }
     fn handle_set(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_set::process_set(&self.db, request, self.db.max_body_size);
+        let (code, mut body): (u16, Value) = handlers::process_set::process_set(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         self.maybe_compact();
@@ -273,7 +277,7 @@ impl WorkerDb {
     /// Patch/merge documents. Equivalent to POST /update on the server.
     ///   { "collection": "laptops", "data": { "lp4": { "price": 1749 } } }
     fn handle_update(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_update::process_update(&self.db, request, self.db.max_body_size);
+        let (code, mut body): (u16, Value) = handlers::process_update::process_update(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         self.maybe_compact();
@@ -283,7 +287,7 @@ impl WorkerDb {
     /// Delete documents or drop a collection. Equivalent to POST /delete on the server.
     ///   { "collection": "laptops", "keys": "lp6" }  or  { "drop": true }
     fn handle_delete(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_delete::process_delete(&self.db, request, self.db.max_body_size);
+        let (code, mut body): (u16, Value) = handlers::process_delete::process_delete(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         self.maybe_compact();
