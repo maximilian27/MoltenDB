@@ -687,6 +687,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 > **If you are running the `moltendb-server` binary, you can use all flags listed below.** The separation between "Networking/Auth" and "Database Engine" is only relevant for developers embedding `moltendb-core` as a library.
 
 ### Networking & Authentication (Server-only)
+| Flag | Env var | Default | Description |
 |---|---|---|---|
 | `--cert` | `MOLTENDB_TLS_CERT` | `cert.pem` | TLS certificate |
 | `--cors-origin` | `MOLTENDB_CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s) |
