@@ -1497,7 +1497,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@admin_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJpbnRlcm5hbC1hZG1pbi1zZXJ2aWNlIiwiZXhwIjoxNzc3NTUwMzg5LCJzY29wZXMiOlsiKjoqOioiXX0.sR__URtIUJ4LKqLKL1hUCwCgrn5jXwD0XYHXGs5N4fM
+@admin_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJpbnRlcm5hbC1hZG1pbi1zZXJ2aWNlIiwiZXhwIjoxNzc3NTU0ODc4LCJzY29wZXMiOlsiKjoqOioiXX0.dcYcCgI4AqYbyO4TKphATDZFLOhqrIgDcuJ7w3aRNFE
 
 ### ✅ Read any document
 GET https://localhost:1538/collections/laptops/docs/lp1
