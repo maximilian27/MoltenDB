@@ -1,3 +1,15 @@
+## [0.8.0](https://github.com/maximilian27/MoltenDB/compare/v0.7.0...v0.8.0) (2026-04-30)
+### Features
+* **auth:** added `scopes` field to JWT `Claims` with `has_access(action, collection, key)`, `has_collection_access`, and `is_admin` helpers for document-level permission checks
+* **auth:** added `create_scoped_token(username, scopes, ttl_secs)` — root `create_token` now delegates to this internally with the `admin` scope and a 24-hour TTL
+* **auth:** added `POST /auth/delegate` endpoint (admin-only) that mints narrow-scoped JWTs for clients; accepts `client_id`, `scopes`, and optional `ttl_secs`; validates scope format before signing
+* **auth:** added `DelegateRequest` and `DelegateResponse` types to `moltendb-auth` for easy integration with any external auth system
+* **auth:** enforced scope checks on every protected endpoint — `POST /set` and `POST /update` require `write:{collection}:*`; `POST /get` and `GET /collections/{col}` require `read:{collection}:*`; `GET /collections/{col}/docs/{key}` requires `read:{collection}:{key}` (document-level tokens now work correctly); `POST /delete` requires `delete:{collection}:*`; `POST /snapshot` requires `admin`
+
+### Breaking Changes
+* **auth:** existing JWTs issued before this release have no `scopes` field — they will deserialize with `scopes: []` (via `#[serde(default)]`) and will be rejected by all scope-aware endpoints; re-issue tokens after upgrading
+* **auth:** all write/delete/query endpoints now return `403 Forbidden` if the token lacks the required scope — previously they were scope-blind and returned data regardless of token permissions
+
 ## [0.7.0](https://github.com/maximilian27/MoltenDB/compare/v0.6.3...v0.7.0) (2026-04-28)
 ### Features
 * **backups:** added script-based post-backup hook with automatic PowerShell ExecutionPolicy bypass on Windows

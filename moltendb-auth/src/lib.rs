@@ -63,6 +63,92 @@ pub struct Claims {
     pub sub: String,
     /// Token expiry as a Unix timestamp (seconds since 1970-01-01 00:00:00 UTC).
     pub exp: u64,
+    /// Scopes granted to this token.
+    /// Format: "action:collection:document_key"
+    /// Examples: "read:laptops:lp1", "write:users:*", "read:*:*", "admin"
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
+impl Claims {
+    /// Check whether this token grants access for a given action on a
+    /// specific collection + document key.
+    ///
+    /// Evaluation order (most-specific first):
+    ///   1. "admin"                    → always grants everything
+    ///   2. "action:*:*"               → global wildcard for this action
+    ///   3. "action:collection:*"      → all docs in this collection
+    ///   4. "action:collection:key"    → exact document match
+    pub fn has_access(&self, action: &str, collection: &str, doc_key: &str) -> bool {
+        self.scopes.iter().any(|scope| {
+            if scope == "admin" {
+                return true;
+            }
+            let parts: Vec<&str> = scope.splitn(3, ':').collect();
+            if parts.len() != 3 {
+                return false;
+            }
+            let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
+            let action_match = s_action == action;
+            let col_match    = s_col == "*" || s_col == collection;
+            let key_match    = s_key == "*" || s_key == doc_key;
+            action_match && col_match && key_match
+        })
+    }
+
+    /// Convenience: check collection-level access (key wildcard).
+    pub fn has_collection_access(&self, action: &str, collection: &str) -> bool {
+        self.has_access(action, collection, "*")
+    }
+
+    /// Returns true if this token carries root/admin privileges.
+    pub fn is_admin(&self) -> bool {
+        self.scopes.iter().any(|s| s == "admin")
+    }
+
+    /// Returns the explicit document keys this token may access for a given
+    /// action + collection. Wildcard scopes (`*`) are excluded — use
+    /// `has_collection_access` to check those first.
+    ///
+    /// Used by `handle_get` to scope a query to only the documents the token
+    /// is allowed to read when no collection-level wildcard is present.
+    pub fn allowed_keys(&self, action: &str, collection: &str) -> Vec<String> {
+        self.scopes.iter().filter_map(|scope| {
+            let parts: Vec<&str> = scope.splitn(3, ':').collect();
+            if parts.len() != 3 {
+                return None;
+            }
+            let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
+            let action_match = s_action == action;
+            let col_match    = s_col == "*" || s_col == collection;
+            // Only return concrete keys — wildcards are handled by has_collection_access.
+            if action_match && col_match && s_key != "*" {
+                Some(s_key.to_string())
+            } else {
+                None
+            }
+        }).collect()
+    }
+}
+
+/// Request body for POST /auth/delegate
+#[derive(Debug, Deserialize)]
+pub struct DelegateRequest {
+    /// A label for the client receiving this token (stored in JWT `sub`).
+    pub client_id: String,
+    /// List of scopes to embed in the JWT.
+    /// e.g. ["read:laptops:lp1", "write:users:usr_123", "read:*:*"]
+    pub scopes: Vec<String>,
+    /// Optional TTL in seconds. Defaults to 3600 (1 hour).
+    pub ttl_secs: Option<u64>,
+}
+
+/// Response body for POST /auth/delegate
+#[derive(Debug, Serialize)]
+pub struct DelegateResponse {
+    pub token: String,
+    pub client_id: String,
+    pub scopes: Vec<String>,
 }
 
 /// The JSON body expected by the POST /login endpoint.
@@ -96,19 +182,30 @@ fn get_secret() -> String {
 /// The token expires 24 hours (86400 seconds) from now.
 /// Returns the compact serialization: "header.payload.signature"
 pub fn create_token(username: &str) -> Result<String, jsonwebtoken::errors::Error> {
-    // Compute the expiry timestamp: current Unix time + 24 hours.
+    create_scoped_token(username, vec!["admin".to_string()], 86400)
+}
+
+/// Create a scoped delegate token with a custom TTL (in seconds).
+///
+/// Used by POST /auth/delegate to mint narrow-permission tokens for clients.
+/// The root user calls this on behalf of a client; the client never sees the
+/// root credentials.
+pub fn create_scoped_token(
+    username: &str,
+    scopes: Vec<String>,
+    ttl_secs: u64,
+) -> Result<String, jsonwebtoken::errors::Error> {
     let expiration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs() + 86400; // 86400 seconds = 24 hours
+        .as_secs() + ttl_secs;
 
     let claims = Claims {
         sub: username.to_string(),
         exp: expiration,
+        scopes,
     };
 
-    // encode() signs the claims with HMAC-SHA256 using the secret key.
-    // Header::default() uses the HS256 algorithm.
     encode(
         &Header::default(),
         &claims,

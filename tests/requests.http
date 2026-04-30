@@ -11,7 +11,60 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NzQ3ODMzM30.9RhEPLHoAtvNtSQaBSj2Fu_xotF8aQ-eYqZgJjqK7Eg
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NzYzMDAyNywic2NvcGVzIjpbImFkbWluIl19.8iMX7j7CXS2pttm3wbm3zHmrgMBSgQAfv4UcwfgPEss
+
+### ─── STEP 1b: Delegate a scoped token ──────────────────────────────────────
+### Only the root/admin token (from STEP 1) can call this endpoint.
+### Use this to mint narrow-permission tokens for clients / external services.
+### The client receives a JWT that only grants the listed scopes — it never
+### sees the root password.
+###
+### Scope format: "action:collection:document_key"
+###   action       → read | write | delete (or any verb your app uses)
+###   collection   → exact collection name, or * for any
+###   document_key → exact document key, or * for any document in the collection
+###   "admin"      → special scope that grants full root access (use sparingly)
+###
+### Examples:
+###   "read:laptops:lp1"   → read only document lp1 in laptops
+###   "write:users:usr_42" → write only document usr_42 in users
+###   "read:laptops:*"     → read any document in laptops
+###   "read:*:*"           → read any document in any collection
+###   "admin"              → full root access
+
+### Mint a read-only token for a specific document (document-level scope)
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "laptop-service",
+  "scopes": ["read:laptops:lp1", "read:laptops:lp2"],
+  "ttl_secs": 3600
+}
+
+### Mint a collection-wide read/write token (e.g. for a backend service)
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "inventory-backend",
+  "scopes": ["read:laptops:*", "write:laptops:*"],
+  "ttl_secs": 86400
+}
+
+### Mint a global read-only token (e.g. for a reporting dashboard)
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "reporting-dashboard",
+  "scopes": ["read:*:*"],
+  "ttl_secs": 3600
+}
+
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
 ### subsequent examples. The laptops collection references memory and display
@@ -185,7 +238,7 @@ Authorization: Bearer {{token}}
 ### §7. Select only brand, model and price — nothing else sent over the wire
 POST https://localhost:1538/get
 Content-Type: application/json
-Authorization: Bearer {{token}}
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsYXB0b3Atc2VydmljZSIsImV4cCI6MTc3NzU0NzM4Niwic2NvcGVzIjpbInJlYWQ6bGFwdG9wczpscDEiLCJyZWFkOmxhcHRvcHM6bHAyIl19.93sDtE6fcBSIkFZ0m67eDoh1DJywzuuD66XuX31_lVc
 
 {
   "collection": "laptops",
@@ -984,7 +1037,181 @@ Authorization: Bearer {{token}}
 ### §65. Take a manual snapshot (requires auth)
 ### This triggers a compaction and creates a new .snapshot.bin file.
 ### Old snapshots are moved to the /backup folder.
+### Requires: admin scope. Collection-level or document-level tokens → 403.
 POST https://localhost:1538/snapshot
 Content-Type: application/json
 Authorization: Bearer {{token}}
+
+
+### ─── SCOPE ENFORCEMENT EXAMPLES ─────────────────────────────────────────────
+### These examples demonstrate how scoped tokens restrict access.
+###
+### SCOPE → ENDPOINT COMPATIBILITY
+### ─────────────────────────────────────────────────────────────────────────────
+###  Token scope            │ POST /get  │ GET /col/docs/key │ POST /set  │ POST /delete
+###  ─────────────────────────────────────────────────────────────────────────
+###  read:laptops:lp1       │ 403        │ ✅ lp1 only        │ 403        │ 403
+###  read:laptops:*         │ ✅          │ ✅ any key         │ 403        │ 403
+###  write:laptops:*        │ 403        │ 403               │ ✅          │ 403
+###  delete:laptops:*       │ 403        │ 403               │ 403        │ ✅
+###  read:*:*               │ ✅ any col  │ ✅ any col/key     │ 403        │ 403
+###  admin                  │ ✅          │ ✅                 │ ✅          │ ✅
+###
+### STEP A: Mint the tokens you need (run each delegate call, copy the token)
+
+### §A1. Document-level read token — can only fetch lp1 and lp2 via REST GET
+### ✅ GET /collections/laptops/docs/lp1  → 200
+### ✅ GET /collections/laptops/docs/lp2  → 200
+### ❌ GET /collections/laptops/docs/lp3  → 403
+### ❌ POST /get                          → 403 (needs read:laptops:*)
+### ❌ POST /set                          → 403
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "field-rep",
+  "scopes": ["read:laptops:lp1", "read:laptops:lp2"],
+  "ttl_secs": 3600
+}
+
+### §A2. Collection-level read token — can query the whole laptops collection
+### ✅ POST /get { "collection": "laptops", ... }          → 200
+### ✅ GET  /collections/laptops                           → 200
+### ✅ GET  /collections/laptops/docs/lp1                  → 200
+### ❌ POST /set                                           → 403
+### ❌ POST /delete                                        → 403
+### ❌ POST /get { "collection": "memory", ... }           → 403 (different collection)
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "read-only-dashboard",
+  "scopes": ["read:laptops:*"],
+  "ttl_secs": 3600
+}
+
+### §A3. Read + write token for laptops — backend service
+### ✅ POST /get    { "collection": "laptops" }  → 200
+### ✅ POST /set    { "collection": "laptops" }  → 200
+### ✅ POST /update { "collection": "laptops" }  → 200
+### ❌ POST /delete { "collection": "laptops" }  → 403 (needs delete:laptops:*)
+### ❌ POST /set    { "collection": "memory"  }  → 403 (different collection)
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "laptops-backend",
+  "scopes": ["read:laptops:*", "write:laptops:*"],
+  "ttl_secs": 86400
+}
+
+### §A4. Full CRUD token for laptops (read + write + delete)
+### ✅ POST /get    { "collection": "laptops" }  → 200
+### ✅ POST /set    { "collection": "laptops" }  → 200
+### ✅ POST /update { "collection": "laptops" }  → 200
+### ✅ POST /delete { "collection": "laptops" }  → 200
+### ❌ POST /snapshot                            → 403 (needs admin)
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "laptops-full-crud",
+  "scopes": ["read:laptops:*", "write:laptops:*", "delete:laptops:*"],
+  "ttl_secs": 3600
+}
+
+### §A5. Global read-only token — can read any collection
+### ✅ POST /get { "collection": "laptops" }  → 200
+### ✅ POST /get { "collection": "memory"  }  → 200
+### ✅ GET  /collections/display             → 200
+### ❌ POST /set                             → 403
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "global-reader",
+  "scopes": ["read:*:*"],
+  "ttl_secs": 3600
+}
+
+### ─── STEP B: Use the scoped tokens ──────────────────────────────────────────
+### Paste the token from §A1 into @doc_token, §A2 into @col_token, etc.
+
+@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzc1NDg0MzMsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdfQ.Rm9Mv_Zr6ggALC8dkg2vscv3jEm-VMjaV-Y6C1AbT40
+@col_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzc1NDg0MzMsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdfQ.Rm9Mv_Zr6ggALC8dkg2vscv3jEm-VMjaV-Y6C1AbT40
+
+### §B1. ✅ Document-level token — fetch lp1 (allowed)
+GET https://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{doc_token}}
+
+###
+
+### §B2. ❌ Document-level token — fetch lp3 (forbidden — not in scopes)
+GET https://localhost:1538/collections/laptops/docs/lp3
+Authorization: Bearer {{doc_token}}
+
+###
+
+### §B3. ✅ Document-level token — POST /get (no keys specified)
+### Returns only lp1 + lp2 — the docs the token is allowed to read.
+### Fields are projected server-side; no other documents are returned.
+POST https://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{doc_token}}
+
+{
+  "collection": "laptops",
+  "fields": ["brand", "model", "price"]
+}
+
+###
+
+### §B4. ✅ Document-level token — POST /get with explicit key (allowed)
+### Token has read:laptops:lp2 — requesting lp2 is permitted.
+POST https://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{doc_token}}
+
+{
+  "collection": "laptops",
+  "keys": "lp2",
+  "fields": ["brand", "model", "price"]
+}
+
+###
+
+### §B5. ✅ Collection-level token — GET all laptops paginated (allowed)
+GET https://localhost:1538/collections/laptops?limit=3&offset=0
+Authorization: Bearer {{col_token}}
+
+###
+
+### §B6. ❌ Collection-level token — POST /set (forbidden — read-only token)
+POST https://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{col_token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp99": { "brand": "Test", "model": "Blocked", "price": 1, "in_stock": false }
+  }
+}
+
+###
+
+### §B7. ❌ Collection-level token — wrong collection (forbidden)
+POST https://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{col_token}}
+
+{
+  "collection": "memory",
+  "fields": ["capacity_gb", "type"]
+}
 
