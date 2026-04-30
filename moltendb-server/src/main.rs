@@ -442,7 +442,7 @@ async fn main() {
 
     // Initialize the user store with the admin user and password from Config.
     // We've already verified they are present above.
-    let users = auth::UserStore::new(root_user, root_password);
+    let users = auth::UserStore::new(root_user.clone(), root_password);
     info!("👤 User authentication initialized");
 
     // Initialize the rate limiter with the configured limits.
@@ -463,7 +463,7 @@ async fn main() {
 
     // The app state is a tuple of (Db, UserStore, max_body_size) injected into every handler via State<...>.
     // Axum clones this for each request — Db and UserStore are cheap to clone (Arc-backed).
-    let app_state = (db.clone(), users, cfg.max_body_size);
+    let app_state = (db.clone(), users, cfg.max_body_size, root_user);
 
     let mut protected_routes = Router::new()
         .route("/set", post(handle_set))           // Insert/upsert documents
@@ -713,8 +713,9 @@ async fn shutdown_signal() {
 /// can use this token to access MoltenDB without ever seeing the root password.
 ///
 /// Scope format: "action:collection:document_key"
-/// Examples: "read:laptops:lp1", "write:users:*", "read:*:*", "admin"
+/// Examples: "read:laptops:lp1", "write:users:*", "read:*:*", "*:*:*"
 async fn handle_delegate(
+    State((_, _, _, root_username)): State<(engine::Db, auth::UserStore, usize, String)>,
     Extension(claims): axum::extract::Extension<auth::Claims>,
     Json(payload): Json<auth::DelegateRequest>,
 ) -> Result<Json<auth::DelegateResponse>, (StatusCode, Json<Value>)> {
@@ -726,9 +727,17 @@ async fn handle_delegate(
         ));
     }
 
+    // Only the root user may mint *:*:* (admin) tokens.
+    if payload.scopes.iter().any(|s| s == "*:*:*") && claims.sub != root_username {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Only the root user can mint '*:*:*' (admin) tokens"})),
+        ));
+    }
+
     // Validate that every scope is well-formed.
     for scope in &payload.scopes {
-        if scope != "admin" {
+        if scope != "*:*:*" {
             let parts: Vec<&str> = scope.splitn(3, ':').collect();
             if parts.len() != 3 {
                 return Err((
@@ -762,7 +771,7 @@ async fn handle_delegate(
 /// Returns 401 Unauthorized if credentials are wrong.
 /// Returns 500 Internal Server Error if token creation fails.
 async fn handle_login(
-    State((_, users, _)): State<(engine::Db, auth::UserStore, usize)>,
+    State((_, users, _, _)): State<(engine::Db, auth::UserStore, usize, String)>,
     Json(payload): Json<auth::LoginRequest>,
 ) -> Result<Json<auth::LoginResponse>, (StatusCode, Json<Value>)> {
     // Verify the username and password against the in-memory user store.
@@ -789,7 +798,7 @@ async fn handle_login(
 /// Body: `{ "collection": "users", "data": { "u1": { "name": "Alice" } } }`
 /// Requires: write:{collection}:* scope (or admin).
 async fn handle_set(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
+    State((db, _, max_body_size, _)): State<(engine::Db, auth::UserStore, usize, String)>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -809,7 +818,7 @@ async fn handle_set(
 /// Body: `{ "collection": "users", "data": { "u1": { "role": "admin" } } }`
 /// Requires: write:{collection}:* scope (or admin).
 async fn handle_update(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
+    State((db, _, max_body_size, _)): State<(engine::Db, auth::UserStore, usize, String)>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -835,7 +844,7 @@ async fn handle_update(
 ///       • If no `"keys"` is specified, the result is filtered to only the docs the
 ///         token is allowed to read.
 async fn handle_get(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
+    State((db, _, max_body_size, _)): State<(engine::Db, auth::UserStore, usize, String)>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -891,7 +900,7 @@ async fn handle_get(
 /// Body (drop all): `{ "collection": "users", "drop": true }`
 /// Requires: delete:{collection}:* scope (or admin).
 async fn handle_delete(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
+    State((db, _, max_body_size, _)): State<(engine::Db, auth::UserStore, usize, String)>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -908,7 +917,7 @@ async fn handle_delete(
 
 #[cfg(feature = "schema")]
 async fn handle_schema(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
+    State((db, _, max_body_size, _)): State<(engine::Db, auth::UserStore, usize, String)>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let (code, body) = handlers::process_schema(&db, &payload, max_body_size);
@@ -918,7 +927,7 @@ async fn handle_schema(
 /// POST /snapshot — take a snapshot of the database on demand.
 /// Requires: admin scope.
 async fn handle_snapshot(
-    State((db, _, _)): State<(engine::Db, auth::UserStore, usize)>,
+    State((db, _, _, _)): State<(engine::Db, auth::UserStore, usize, String)>,
     Extension(claims): Extension<auth::Claims>,
 ) -> (StatusCode, Json<Value>) {
     if !claims.is_admin() {
@@ -937,7 +946,7 @@ async fn handle_snapshot(
 ///   POST /get { "collection": collection, "keys": key }
 /// Requires: read:{collection}:{key} scope (or read:{collection}:* or read:*:* or admin).
 async fn handle_rest_get(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
+    State((db, _, max_body_size, _)): State<(engine::Db, auth::UserStore, usize, String)>,
     Extension(claims): Extension<auth::Claims>,
     Path((collection, key)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
@@ -965,7 +974,7 @@ async fn handle_rest_get(
 ///   - `offset` (optional) — number of documents to skip before returning.
 /// Requires: read:{collection}:* scope (or admin).
 async fn handle_rest_get_collection(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
+    State((db, _, max_body_size, _)): State<(engine::Db, auth::UserStore, usize, String)>,
     Extension(claims): Extension<auth::Claims>,
     Path(collection): Path<String>,
     AxumQuery(params): AxumQuery<QueryMap<String, String>>,
@@ -995,7 +1004,7 @@ async fn handle_rest_get_collection(
 /// handshake. The actual socket logic runs in `handle_socket`.
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    State((db, _, _max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
+    State((db, _, _max_body_size, _)): State<(engine::Db, auth::UserStore, usize, String)>,
 ) -> impl axum::response::IntoResponse {
     // `on_upgrade` completes the handshake and calls our handler with the socket.
     ws.on_upgrade(|socket| handle_socket(socket, db))

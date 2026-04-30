@@ -65,7 +65,7 @@ pub struct Claims {
     pub exp: u64,
     /// Scopes granted to this token.
     /// Format: "action:collection:document_key"
-    /// Examples: "read:laptops:lp1", "write:users:*", "read:*:*", "admin"
+    /// Examples: "read:laptops:lp1", "write:users:*", "read:*:*", "*:*:*"
     #[serde(default)]
     pub scopes: Vec<String>,
 }
@@ -75,13 +75,13 @@ impl Claims {
     /// specific collection + document key.
     ///
     /// Evaluation order (most-specific first):
-    ///   1. "admin"                    → always grants everything
+    ///   1. "*:*:*"                   → always grants everything (root/admin)
     ///   2. "action:*:*"               → global wildcard for this action
     ///   3. "action:collection:*"      → all docs in this collection
     ///   4. "action:collection:key"    → exact document match
     pub fn has_access(&self, action: &str, collection: &str, doc_key: &str) -> bool {
         self.scopes.iter().any(|scope| {
-            if scope == "admin" {
+            if scope == "*:*:*" {
                 return true;
             }
             let parts: Vec<&str> = scope.splitn(3, ':').collect();
@@ -103,7 +103,7 @@ impl Claims {
 
     /// Returns true if this token carries root/admin privileges.
     pub fn is_admin(&self) -> bool {
-        self.scopes.iter().any(|s| s == "admin")
+        self.scopes.iter().any(|s| s == "*:*:*")
     }
 
     /// Returns the explicit document keys this token may access for a given
@@ -182,7 +182,7 @@ fn get_secret() -> String {
 /// The token expires 24 hours (86400 seconds) from now.
 /// Returns the compact serialization: "header.payload.signature"
 pub fn create_token(username: &str) -> Result<String, jsonwebtoken::errors::Error> {
-    create_scoped_token(username, vec!["admin".to_string()], 86400)
+    create_scoped_token(username, vec!["*:*:*".to_string()], 86400)
 }
 
 /// Create a scoped delegate token with a custom TTL (in seconds).
