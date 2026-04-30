@@ -886,11 +886,30 @@ async fn handle_get(
         return (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body));
     }
 
-    // No keys specified: run the query scoped to only the allowed keys, then return.
-    let mut scoped_payload = payload.clone();
-    scoped_payload["keys"] = json!(allowed_keys);
-    let (code, body) = handlers::process_get(&db, &scoped_payload, max_body_size);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    // No keys specified.
+    // If the token has prefix-wildcard scopes (e.g. "read:laptops:store_A_*"), fetch all
+    // and post-filter. Otherwise pre-scope to the exact allowed keys (fast path).
+    if claims.has_prefix_wildcard("read", collection) {
+        let (code, body) = handlers::process_get(&db, &payload, max_body_size);
+        if code != 200 {
+            return (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body));
+        }
+        let filtered: serde_json::Map<String, Value> = body
+            .as_object()
+            .map(|map| {
+                map.iter()
+                    .filter(|(k, _)| claims.has_access("read", collection, k))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (StatusCode::OK, Json(Value::Object(filtered)))
+    } else {
+        let mut scoped_payload = payload.clone();
+        scoped_payload["keys"] = json!(allowed_keys);
+        let (code, body) = handlers::process_get(&db, &scoped_payload, max_body_size);
+        (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    }
 }
 
 /// POST /delete — delete one key, multiple keys, or an entire collection.

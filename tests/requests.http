@@ -1000,8 +1000,10 @@ Authorization: Bearer {{token}}
 ### Scope format:  action:collection:document_key
 ###   action       →  read | write | delete
 ###   collection   →  exact name, or * for any collection
-###   document_key →  exact key, or * for any document in the collection
-###   *:*:*       →  special scope granting full access to everything
+###   document_key →  exact key
+###                   * for any document in the collection
+###                   prefix* for any key starting with prefix (e.g. store_A_*)
+###   *:*:*        →  special scope granting full access to everything
 ###
 ### SCOPE → ENDPOINT COMPATIBILITY
 ### ─────────────────────────────────────────────────────────────────────────────
@@ -1009,6 +1011,7 @@ Authorization: Bearer {{token}}
 ###  ─────────────────────────────┼──────┼─────────────────────────┼──────┼─────────┼─────────┼──────────
 ###  read:laptops:lp1             │ lp1  │ ✅ lp1 only              │  ❌  │   ❌    │   ❌    │    ❌
 ###  read:laptops:lp1,lp2         │lp1+2 │ ✅ lp1 or lp2           │  ❌  │   ❌    │   ❌    │    ❌
+###  read:laptops:store_A_*       │store_A_*│ ✅ store_A_* keys only │  ❌  │   ❌    │   ❌    │    ❌
 ###  read:laptops:*               │  ✅  │ ✅ any key               │  ❌  │   ❌    │   ❌    │    ❌
 ###  write:laptops:*              │  ❌  │ ❌                       │  ✅  │   ✅    │   ❌    │    ❌
 ###  delete:laptops:*             │  ❌  │ ❌                       │  ❌  │   ❌    │   ✅    │    ❌
@@ -1112,6 +1115,69 @@ Authorization: Bearer {{doc_token}}
   "collection": "laptops",
   "data": {
     "lp1": { "brand": "Hacked", "model": "Nope", "price": 0, "in_stock": false }
+  }
+}
+
+###
+
+
+### ══════════════════════════════════════════════════════════════════════════════
+### LEVEL 1.5 — PREFIX-WILDCARD READ (store/tenant-scoped access)
+### Scopes: read:laptops:store_A_*
+###
+### This token can only read documents whose key starts with "store_A_".
+### It cannot read other documents, write, delete, or query the full collection.
+### POST /get with no keys returns only the matching documents (server-side filtered).
+### ══════════════════════════════════════════════════════════════════════════════
+
+### Mint — prefix-wildcard read token
+POST https://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "store-a-rep",
+  "scopes": ["read:laptops:store_A_*"],
+  "ttl_secs": 3600
+}
+
+###
+
+@prefix_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzdG9yZS1hLXJlcCIsImV4cCI6MTc3NzU1NDI3Niwic2NvcGVzIjpbInJlYWQ6bGFwdG9wczpzdG9yZV9BXyoiXX0.k6rjtf3C0MkBMkm2Yy7QWlUplxRyL0aJRYQMa24WZek
+
+### ✅ Fetch a document whose key starts with store_A_ (allowed)
+GET https://localhost:1538/collections/laptops/docs/store_A_001
+Authorization: Bearer {{prefix_token}}
+
+###
+
+### ❌ Fetch a document outside the prefix → 403 Forbidden
+GET https://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{prefix_token}}
+
+###
+
+### ✅ POST /get — no keys specified: returns only store_A_* documents
+POST https://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{prefix_token}}
+
+{
+  "collection": "laptops",
+  "fields": ["brand", "model", "price"]
+}
+
+###
+
+### ❌ POST /set — write not granted → 403 Forbidden
+POST https://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{prefix_token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "store_A_999": { "brand": "Hacked", "model": "Nope", "price": 0, "in_stock": false }
   }
 }
 

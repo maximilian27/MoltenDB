@@ -92,7 +92,7 @@ impl Claims {
             let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
             let action_match = s_action == action;
             let col_match    = s_col == "*" || s_col == collection;
-            let key_match    = s_key == "*" || s_key == doc_key;
+            let key_match    = key_matches(s_key, doc_key);
             action_match && col_match && key_match
         })
     }
@@ -122,14 +122,48 @@ impl Claims {
             let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
             let action_match = s_action == action;
             let col_match    = s_col == "*" || s_col == collection;
-            // Only return concrete keys — wildcards are handled by has_collection_access.
-            if action_match && col_match && s_key != "*" {
+            // Only return concrete (non-wildcard) keys.
+            // Prefix patterns (e.g. "store_A_*") are handled by has_access post-filtering.
+            if action_match && col_match && !s_key.contains('*') {
                 Some(s_key.to_string())
             } else {
                 None
             }
         }).collect()
     }
+
+    /// Returns true if this token has any prefix-wildcard scope for the given
+    /// action + collection (e.g. "read:laptops:store_A_*").
+    /// Used by handle_get to decide whether post-query filtering is needed.
+    pub fn has_prefix_wildcard(&self, action: &str, collection: &str) -> bool {
+        self.scopes.iter().any(|scope| {
+            let parts: Vec<&str> = scope.splitn(3, ':').collect();
+            if parts.len() != 3 { return false; }
+            let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
+            s_action == action
+                && (s_col == "*" || s_col == collection)
+                && s_key.ends_with('*')
+                && s_key != "*"
+        })
+    }
+}
+
+// ─── Scope key pattern matching ──────────────────────────────────────────────
+
+/// Match a scope key pattern against a concrete document key.
+///
+/// Supported patterns:
+///   `"*"`         → matches any key (full wildcard)
+///   `"store_A_*"` → matches any key starting with `"store_A_"` (prefix wildcard)
+///   `"lp1"`       → exact match only
+fn key_matches(pattern: &str, key: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return key.starts_with(prefix);
+    }
+    pattern == key
 }
 
 /// Request body for POST /auth/delegate
