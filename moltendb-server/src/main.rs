@@ -21,46 +21,33 @@
 // Declare the modules that make up the server.
 // Each `mod X` tells Rust to look for src/X.rs and compile it as part of this crate.
 use moltendb_auth as auth; // JWT authentication, user store, auth middleware
-use moltendb_core::handlers;   // Business logic for each API endpoint (process_set, process_get, etc.)
-mod rate_limit;  // Per-IP sliding-window rate limiter
+mod rate_limit;       // Per-IP sliding-window rate limiter
+mod route_handlers;   // HTTP route handlers (one per API endpoint)
+mod server;           // TLS config loading and graceful shutdown signal
+mod ws;               // WebSocket upgrade handler and per-connection logic
+
+// Re-export handlers into scope for use in the router below.
+use route_handlers::{
+    handle_delegate, handle_delete, handle_get, handle_login, handle_rest_get,
+    handle_rest_get_collection, handle_revoke, handle_set, handle_snapshot, handle_update,
+};
+use ws::ws_handler;
 
 // Core engine — imported from the moltendb-core crate
 use moltendb_core::engine::{self, StorageBackend};
 
-// Path = extracts path parameters from the URL, e.g. /collections/{collection}
-use axum::extract::Path;
-// AxumQuery = extracts URL query string parameters, e.g. ?limit=10&offset=0
-use axum::extract::Query as AxumQuery;
-// QueryMap = a HashMap<String, String> used to hold parsed query string params.
-use std::collections::HashMap as QueryMap;
-// Utf8Bytes = a WebSocket text frame body (UTF-8 encoded bytes).
-use axum::extract::ws::Utf8Bytes;
 use axum::{
-    extract::{
-        // WebSocket types for the /ws endpoint.
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        // State = shared application state injected into every handler.
-        State,
-    },
-    http::{StatusCode, HeaderValue, header},
+    http::{HeaderValue, header},
     // middleware = lets us insert async functions between the router and handlers.
     middleware,
     // routing = defines which HTTP methods map to which handlers.
-    routing::{get, post},
-    // Json = deserializes request bodies and serializes response bodies as JSON.
-    Json,
+    routing::{delete, get, post},
+    Extension,
     Router,
 };
 // RustlsConfig = TLS configuration loaded from PEM certificate and key files.
-use axum_server::tls_rustls::RustlsConfig;
-// futures = async stream utilities used in the WebSocket handler.
-use futures::{sink::SinkExt, stream::StreamExt};
-use serde_json::{json, Value};
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
-// signal = OS signal handling (Ctrl+C, SIGTERM) for graceful shutdown.
-use tokio::signal;
 // RequestBodyLimitLayer = middleware that rejects request bodies exceeding a size limit.
 use tower_http::limit::RequestBodyLimitLayer;
 // SetResponseHeaderLayer = middleware that adds a fixed header to every response.
@@ -440,8 +427,36 @@ async fn main() {
 
     // Initialize the user store with the admin user and password from Config.
     // We've already verified they are present above.
-    let users = auth::UserStore::new(root_user, root_password);
+    let users = auth::UserStore::new(root_user.clone(), root_password);
     info!("👤 User authentication initialized");
+
+    // Derive the revocation store file path from the database path.
+    // e.g. "my_database.log" → "my_database.revocations.json"
+    let revocations_path = {
+        let base = std::path::Path::new(&db_path);
+        let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("my_database");
+        let dir = base.parent().and_then(|p| p.to_str()).filter(|s| !s.is_empty()).unwrap_or(".");
+        format!("{}/{}.revocations.json", dir, stem)
+    };
+
+    // Initialize the token revocation store, loading any previously revoked JTIs
+    // from disk so revocations survive server restarts.
+    let revocation_store = auth::RevocationStore::load_from_file(&revocations_path);
+    info!("🔒 Revocation store loaded from '{}'", revocations_path);
+
+    // Spawn a background task to prune expired revocation entries every 60 seconds
+    // and persist the updated store to disk so the file stays clean.
+    let prune_store = revocation_store.clone();
+    let prune_revocations_path = revocations_path.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            prune_store.prune();
+            prune_store.save_to_file(&prune_revocations_path);
+        }
+    });
+    info!("🔒 Token revocation store initialized");
 
     // Initialize the rate limiter with the configured limits.
     let rate_limiter = rate_limit::RateLimiter::new(rate_limit_requests as usize, rate_limit_window);
@@ -461,7 +476,7 @@ async fn main() {
 
     // The app state is a tuple of (Db, UserStore, max_body_size) injected into every handler via State<...>.
     // Axum clones this for each request — Db and UserStore are cheap to clone (Arc-backed).
-    let app_state = (db.clone(), users, cfg.max_body_size);
+    let app_state = (db.clone(), users, cfg.max_body_size, root_user);
 
     let mut protected_routes = Router::new()
         .route("/set", post(handle_set))           // Insert/upsert documents
@@ -470,17 +485,25 @@ async fn main() {
         .route("/snapshot", post(handle_snapshot))   // Take a snapshot on demand
         .route("/get", post(handle_get))           // Query documents (with WHERE, fields, joins, etc.)
         .route("/collections/{collection}", get(handle_rest_get_collection))       // GET all docs (paginated)
-        .route("/collections/{collection}/docs/{key}", get(handle_rest_get));      // GET single doc
+        .route("/collections/{collection}/docs/{key}", get(handle_rest_get))       // GET single doc
+        .route("/auth/delegate", post(handle_delegate))                            // Mint scoped tokens (admin only)
+        .route("/auth/tokens/{jti}", delete(handle_revoke));                       // Revoke a token by JTI (admin only)
 
     #[cfg(feature = "schema")]
     {
+        use route_handlers::handle_schema;
         protected_routes = protected_routes.route("/schema", post(handle_schema));
     }
 
     let protected_routes = protected_routes
-        // Apply the auth middleware to all routes in this sub-router.
+        // Apply the auth middleware first (innermost layer — runs after extensions are set).
         // `from_fn` wraps an async function as an Axum middleware layer.
-        .layer(middleware::from_fn(auth::auth_middleware));
+        .layer(middleware::from_fn(auth::auth_middleware))
+        // Inject the RevocationStore as an extension — must wrap auth_middleware so it is
+        // available in request.extensions() when auth_middleware executes.
+        .layer(Extension(revocation_store))
+        // Inject the revocations file path so handle_revoke can persist after revoking.
+        .layer(Extension(auth::RevocationsPath(revocations_path)));
 
     // Public routes are accessible without authentication.
     let public_routes = Router::new()
@@ -587,7 +610,7 @@ async fn main() {
     let shutdown_handle = handle.clone();
     tokio::spawn(async move {
         // Block until a shutdown signal is received.
-        shutdown_signal().await;
+        server::shutdown_signal().await;
         info!("⏳ Draining in-flight requests (up to 30s)...");
         // Tell the server to stop accepting new connections and wait up to 30s
         // for all in-flight requests to complete before forcibly closing them.
@@ -595,7 +618,7 @@ async fn main() {
     });
 
     // Load TLS certificates and start the server.
-    match load_tls_config(&cert_path, &key_path).await {
+    match server::load_tls_config(&cert_path, &key_path).await {
         Ok(tls_config) => {
             info!("🚀 MoltenDB running on https://{}:{} (HTTPS + WSS)", addr.ip(), addr.port());
 
@@ -622,326 +645,4 @@ async fn main() {
             std::process::exit(1);
         }
     }
-}
-
-// ─── load_tls_config ──────────────────────────────────────────────────────────
-
-/// Load TLS certificate and private key from PEM files.
-///
-/// Returns a `RustlsConfig` that axum_server uses to terminate TLS connections.
-/// Returns an error if either file doesn't exist or can't be parsed.
-async fn load_tls_config(
-    cert_path: &str,
-    key_path: &str,
-) -> Result<RustlsConfig, Box<dyn std::error::Error>> {
-    let cert = PathBuf::from(cert_path);
-    let key = PathBuf::from(key_path);
-
-    // Check that both files exist before trying to load them.
-    // This gives a clearer error message than the one from rustls.
-    if !cert.exists() {
-        return Err(format!("Certificate file not found: {}", cert_path).into());
-    }
-    if !key.exists() {
-        return Err(format!("Key file not found: {}", key_path).into());
-    }
-
-    // Load and parse the PEM files. This is async because it reads from disk.
-    Ok(RustlsConfig::from_pem_file(cert, key).await?)
-}
-
-// ─── shutdown_signal ──────────────────────────────────────────────────────────
-
-/// Wait for a shutdown signal (Ctrl+C or SIGTERM) and then return.
-///
-/// This function is used by the graceful shutdown task in main().
-/// It resolves as soon as either signal is received.
-///
-/// `tokio::select!` waits for the first of multiple futures to complete.
-/// On Unix systems, both Ctrl+C and SIGTERM are handled.
-/// On Windows, only Ctrl+C is handled (SIGTERM is not a real signal on Windows).
-async fn shutdown_signal() {
-    // Future that resolves when Ctrl+C is pressed.
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    // On Unix: future that resolves when SIGTERM is received (e.g. `kill <pid>`).
-    // `#[cfg(unix)]` means this block only compiles on Unix-like systems.
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    // On non-Unix (Windows): SIGTERM doesn't exist, so use a future that never resolves.
-    // `std::future::pending()` is a future that is always Pending — it never wakes up.
-    // This means on Windows, only Ctrl+C triggers shutdown.
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    // Wait for whichever signal arrives first.
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-
-    info!("🛑 Shutting down gracefully...");
-}
-
-// ─── Route handlers ───────────────────────────────────────────────────────────
-// Each handler is a thin async function that:
-//   1. Extracts the request body (via `Json(payload)`).
-//   2. Calls the corresponding `handlers::process_*` function.
-//   3. Returns the result wrapped in `Json(...)` (serialized as JSON).
-//
-// `State((db, _))` destructures the app state tuple — `db` is the Db handle,
-// `_` discards the UserStore (not needed in most handlers).
-
-/// POST /login — authenticate and return a JWT token.
-///
-/// This is a public endpoint (no auth middleware).
-/// Returns 200 + `{ "token": "..." }` on success.
-/// Returns 401 Unauthorized if credentials are wrong.
-/// Returns 500 Internal Server Error if token creation fails.
-async fn handle_login(
-    State((_, users, _)): State<(engine::Db, auth::UserStore, usize)>,
-    Json(payload): Json<auth::LoginRequest>,
-) -> Result<Json<auth::LoginResponse>, (StatusCode, Json<Value>)> {
-    // Verify the username and password against the in-memory user store.
-    if users.verify_user(&payload.username, &payload.password) {
-        // Credentials valid — create a signed JWT token for this user.
-        match auth::create_token(&payload.username) {
-            Ok(token) => Ok(Json(auth::LoginResponse { token })),
-            Err(_) => Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to create token"})),
-            )),
-        }
-    } else {
-        // Wrong username or password.
-        Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Invalid credentials"})),
-        ))
-    }
-}
-
-/// POST /set — insert or overwrite one or more documents.
-///
-/// Body: `{ "collection": "users", "data": { "u1": { "name": "Alice" } } }`
-async fn handle_set(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
-    Json(payload): Json<Value>,
-) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_set(&db, &payload, max_body_size);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
-}
-
-/// POST /update — merge new fields into existing documents (patch semantics).
-///
-/// Body: `{ "collection": "users", "data": { "u1": { "role": "admin" } } }`
-async fn handle_update(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
-    Json(payload): Json<Value>,
-) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_update(&db, &payload, max_body_size);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
-}
-
-/// POST /get — query documents with optional WHERE, fields, joins, count, offset.
-///
-/// Body: `{ "collection": "users", "where": { "role": "admin" }, "fields": ["name"] }`
-async fn handle_get(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
-    Json(payload): Json<Value>,
-) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_get(&db, &payload, max_body_size);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
-}
-
-/// POST /delete — delete one key, multiple keys, or an entire collection.
-///
-/// Body (single):   `{ "collection": "users", "keys": "u1" }`
-/// Body (batch):    `{ "collection": "users", "keys": ["u1", "u2"] }`
-/// Body (drop all): `{ "collection": "users", "drop": true }`
-async fn handle_delete(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
-    Json(payload): Json<Value>,
-) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_delete(&db, &payload, max_body_size);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
-}
-
-#[cfg(feature = "schema")]
-async fn handle_schema(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
-    Json(payload): Json<Value>,
-) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_schema(&db, &payload, max_body_size);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
-}
-
-/// POST /snapshot — take a snapshot of the database on demand.
-async fn handle_snapshot(
-    State((db, _, _)): State<(engine::Db, auth::UserStore, usize)>,
-) -> (StatusCode, Json<Value>) {
-    let (code, body) = handlers::process_snapshot(&db);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
-}
-
-/// GET /collections/{collection}/docs/{key} — fetch a single document by key.
-///
-/// RESTful convenience endpoint. Equivalent to:
-///   POST /get { "collection": collection, "keys": key }
-async fn handle_rest_get(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
-    Path((collection, key)): Path<(String, String)>,
-) -> (StatusCode, Json<Value>) {
-    let payload = json!({
-        "collection": collection,
-        "keys": key
-    });
-    let (code, body) = handlers::process_get(&db, &payload, max_body_size);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
-}
-
-/// GET /collections/{collection}?limit=N&offset=M — fetch all documents (paginated).
-///
-/// Used by `_syncFromServer()` in analytics-client.js on page load to seed
-/// the local WASM DB with the server's current state.
-///
-/// Query params:
-///   - `limit`  (optional) — maximum number of documents to return.
-///   - `offset` (optional) — number of documents to skip before returning.
-async fn handle_rest_get_collection(
-    State((db, _, max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
-    Path(collection): Path<String>,
-    AxumQuery(params): AxumQuery<QueryMap<String, String>>,
-) -> (StatusCode, Json<Value>) {
-    let mut payload = json!({ "collection": collection });
-    if let Some(limit) = params.get("limit").and_then(|v| v.parse::<u64>().ok()) {
-        payload["count"] = json!(limit);
-    }
-    if let Some(offset) = params.get("offset").and_then(|v| v.parse::<u64>().ok()) {
-        payload["offset"] = json!(offset);
-    }
-    let (code, body) = handlers::process_get(&db, &payload, max_body_size);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
-}
-
-// ─── WebSocket handler ────────────────────────────────────────────────────────
-
-/// GET /ws — upgrade an HTTP connection to a WebSocket connection.
-///
-/// `WebSocketUpgrade` is an Axum extractor that handles the HTTP → WS upgrade
-/// handshake. The actual socket logic runs in `handle_socket`.
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State((db, _, _max_body_size)): State<(engine::Db, auth::UserStore, usize)>,
-) -> impl axum::response::IntoResponse {
-    // `on_upgrade` completes the handshake and calls our handler with the socket.
-    ws.on_upgrade(|socket| handle_socket(socket, db))
-}
-
-/// Handle an authenticated WebSocket connection.
-///
-/// Protocol:
-///   1. The first message MUST be `{ "action": "AUTH", "token": "<jwt>" }`.
-///      If authentication fails the connection is closed immediately.
-///   2. After authentication the client can send `{ "action": "SUBSCRIBE", "collection": "<name>" }`
-///      to register interest in a collection, or `{ "action": "UNSUBSCRIBE", "collection": "<name>" }`
-///      to deregister. Subscriptions are purely advisory — the server pushes change events
-///      regardless of subscription state for now, but the field is reserved for future
-///      per-collection filtering.
-///   3. The server pushes a change event to the client whenever any write (insert, update,
-///      delete, drop) occurs on the database:
-///        `{ "event": "change", "collection": "<name>", "key": "<key>", "new_v": <version> }`
-///      All CRUD operations must be performed via the HTTP endpoints (POST /get, /set, /update,
-///      /delete). WebSockets are exclusively for real-time push notifications.
-///
-/// The socket is split into a sender and receiver, each running in their own task.
-/// This allows sending and receiving to happen concurrently without blocking each other.
-async fn handle_socket(mut socket: WebSocket, db: engine::Db) {
-    // Step 1: Require the first message to be an AUTH message.
-    let is_authenticated = match socket.next().await {
-        Some(Ok(Message::Text(text))) => {
-            if let Ok(payload) = serde_json::from_str::<Value>(&text) {
-                if payload["action"].as_str() == Some("AUTH") {
-                    if let Some(token) = payload["token"].as_str() {
-                        auth::verify_token(token).is_ok()
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        }
-        _ => false,
-    };
-
-    if !is_authenticated {
-        let _ = socket
-            .send(Message::Text(Utf8Bytes::from(
-                r#"{"error":"Authentication required. Send {\"action\":\"AUTH\",\"token\":\"<jwt>\"} as the first message."}"#,
-            )))
-            .await;
-        let _ = socket.close().await;
-        warn!("🔒 Rejected unauthenticated WebSocket connection.");
-        return;
-    }
-
-    // Authentication succeeded — confirm and explain the subscription-only protocol.
-    let _ = socket
-        .send(Message::Text(Utf8Bytes::from(
-            r#"{"status":"authenticated","message":"Connected to MoltenDB real-time feed. Use HTTP endpoints for CRUD. Send {\"action\":\"SUBSCRIBE\",\"collection\":\"<name>\"} to register interest."}"#,
-        )))
-        .await;
-
-    // Step 2: Split the socket into independent sender and receiver halves.
-    let (mut sender, mut receiver) = socket.split();
-
-    // Subscribe to the database broadcast channel.
-    // Every write (insert, update, delete, drop) broadcasts a JSON string here.
-    let mut rx = db.subscribe();
-
-    // Spawn a task that drains incoming client messages.
-    // We only handle SUBSCRIBE / UNSUBSCRIBE — everything else gets a clear error
-    // telling the client to use HTTP instead.
-    let mut recv_task = tokio::spawn(async move {
-        while let Some(Ok(Message::Text(_text))) = receiver.next().await {
-            // Client messages are intentionally ignored in this simplified model.
-            // Future: parse SUBSCRIBE/UNSUBSCRIBE and maintain a per-connection
-            // collection filter set to avoid sending irrelevant events.
-        }
-    });
-
-    // Spawn a task that forwards database change events to the client.
-    let mut send_task = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                // A broadcast event from the database is ready to push.
-                Ok(msg) = rx.recv() => {
-                    if sender.send(Message::Text(Utf8Bytes::from(msg))).await.is_err() {
-                        break; // Client disconnected.
-                    }
-                }
-                // Broadcast channel closed (server shutting down) — exit.
-                else => break,
-            }
-        }
-    });
-
-    // Wait for either task to finish (client disconnect or server shutdown).
-    tokio::select! {
-        _ = (&mut recv_task) => send_task.abort(),
-        _ = (&mut send_task) => recv_task.abort(),
-    };
 }
