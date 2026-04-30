@@ -1,0 +1,29 @@
+// ─── operations/mod.rs ────────────────────────────────────────────────────────
+// This module contains the core CRUD (Create, Read, Update, Delete) operations
+// that mutate or query the in-memory database state.
+//
+// Every function here follows the same pattern:
+//   1. Mutate the in-memory DashMap (instant, in RAM).
+//   2. Write a LogEntry to the storage backend (persisted to disk/OPFS).
+//   3. Broadcast a change event over the Tokio broadcast channel (for WebSocket
+//      subscribers who want real-time notifications).
+//
+// These functions are called by the Db methods in engine/mod.rs, which in turn
+// are called by the HTTP handlers in handlers.rs and the WASM worker in worker.rs.
+//
+// Why separate operations from mod.rs?
+//   mod.rs defines the Db struct and its public API. operations contains the
+//   actual implementation logic. This keeps mod.rs clean and makes the
+//   individual operations easy to find and reason about.
+// ─────────────────────────────────────────────────────────────────────────────
+
+mod common;
+mod read;
+mod insert;
+mod update;
+mod delete;
+
+pub use read::{get, get_all, get_batch};
+pub use insert::insert_batch;
+pub use update::update;
+pub use delete::{delete, delete_batch, delete_collection};
