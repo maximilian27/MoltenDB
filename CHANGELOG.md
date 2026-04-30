@@ -1,25 +1,25 @@
-## [0.8.0](https://github.com/maximilian27/MoltenDB/compare/v0.7.0...v0.8.0) (2026-04-30)
-* **auth:** persistent token revocation — revoked JTIs are written to `<db_name>.revocations.json` immediately on `DELETE /auth/tokens/:jti` and reloaded on server startup so revocations survive restarts; background prune task also saves the file every 60 seconds (`RevocationsPath` newtype, `save_to_file`, `load_from_file` in `moltendb-auth`)
-### Features
-* **auth:** added `scopes` field to JWT `Claims` with `has_access(action, collection, key)`, `has_collection_access`, and `is_admin` helpers for document-level permission checks
-* **auth:** added `create_scoped_token(username, scopes, ttl_secs)` — root `create_token` now delegates to this internally with the `admin` scope and a 24-hour TTL
-* **auth:** added `POST /auth/delegate` endpoint (admin-only) that mints narrow-scoped JWTs for clients; accepts `client_id`, `scopes`, and optional `ttl_secs`; validates scope format before signing
-* **auth:** added `DelegateRequest` and `DelegateResponse` types to `moltendb-auth` for easy integration with any external auth system
-* **auth:** enforced scope checks on every protected endpoint — `POST /set` and `POST /update` require `write:{collection}:*`; `POST /get` and `GET /collections/{col}` require `read:{collection}:*`; `GET /collections/{col}/docs/{key}` requires `read:{collection}:{key}` (document-level tokens now work correctly); `POST /delete` requires `delete:{collection}:*`; `POST /snapshot` requires `admin`
-* **auth:** `moltendb-auth` crate is now explicitly excluded from WASM compilation — `#![cfg(not(target_arch = "wasm32"))]` gates the entire crate and all dependencies are under `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`
-* **auth:** added `jti` (UUID) field to `Claims` — every token minted by `create_scoped_token` now carries a unique JWT ID for revocation tracking; legacy tokens without `jti` deserialize safely via `#[serde(default)]`
-* **auth:** added `RevocationStore` — an in-memory `DashMap<String, Instant>` of revoked JTIs; entries are pruned automatically by a background task every 60 seconds once the token's original TTL has passed
-* **auth:** added `DELETE /auth/tokens/:jti` endpoint (admin-only) — accepts `{ "exp": <unix_timestamp> }` to set the prune deadline; revoked tokens are immediately rejected by `auth_middleware` with `401 Unauthorized`
-* **auth:** `auth_middleware` now checks the `RevocationStore` extension on every request — revoked tokens are rejected even if their signature and expiry are still valid
+# [0.8.0](https://github.com/maximilian27/MoltenDB/compare/v0.7.0...v0.8.0) (2026-04-30)
 
-### Breaking Changes
-* **auth:** existing JWTs issued before this release have no `scopes` field — they will deserialize with `scopes: []` (via `#[serde(default)]`) and will be rejected by all scope-aware endpoints; re-issue tokens after upgrading
-* **auth:** all write/delete/query endpoints now return `403 Forbidden` if the token lacks the required scope — previously they were scope-blind and returned data regardless of token permissions
 
-## [0.7.0](https://github.com/maximilian27/MoltenDB/compare/v0.6.3...v0.7.0) (2026-04-28)
+### Bug Fixes
+
+* wasm error ([44478a9](https://github.com/maximilian27/MoltenDB/commit/44478a9f6060303b6091f46f1ceb36bfd1eeafe0))
+
+
 ### Features
-* **backups:** added script-based post-backup hook with automatic PowerShell ExecutionPolicy bypass on Windows
-* **backups:** switched from arbitrary shell commands to dedicated script execution for improved security
+
+* revoke token ([a96fb32](https://github.com/maximilian27/MoltenDB/commit/a96fb320aa735a9c0a1437fb56375e3cef18e59c))
+* role based privileges ([8b535af](https://github.com/maximilian27/MoltenDB/commit/8b535afbfe5781803f2903977739fa6dcde7dd7d))
+
+
+
+# [0.7.0](https://github.com/maximilian27/MoltenDB/compare/v0.6.3...v0.7.0) (2026-04-28)
+
+
+### Bug Fixes
+
+* changelog merge conflict ([9f8a3fc](https://github.com/maximilian27/MoltenDB/commit/9f8a3fce25f1eb8e4fe3ab8cdc1effaaa8b3911e))
+
 
 ### Features
 
@@ -72,16 +72,6 @@
 * configurable hot threshold ([f1a38fb](https://github.com/maximilian27/MoltenDB/commit/f1a38fb432ebb49f3942fd9000fd5b8a0c15714e))
 * expose hotThreshold, encryptionKey, writeMode, rateLimitRequests, rateLimitWindow and maxBodySize to web packages ([7450274](https://github.com/maximilian27/MoltenDB/commit/7450274769b6c9370ddfab9a999d1244be8647e4))
 * oom protection ([db4cc96](https://github.com/maximilian27/MoltenDB/commit/db4cc96971c3378a6a656520b994d061adf33862))
-
-
-
-# [0.3.0-beta.4](https://github.com/maximilian27/MoltenDB/compare/v0.2.0-beta.4...v0.3.0-beta.4) (2026-04-17)
-
-
-### Bug Fixes
-
-* missing import ([6c47a3b](https://github.com/maximilian27/MoltenDB/commit/6c47a3b702f73b297c850c7cda1b2952744c0d8e))
-* missing import ([2b3e531](https://github.com/maximilian27/MoltenDB/commit/2b3e53171ad173ca6448affd800c796b480fa7b1))
 
 
 
