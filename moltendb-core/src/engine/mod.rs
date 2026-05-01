@@ -122,6 +122,7 @@ pub struct Db {
     pub tiered_mode: bool,
 
     /// Timestamp of when this Db instance was opened, used for uptime calculation.
+    #[cfg(not(target_arch = "wasm32"))]
     pub started_at: std::time::Instant,
 }
 
@@ -233,6 +234,7 @@ impl Db {
             schemas,
             post_backup_script,
             tiered_mode,
+            #[cfg(not(target_arch = "wasm32"))]
             started_at: std::time::Instant::now(),
         })
     }
@@ -305,7 +307,6 @@ impl Db {
             schemas,
             post_backup_script,
             tiered_mode: config.tiered_mode,
-            started_at: std::time::Instant::now(),
         })
     }
 
@@ -438,6 +439,17 @@ impl Db {
         )
     }
     
+    /// Wipe all in-memory state — documents, indexes, and query heatmap.
+    /// Used by the WASM layer when a browser tab unloads in in-memory mode,
+    /// so that any tab refresh clears the shared RAM store for all tabs.
+    pub fn clear_all(&self) {
+        self.state.clear();
+        self.indexes.clear();
+        self.query_heatmap.clear();
+        #[cfg(feature = "schema")]
+        self.schemas.clear();
+    }
+
     /// Compact the log file — rewrite it to contain only the current state.
     ///
     /// This removes all dead entries (superseded INSERTs, DELETE tombstones)

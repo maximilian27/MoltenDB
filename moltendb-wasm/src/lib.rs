@@ -173,6 +173,7 @@ impl WorkerDb {
     ///   - "delete"   → delete documents or drop:   { collection, keys: ... } or { drop: true }
     ///   - "compact"  → compact the OPFS log file
     ///   - "get_size" → return current OPFS file size in bytes
+    ///   - "clear"    → wipe all in-memory state (in-memory mode only)
     ///
     /// Returns a JsValue result on success, or a JsValue error string on failure.
     #[wasm_bindgen]
@@ -214,6 +215,8 @@ impl WorkerDb {
             "compact"  => self.handle_compact(),
             // Return the current OPFS file size in bytes.
             "get_size" => self.handle_get_size(),
+            // Wipe all in-memory state (used when a browser tab unloads in inMemory mode).
+            "clear"    => self.handle_clear(),
             // Unknown action — return an error instead of panicking.
             _ => Err(JsValue::from_str(&format!("Unknown action: {}", action))),
         }?;
@@ -236,6 +239,14 @@ impl WorkerDb {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         Ok(serde_wasm_bindgen::to_value(&json!({ "size": size }))?)
+    }
+
+    /// Wipe all in-memory state — documents, indexes, and query heatmap.
+    /// Called when any browser tab unloads while running in in-memory mode,
+    /// ensuring the shared RAM store is cleared for all remaining tabs.
+    fn handle_clear(&self) -> Result<JsValue, JsValue> {
+        self.db.clear_all();
+        Ok(serde_wasm_bindgen::to_value(&json!({"status": "cleared"}))?)
     }
 
     /// Compact the OPFS log file.
