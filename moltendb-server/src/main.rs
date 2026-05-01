@@ -48,6 +48,7 @@ use axum::{
 // RustlsConfig = TLS configuration loaded from PEM certificate and key files.
 use std::net::SocketAddr;
 use std::sync::Arc;
+use axum::extract::DefaultBodyLimit;
 // RequestBodyLimitLayer = middleware that rejects request bodies exceeding a size limit.
 use tower_http::limit::RequestBodyLimitLayer;
 // SetResponseHeaderLayer = middleware that adds a fixed header to every response.
@@ -590,6 +591,9 @@ async fn main() {
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("default-src 'self'; script-src 'self'; object-src 'none'"),
         ))
+        // Disable Axum's built-in 2 MB default body limit so that
+        // RequestBodyLimitLayer below is the sole enforcer.
+        .layer(DefaultBodyLimit::disable())
         // Request body size limit — rejects bodies larger than the configured limit at the HTTP layer
         // before the application code even sees them, preventing memory exhaustion.
         .layer(RequestBodyLimitLayer::new(cfg.max_body_size))
