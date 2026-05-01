@@ -660,8 +660,17 @@ wss://localhost:1538/ws
 
 **Protocol:**
 
-1. The first message **must** be `{ "action": "AUTH", "token": "<jwt>" }`. The connection is closed immediately if authentication fails.
-2. After authentication, the server pushes a change event on every write:
+1. The first message **must** be `{ "action": "AUTH", "token": "<jwt>" }`. The connection is closed immediately if authentication fails, with one of the following structured error codes:
+
+   | `error` code | Cause |
+   |---|---|
+   | `invalid_message` | First frame was not valid JSON or not a text frame |
+   | `invalid_action` | First message was not an `AUTH` action |
+   | `missing_token` | `AUTH` frame had no `token` field |
+   | `invalid_token` | JWT verification failed (expired, wrong secret, malformed) |
+   | `token_revoked` | Token has been revoked via `DELETE /auth/tokens/:jti` |
+
+2. After authentication, the server pushes a change event on every write **for collections the token's scopes allow `read` access to**. Events for other collections are silently filtered out. Admin tokens (`*:*:*`) receive all events.
    ```json
    { "event": "change", "collection": "laptops", "key": "lp2", "new_v": 3 }
    ```
@@ -674,6 +683,8 @@ wss://localhost:1538/ws
    - `new_v` is the document's `_v` after the write, or `null` for deletes/drops
    - `key: "*"` means the entire collection was dropped
 3. Clients fetch fresh data via HTTP after receiving a notification.
+
+**Revocation on open connections:** If a token is revoked while a WebSocket connection is already open, the server will detect this within 30 seconds, send a `token_revoked` error, and close the connection.
 
 See `src/ws_test/websocket-test.html` for an interactive tester.
 

@@ -1070,8 +1070,8 @@ Authorization: Bearer {{token}}
 ###
 
 ### Paste the token and its jti (from jwt.io or the response) here:
-@ws_revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3cy1yZXZva2UtdGVzdCIsImV4cCI6MTc3NzY2MTU3Mywic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6IjBhNGU4NzEyLWNjMWQtNGI1OC1hMGU0LWYzYjFjNWJmMWRhYyJ9.XvgnxQ5pzAEv4ws32odvB4wxnFZRaK3_5OgGDaJ678w
-@ws_revoke_jti   = 0a4e8712-cc1d-4b58-a0e4-f3b1c5bf1dac
+@ws_revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3cy1yZXZva2UtdGVzdCIsImV4cCI6MTc3NzY2MTkxNywic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6ImIyMjYwNGQ1LWE1YTYtNDkzYi05MzRhLTlhYjViMTZhOTUyNyJ9.ghTt4VigeW7FI8OIuX8glnPOro7aElPdnOMo6sxHXr0
+@ws_revoke_jti   = b22604d5-a5a6-493b-934a-9ab5b16a9527
 
 ### C2. ✅ Confirm the token works before revocation
 GET http://localhost:1538/collections/laptops/docs/lp1

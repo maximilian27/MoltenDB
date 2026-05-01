@@ -1,3 +1,11 @@
+# [0.10.0] (2026-05-01)
+### Features
+* WebSocket JWT scope filtering — each connected client only receives change events for collections their token's scopes grant `read` access to; admin tokens (`*:*:*`) receive all events
+* WebSocket revocation enforcement at connection time — revoked tokens are rejected immediately with a structured error (`{"error":"token_revoked", "detail":"..."}`) before the connection is accepted
+* WebSocket revocation re-check on open connections — a background ticker checks every 30 seconds whether the authenticated token has been revoked since the connection was opened; if so, the client receives a `token_revoked` error and the connection is closed
+* Distinct WebSocket auth error codes — each failure mode now returns a specific `error` code: `invalid_message`, `invalid_action`, `missing_token`, `invalid_token`, `token_revoked`
+* Broadcast lag observability — `RecvError::Lagged` events are now logged as warnings instead of silently dropping the connection
+
 # [0.9.0] (2026-04-30)
 
 

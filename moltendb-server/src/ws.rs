@@ -14,6 +14,7 @@ use axum::{
     Extension,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
+use tokio::time::{interval, Duration};
 use tracing::warn;
 
 // ─── WebSocket handler ────────────────────────────────────────────────────────
@@ -137,9 +138,22 @@ async fn handle_socket(mut socket: WebSocket, db: engine::Db, revocation_store: 
     // Spawn a task that forwards database change events to the client.
     // Only events for collections the token is authorised to read are forwarded.
     // Admin tokens (scope "*:*:*") receive all events.
+    // Every 30 s the task re-checks the revocation store so that revoking a token
+    // terminates any already-open connection within that window.
     let mut send_task = tokio::spawn(async move {
+        let mut revocation_check = interval(Duration::from_secs(30));
+        revocation_check.tick().await; // consume the immediate first tick
         loop {
             tokio::select! {
+                _ = revocation_check.tick() => {
+                    if revocation_store.is_revoked(&claims.jti) {
+                        warn!("🔒 Closing WebSocket: token JTI '{}' was revoked after connection was established.", claims.jti);
+                        let _ = sender.send(Message::Text(Utf8Bytes::from(
+                            r#"{"error":"token_revoked","detail":"Your token has been revoked. The connection is being closed."}"#,
+                        ))).await;
+                        break;
+                    }
+                }
                 recv_result = rx.recv() => {
                     match recv_result {
                         Ok(msg) => {
