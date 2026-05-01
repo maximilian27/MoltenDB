@@ -23,6 +23,8 @@ pub struct DbConfig {
     pub encryption_key: Option<[u8; 32]>,
     /// Optional script to run after backups
     pub post_backup_script: Option<String>,
+    /// Run entirely in RAM — no disk I/O, all data lost on exit
+    pub in_memory: bool,
 }
 
 impl Default for DbConfig {
@@ -38,6 +40,7 @@ impl Default for DbConfig {
             max_keys_per_request: 1000,
             encryption_key: None,
             post_backup_script: None,
+            in_memory: false,
         }
     }
 }

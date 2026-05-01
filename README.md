@@ -92,6 +92,7 @@ let user = db.get("users", "u1");
 | `MOLTENDB_ROOT_USER` | **No** | **Yes** | Core doesn't handle API authentication. |
 | `MOLTENDB_JWT_SECRET` | **No** | **Yes** | Server-side token security. |
 | `MOLTENDB_SYNC_MODE` | No (passed via `DbConfig`) | **Yes** | Controls the core engine's storage behavior. |
+| `MOLTENDB_IN_MEMORY` | No (passed via `DbConfig`) | **Yes** | Bypasses the WAL; all data lives in RAM only. |
 
 > [!TIP]
 > **When using the standalone `moltendb-server` binary, all flags and environment variables are available.** The server acts as a thin wrapper that combines the engine, authentication, and networking layers. The distinction only matters if you are using `moltendb-core` as a library in your own Rust project.
@@ -795,6 +796,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--post-backup-script` | `MOLTENDB_POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup |
 | `--rate-limit-requests` | `MOLTENDB_RATE_LIMIT_REQS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Window size in seconds |
+| `--in-memory` | `MOLTENDB_IN_MEMORY` | `false` | Run entirely in RAM — no WAL, no disk I/O. All data is lost on exit. Ideal for ephemeral caches and CI environments |
 | `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` |
 | `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
@@ -824,6 +826,11 @@ Single append-only log file. All writes go to `my_database.log`. Compaction rewr
 
 ### Tiered (`--storage-mode tiered`)
 Recommended for large datasets (100k+ documents). Active writes go to a hot log (kept < 50 MB). When the hot log exceeds the threshold, all current entries are promoted to a cold log (`my_database.cold.log`) which is read via memory-mapped file on startup — the OS pages in only the data actually needed.
+
+### In-Memory (`--in-memory`)
+Bypasses the WAL and all disk I/O entirely. All data lives exclusively in the RAM `DashMap` — no log file is created or written. This turns MoltenDB into a pure in-process cache with the full query engine (filters, joins, indexes, pub/sub) on top. Compaction and revocation-file persistence are automatically skipped. A startup warning is printed to make the ephemeral nature explicit.
+
+> ⚠️ **All data is lost when the server exits.** Use this mode for ephemeral caches, session stores, CI test environments, or any scenario where durability is not required.
 
 ### Write modes
 - **async** (default): writes are buffered in memory and flushed every 50 ms. Up to 50 ms of data loss on a hard crash. Highest throughput.

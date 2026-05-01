@@ -150,6 +150,7 @@ impl Db {
         let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
         let post_backup_script = config.post_backup_script;
+        let in_memory = config.in_memory;
 
         // Create the shared in-memory state containers.
         let state = Arc::new(DashMap::new());
@@ -162,12 +163,18 @@ impl Db {
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
-        // Ensure the parent directory exists.
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            std::fs::create_dir_all(parent)?;
+        // Ensure the parent directory exists (skipped in in-memory mode — no file is created).
+        if !in_memory {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
         }
 
         // Choose the base storage backend based on the configured mode.
+        //
+        //   in_memory = true    → InMemoryStorage: all data lives in the DashMap only.
+        //                         No disk I/O at all. Data is lost on exit.
+        //                         Ideal for ephemeral caches and CI environments.
         //
         //   tiered_mode = true  → TieredStorage: hot log (async writes) + cold log
         //                         (mmap reads). Best for large datasets. The cold log
@@ -178,7 +185,9 @@ impl Db {
         //
         //   default             → AsyncDiskStorage: writes buffered in memory, flushed
         //                         every 50ms. Highest throughput, up to 50ms data loss.
-        let base_storage: Arc<dyn StorageBackend> = if tiered_mode {
+        let base_storage: Arc<dyn StorageBackend> = if in_memory {
+            Arc::new(storage::InMemoryStorage)
+        } else if tiered_mode {
             Arc::new(storage::TieredStorage::new(path)?)
         } else if sync_mode {
             Arc::new(storage::SyncDiskStorage::new(path)?)
@@ -187,10 +196,15 @@ impl Db {
         };
 
         // Optionally wrap the base storage in EncryptedStorage.
+        // Encryption is skipped in in-memory mode — there is nothing to encrypt on disk.
         // EncryptedStorage is transparent — it encrypts on write and decrypts
         // on read, so the rest of the engine doesn't know encryption is happening.
-        let storage: Arc<dyn StorageBackend> = if let Some(key) = encryption_key {
-            Arc::new(storage::EncryptedStorage::new(base_storage, &key))
+        let storage: Arc<dyn StorageBackend> = if !in_memory {
+            if let Some(key) = encryption_key {
+                Arc::new(storage::EncryptedStorage::new(base_storage, &key))
+            } else {
+                base_storage
+            }
         } else {
             base_storage
         };

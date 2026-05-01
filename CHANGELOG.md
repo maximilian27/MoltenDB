@@ -6,6 +6,7 @@
 * Distinct WebSocket auth error codes — each failure mode now returns a specific `error` code: `invalid_message`, `invalid_action`, `missing_token`, `invalid_token`, `token_revoked`
 * Broadcast lag observability — `RecvError::Lagged` events are now logged as warnings instead of silently dropping the connection
 * Configurable bind host — new `--host` CLI flag and `MOLTENDB_HOST` env var (default `0.0.0.0`); supports any IPv4/IPv6 address, enabling Docker and multi-interface deployments without recompilation
+* In-memory mode — new `--in-memory` CLI flag and `MOLTENDB_IN_MEMORY` env var; bypasses the WAL and all disk I/O entirely, turning MoltenDB into a pure RAM cache (Redis-like); compaction and revocation-file persistence are automatically skipped; a startup warning is emitted to make the ephemeral nature explicit
 
 # [0.9.0] (2026-04-30)
 

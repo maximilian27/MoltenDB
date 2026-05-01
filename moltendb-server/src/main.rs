@@ -163,6 +163,12 @@ struct Config {
     /// Higher values use more RAM but provide sub-microsecond speeds for more documents.
     #[arg(long, default_value = "50000", env = "MOLTENDB_HOT_THRESHOLD")]
     hot_threshold: usize,
+
+    /// Run entirely in RAM — bypass the WAL and disk storage completely.
+    /// All data is lost when the server exits. Ideal for ephemeral caches,
+    /// CI environments, or Redis-like use cases. [env: MOLTENDB_IN_MEMORY]
+    #[arg(long, default_value = "false", env = "MOLTENDB_IN_MEMORY")]
+    in_memory: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -355,6 +361,7 @@ async fn main() {
     //            the cold data that's actually needed, reducing startup RAM usage.
     // anything else = single-file mode (AsyncDiskStorage or SyncDiskStorage).
     let is_tiered_mode = cfg.storage_mode.to_lowercase() == "tiered";
+    let is_in_memory = cfg.in_memory;
 
     // ── Encryption key setup ──────────────────────────────────────────────────
     //
@@ -400,6 +407,7 @@ async fn main() {
         max_keys_per_request: cfg.max_keys_per_request,
         encryption_key: encryption_key.cloned(),
         post_backup_script: cfg.post_backup_script,
+        in_memory: cfg.in_memory,
     };
 
     let db = match engine::Db::open(db_config) {
@@ -410,9 +418,14 @@ async fn main() {
         }
     };
 
-    // Spawn a background task for log compaction.
+    if is_in_memory {
+        warn!("⚡ IN-MEMORY MODE — all data is stored in RAM only. Nothing will be persisted to disk. Data will be lost on exit.");
+    }
+
+    // Spawn a background task for log compaction (skipped in --in-memory mode — there is no log to compact).
     // `db.clone()` is cheap — Db is Arc-backed, so this just increments a counter.
     // `tokio::spawn` runs the async block concurrently with the main server task.
+    if !is_in_memory {
     let bg_db = db.clone();
     let bg_db_path = db_path.clone();
     tokio::spawn(async move {
@@ -444,6 +457,7 @@ async fn main() {
             }
         }
     });
+    } // end if !is_in_memory (compaction task)
 
     // Initialize the user store with the admin user and password from Config.
     // We've already verified they are present above.
@@ -466,6 +480,7 @@ async fn main() {
 
     // Spawn a background task to prune expired revocation entries every 60 seconds
     // and persist the updated store to disk so the file stays clean.
+    // In --in-memory mode we still prune in RAM but skip the disk save.
     let prune_store = revocation_store.clone();
     let prune_revocations_path = revocations_path.clone();
     tokio::spawn(async move {
@@ -473,7 +488,9 @@ async fn main() {
         loop {
             interval.tick().await;
             prune_store.prune();
-            prune_store.save_to_file(&prune_revocations_path);
+            if !is_in_memory {
+                prune_store.save_to_file(&prune_revocations_path);
+            }
         }
     });
     info!("🔒 Token revocation store initialized");
