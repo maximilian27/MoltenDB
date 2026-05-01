@@ -117,6 +117,12 @@ pub struct Db {
     /// Optional shell command to execute after a successful backup.
     /// Supports the {SNAPSHOT_PATH} placeholder.
     pub post_backup_script: Option<String>,
+
+    /// Whether tiered (hot+cold) storage mode is active.
+    pub tiered_mode: bool,
+
+    /// Timestamp of when this Db instance was opened, used for uptime calculation.
+    pub started_at: std::time::Instant,
 }
 
 impl Db {
@@ -212,6 +218,8 @@ impl Db {
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,
+            tiered_mode,
+            started_at: std::time::Instant::now(),
         })
     }
 
@@ -271,7 +279,14 @@ impl Db {
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,
+            tiered_mode: config.tiered_mode,
+            started_at: std::time::Instant::now(),
         })
+    }
+
+    /// Returns the total number of hot (in-memory) keys across all collections.
+    pub fn hot_keys_count(&self) -> usize {
+        self.state.iter().map(|c| c.value().len()).sum()
     }
 
     /// Create a new broadcast receiver for real-time change notifications.

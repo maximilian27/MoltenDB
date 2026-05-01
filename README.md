@@ -696,7 +696,7 @@ Response:
 
 ### Metrics
 
-Admin-only endpoint. Returns a snapshot of the host's RAM and disk usage, plus the memory consumed by the MoltenDB process itself.
+Admin-only endpoint. Returns a structured snapshot of server uptime, process memory, host hardware, and live database internals. All values are raw integers — formatting is left to the client (MoltenDB Studio / dashboards).
 
 ```http
 GET /system/metrics
@@ -706,22 +706,44 @@ Authorization: Bearer <admin-token>
 Response:
 ```json
 {
-  "ram": {
-    "total_bytes": 17179869184,
-    "used_bytes": 9663676416,
-    "free_bytes": 7516192768,
-    "process_bytes": 52428800
+  "uptime_seconds": 14200,
+  "process": {
+    "memory_used_bytes": 20017152
   },
-  "disks": [
-    {
-      "mount": "/",
-      "total_bytes": 512110190592,
-      "available_bytes": 214748364800,
-      "used_bytes": 297361825792
-    }
-  ]
+  "host": {
+    "memory": {
+      "total_bytes": 34070192128,
+      "used_bytes": 17026154496,
+      "free_bytes": 17044037632
+    },
+    "disks": [
+      {
+        "mount": "C:\\",
+        "total_bytes": 1022645760000,
+        "used_bytes": 616695963648,
+        "available_bytes": 405949796352
+      }
+    ]
+  },
+  "database": {
+    "hot_keys_count": 14523,
+    "hot_tier_threshold": 50000,
+    "wal_size_bytes": 8450122,
+    "storage_mode": "tiered"
+  }
 }
 ```
+
+| Field | Description |
+|---|---|
+| `uptime_seconds` | Seconds since the server started |
+| `process.memory_used_bytes` | RAM consumed by the MoltenDB process |
+| `host.memory` | Total / used / free RAM on the host machine |
+| `host.disks` | Per-disk total, used, and available bytes |
+| `database.hot_keys_count` | Number of documents currently held in the hot (RAM) tier |
+| `database.hot_tier_threshold` | Configured max documents per collection before cold eviction |
+| `database.wal_size_bytes` | Current size of the WAL / storage file on disk |
+| `database.storage_mode` | `standard` or `tiered` |
 
 Returns `403 Forbidden` if the token does not have admin (`*:*:*`) scope.
 
