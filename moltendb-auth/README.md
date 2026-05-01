@@ -165,7 +165,7 @@ The root token never leaves your backend. Clients only ever receive a narrowly s
 
 ---
 
-## Current limitations (v0.8.0)
+## Current limitations (v0.9.0)
 
 - **Single root user** — one root user is configured at startup via `--root-user` / `--root-password`. There is no HTTP endpoint to create or delete users at runtime. Your own user table handles that.
 - **No token refresh** — tokens expire after the configured TTL. Re-mint via `/auth/delegate` when needed.
