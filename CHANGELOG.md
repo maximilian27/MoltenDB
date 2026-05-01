@@ -1,3 +1,14 @@
+# [0.9.0] (2026-04-30)
+
+
+### Features
+
+* configurable max keys per request for core and wasm engines (`max_keys_per_request` in `DbConfig`, `--max-keys-per-request` CLI flag / `MOLTENDB_MAX_KEYS_PER_REQUEST` env var, `maxKeysPerRequest` param in `MoltenDb.create()`)
+* dev mode: `--dev-mode` flag / `MOLTENDB_DEV_MODE` env var — runs the server over plain HTTP/WS instead of HTTPS/WSS, ignoring `--cert` and `--key` (for local development only)
+* telemetry endpoints: `GET /system/health` (public liveness check) and `GET /system/metrics` (admin-only snapshot of uptime, process memory, host RAM/disk, and database internals — `hot_keys_count`, `hot_tier_threshold`, `wal_size_bytes`, `storage_mode`)
+
+
+
 # [0.8.0](https://github.com/maximilian27/MoltenDB/compare/v0.7.0...v0.8.0) (2026-04-30)
 
 

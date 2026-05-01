@@ -1,4 +1,4 @@
-name: Changelog & Tag Pipeline
+name: Auto Tag Pipeline
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - master
 
 jobs:
-  changelog-and-tag:
+  auto-tag:
     if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
 
@@ -29,25 +29,11 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "Detected version: $VERSION"
 
-      - name: Generate Changelog
-        uses: TriPSs/conventional-changelog-action@v5
-        with:
-          github-token: ${{ secrets.REPO_PAT }}
-          output-file: "CHANGELOG.md"
-          skip-version-file: "true"
-          skip-tag: "true"
-          skip-bump: "true"
-          skip-ci: "false"
-          fallback-version: ${{ env.VERSION }}
-          git-message: "chore(release): update changelog v${{ env.VERSION }}"
-          git-user-name: "github-actions[bot]"
-          git-user-email: "41898282+github-actions[bot]@users.noreply.github.com"
-
       - name: Check if Tag Already Exists
         id: check_tag
         run: |
           git pull origin master
-          
+
           if git rev-parse "v${{ env.VERSION }}" >/dev/null 2>&1; then
             echo "Tag v${{ env.VERSION }} already exists. Skipping tag creation."
             echo "EXISTS=true" >> $GITHUB_ENV
@@ -61,7 +47,6 @@ jobs:
         run: |
           TAG_NAME="v${{ env.VERSION }}"
           echo "Cutting new release tag: $TAG_NAME"
-          
-          # Changed to an ANNOTATED tag (-a) so the author is explicitly recorded
+
           git tag -a $TAG_NAME -m "Release $TAG_NAME"
           git push origin $TAG_NAME

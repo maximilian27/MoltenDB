@@ -1,0 +1,340 @@
+﻿### ─── STEP 1: Login ──────────────────────────────────────────────────────────
+### Run this first. Copy the token from the response and paste it into the
+### @token variable below (or replace the Bearer values in each request).
+
+POST http://localhost:1538/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin123"
+}
+
+### Paste the token from the response here:
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NzcwNzEzMSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImZjY2I2M2ZlLTgzODUtNDk1MS05N2QwLTc4NGRhZGU5NWQ3MSJ9.JQyy9RK7DT3lZ58zzERQPDxQS40R-iBlQuqQY3KtYTw
+
+
+### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
+### Run §1, §2, §3 in order to populate the three collections used by all
+### subsequent examples. The laptops collection references memory and display
+### collections via foreign keys — this enables the join examples below.
+
+### §1. Seed the `memory` collection
+### Each document describes a RAM module. Laptops reference these via `memory_id`.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "memory",
+  "data": {
+    "mem1": { "capacity_gb": 8,  "type": "LPDDR5", "speed_mhz": 4266, "upgradeable": false },
+    "mem2": { "capacity_gb": 16, "type": "LPDDR5", "speed_mhz": 4266, "upgradeable": false },
+    "mem3": { "capacity_gb": 32, "type": "DDR5",   "speed_mhz": 5600, "upgradeable": true  },
+    "mem4": { "capacity_gb": 64, "type": "DDR5",   "speed_mhz": 5600, "upgradeable": true  },
+    "mem5": { "capacity_gb": 36, "type": "Unified", "speed_mhz": 6400, "upgradeable": false }
+  }
+}
+
+### §2. Seed the `display` collection
+### Each document describes a screen. Laptops reference these via `display_id`.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "display",
+  "data": {
+    "dsp1": { "size_inch": 13.3, "resolution": "2560x1600", "panel": "IPS",  "refresh_hz": 60,  "touchscreen": false, "hdr": false },
+    "dsp2": { "size_inch": 14.0, "resolution": "2880x1800", "panel": "OLED", "refresh_hz": 90,  "touchscreen": false, "hdr": true  },
+    "dsp3": { "size_inch": 15.6, "resolution": "1920x1080", "panel": "IPS",  "refresh_hz": 144, "touchscreen": false, "hdr": false },
+    "dsp4": { "size_inch": 16.2, "resolution": "3456x2234", "panel": "Mini-LED", "refresh_hz": 120, "touchscreen": false, "hdr": true },
+    "dsp5": { "size_inch": 14.0, "resolution": "2560x1600", "panel": "IPS",  "refresh_hz": 165, "touchscreen": true,  "hdr": false }
+  }
+}
+
+### §3. Seed the `laptops` collection
+### Each laptop has nested specs AND foreign keys to memory + display collections.
+### This single collection is used for all query examples below.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp1": {
+      "brand": "Lenovo",
+      "model": "ThinkPad X1 Carbon",
+      "price": 1499,
+      "in_stock": true,
+      "memory_id": "mem2",
+      "display_id": "dsp2",
+      "tags": ["business", "ultrabook", "lightweight"],
+      "specs": {
+        "cpu": { "brand": "Intel", "cores": 12, "ghz": 3.5 },
+        "battery_wh": 57,
+        "weight_kg": 1.12
+      }
+    },
+    "lp2": {
+      "brand": "Apple",
+      "model": "MacBook Pro 16",
+      "price": 3499,
+      "in_stock": true,
+      "memory_id": "mem5",
+      "display_id": "dsp4",
+      "tags": ["creative", "professional", "macos"],
+      "specs": {
+        "cpu": { "brand": "Apple", "cores": 12, "ghz": 4.05 },
+        "battery_wh": 100,
+        "weight_kg": 2.15
+      }
+    },
+    "lp3": {
+      "brand": "Asus",
+      "model": "ROG Zephyrus G14",
+      "price": 1699,
+      "in_stock": true,
+      "memory_id": "mem3",
+      "display_id": "dsp5",
+      "tags": ["gaming", "amd", "portable"],
+      "specs": {
+        "cpu": { "brand": "AMD", "cores": 8, "ghz": 4.9 },
+        "battery_wh": 76,
+        "weight_kg": 1.65
+      }
+    },
+    "lp4": {
+      "brand": "Dell",
+      "model": "XPS 15",
+      "price": 1899,
+      "in_stock": false,
+      "memory_id": "mem3",
+      "display_id": "dsp4",
+      "tags": ["creative", "windows", "4k"],
+      "specs": {
+        "cpu": { "brand": "Intel", "cores": 14, "ghz": 3.8 },
+        "battery_wh": 86,
+        "weight_kg": 1.86
+      }
+    },
+    "lp5": {
+      "brand": "Razer",
+      "model": "Blade 15",
+      "price": 2499,
+      "in_stock": true,
+      "memory_id": "mem4",
+      "display_id": "dsp3",
+      "tags": ["gaming", "windows", "rgb"],
+      "specs": {
+        "cpu": { "brand": "Intel", "cores": 14, "ghz": 4.1 },
+        "battery_wh": 80,
+        "weight_kg": 2.01
+      }
+    },
+    "lp6": {
+      "brand": "Framework",
+      "model": "Laptop 13",
+      "price": 849,
+      "in_stock": true,
+      "memory_id": "mem1",
+      "display_id": "dsp1",
+      "tags": ["modular", "linux", "budget"],
+      "specs": {
+        "cpu": { "brand": "Intel", "cores": 10, "ghz": 3.3 },
+        "battery_wh": 55,
+        "weight_kg": 1.3
+      }
+    }
+  }
+}
+
+
+### ─── UPDATE & DELETE ─────────────────────────────────────────────────────────
+
+### §37. Update a single laptop — mark Dell XPS 15 back in stock and drop price
+POST http://localhost:1538/update
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp2": { "in_stock": true, "price": 3456 }
+  }
+}
+
+### §38. Update multiple laptops in one call
+POST http://localhost:1538/update
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp1": { "price": 1399 },
+    "lp6": { "price": 799 }
+  }
+}
+
+### §39. Delete a single laptop by key
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "keys": "lp6"
+}
+
+### §40. Delete multiple laptops in one call
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "keys": ["lp4", "lp5"]
+}
+
+### §41. Drop an entire collection
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "drop": true
+}
+
+### ─── RESTFUL GET ─────────────────────────────────────────────────────────────
+
+### §42. GET single laptop via REST endpoint
+GET http://localhost:1538/collections/laptops/docs/lp2
+Authorization: Bearer {{token}}
+
+### §43. GET all laptops via REST (paginated — first 3)
+GET http://localhost:1538/collections/laptops?limit=3&offset=0
+Authorization: Bearer {{token}}
+
+### §44. GET all laptops via REST (paginated — next 3)
+GET http://localhost:1538/collections/laptops?limit=3&offset=3
+Authorization: Bearer {{token}}
+
+### ─── VERSIONING ──────────────────────────────────────────────────────────────
+
+### §45. Read lp2 — note the _v, createdAt, modifiedAt fields added by the engine
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "keys": "lp2"
+}
+
+### §46. Conflict test — send _v:1 when server already has _v:2 → write is skipped
+### Run §39 first (which bumps lp4 to _v:2), then run this — it should be ignored.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp4": { "brand": "Dell", "model": "XPS 15 STALE", "price": 999, "_v": 1 }
+  }
+}
+
+### ─── EXTENDS (inline reference embedding at insert time) ────────────────────
+### The "extend" key embeds data from another collection directly into the
+### stored document at insert time. The referenced document is fetched once
+### and stored as a snapshot — no join needed on reads.
+### Format: "extend": { "<alias>": "<collection>.<key>", ... }
+### The "extend" key is removed from the final stored document.
+
+### §50. Insert lp7 with embedded memory and display via extend
+### ram  → fetches mem4 from the memory collection and embeds it
+### screen → fetches dsp3 from the display collection and embeds it
+### After this insert, lp7 contains the full mem4 and dsp3 documents inline.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp7": {
+      "brand": "MSI",
+      "model": "Titan GT77",
+      "price": 3299,
+      "in_stock": true,
+      "tags": ["gaming", "desktop-replacement", "windows"],
+      "specs": {
+        "cpu": { "brand": "Intel", "cores": 16, "ghz": 5.0 },
+        "battery_wh": 99,
+        "weight_kg": 3.3
+      },
+      "extends": {
+        "ram":    "memory.mem4",
+        "screen": "display.dsp3"
+      }
+    }
+  }
+}
+
+### §51. Read lp7 back — ram and screen are now full embedded documents, not pointers
+### Expected: ram = { capacity_gb: 64, type: "DDR5", ... }, screen = { size_inch: 15.6, ... }
+### The "extend" key is gone — it was consumed at insert time.
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "keys": "lp7"
+}
+
+### §52. extends with auto-generated key (array format)
+### The extend block works identically when data is an array (UUIDv7 keys auto-assigned).
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": [
+    {
+      "brand": "HP",
+      "model": "Spectre x360",
+      "price": 1599,
+      "in_stock": true,
+      "extends": {
+        "ram": "memory.mem2"
+      }
+    }
+  ]
+}
+
+### §53. extends with a missing reference — insert still succeeds, alias simply not added
+### "memory.mem99" does not exist — the insert completes without error,
+### and the stored document will have brand/model/price but no "ram" field.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp8": {
+      "brand": "Lenovo",
+      "model": "Legion 5",
+      "price": 1199,
+      "extend": {
+        "ram": "memory.mem99"
+      }
+    }
+  }
+}
+

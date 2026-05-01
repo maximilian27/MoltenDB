@@ -66,7 +66,7 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "0.8.0"
+moltendb-core = "0.9.0"
 ```
 
 ```rust
@@ -249,7 +249,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "0.8.0"
+moltendb-core = "0.9.0"
 ```
 
 ### Download Pre-built Binaries
@@ -679,6 +679,76 @@ See `src/ws_test/websocket-test.html` for an interactive tester.
 
 ---
 
+## Telemetry
+
+### Health check
+
+Public endpoint — no authentication required. Use it as a liveness probe in Docker / Kubernetes.
+
+```http
+GET /system/health
+```
+
+Response:
+```json
+{ "status": "ok", "message": "MoltenDB is running" }
+```
+
+### Metrics
+
+Admin-only endpoint. Returns a structured snapshot of server uptime, process memory, host hardware, and live database internals. All values are raw integers — formatting is left to the client (MoltenDB Studio / dashboards).
+
+```http
+GET /system/metrics
+Authorization: Bearer <admin-token>
+```
+
+Response:
+```json
+{
+  "uptime_seconds": 14200,
+  "process": {
+    "memory_used_bytes": 20017152
+  },
+  "host": {
+    "memory": {
+      "total_bytes": 34070192128,
+      "used_bytes": 17026154496,
+      "free_bytes": 17044037632
+    },
+    "disks": [
+      {
+        "mount": "C:\\",
+        "total_bytes": 1022645760000,
+        "used_bytes": 616695963648,
+        "available_bytes": 405949796352
+      }
+    ]
+  },
+  "database": {
+    "hot_keys_count": 14523,
+    "hot_tier_threshold": 50000,
+    "wal_size_bytes": 8450122,
+    "storage_mode": "tiered"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `uptime_seconds` | Seconds since the server started |
+| `process.memory_used_bytes` | RAM consumed by the MoltenDB process |
+| `host.memory` | Total / used / free RAM on the host machine |
+| `host.disks` | Per-disk total, used, and available bytes |
+| `database.hot_keys_count` | Number of documents currently held in the hot (RAM) tier |
+| `database.hot_tier_threshold` | Configured max documents per collection before cold eviction |
+| `database.wal_size_bytes` | Current size of the WAL / storage file on disk |
+| `database.storage_mode` | `standard` or `tiered` |
+
+Returns `403 Forbidden` if the token does not have admin (`*:*:*`) scope.
+
+---
+
 ## Configuration Reference
 
 All options can be set via CLI flags or environment variables. CLI flags take priority.
@@ -697,6 +767,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--root-password` | `MOLTENDB_ROOT_PASSWORD` | **REQUIRED** 🔥 | Root password |
 | `--root-user` | `MOLTENDB_ROOT_USER` | **REQUIRED** 🔥 | Root username |
 | `--debug` | `MOLTENDB_DEBUG` | `false` | Enable verbose debug logging |
+| `--dev-mode` | `MOLTENDB_DEV_MODE` | `false` | Run over plain HTTP/WS instead of HTTPS/WSS. Ignores `--cert` and `--key`. ⚠️ NEVER use in production |
 
 ### Database Engine Flags (passed to `moltendb-core`)
 
@@ -707,6 +778,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--encryption-key` | `MOLTENDB_ENCRYPTION_KEY` | built-in default ⚠️ | At-rest encryption password |
 | `--hot-threshold` | `MOLTENDB_HOT_THRESHOLD` | `50000` | Max documents per collection to keep in RAM |
 | `--max-body-size` | `MOLTENDB_MAX_BODY_SIZE` | `10485760` | Maximum request body size in bytes |
+| `--max-keys-per-request` | `MOLTENDB_MAX_KEYS_PER_REQUEST` | `1000` | Maximum number of keys allowed per JSON request |
 | `--post-backup-script` | `MOLTENDB_POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup |
 | `--rate-limit-requests` | `MOLTENDB_RATE_LIMIT_REQS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Window size in seconds |

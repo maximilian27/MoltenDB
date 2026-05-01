@@ -9,13 +9,13 @@ use crate::engine;
 /// fields that are not mentioned in the update.
 ///
 /// Format: { "collection": "users", "data": { "u1": { "role": "admin" } } }
-pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u16, Value) {
+pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     // Only "collection" and "data" are valid for an update/patch request.
     const UPDATE_ALLOWED: &[&str] = &["collection", "data"];
     if let Err(e) = validation::validate_allowed_properties(payload, UPDATE_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
-    if let Err(e) = validation::validate_request(payload, max_body_size) {
+    if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
 

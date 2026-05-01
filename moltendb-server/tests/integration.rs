@@ -35,7 +35,7 @@ fn seed(db: &engine::Db) {
             "mem4": { "capacity_gb": 64, "type": "DDR5",   "speed_mhz": 5600, "upgradeable": true  },
             "mem5": { "capacity_gb": 36, "type": "Unified","speed_mhz": 6400, "upgradeable": false }
         }
-    }), TEST_MAX_BODY);
+    }), TEST_MAX_BODY, TEST_MAX_KEYS);
     handlers::process_set(db, &json!({
         "collection": "display",
         "data": {
@@ -45,7 +45,7 @@ fn seed(db: &engine::Db) {
             "dsp4": { "size_inch": 16.2, "resolution": "3456x2234", "panel": "Mini-LED", "refresh_hz": 120, "hdr": true  },
             "dsp5": { "size_inch": 14.0, "resolution": "2560x1600", "panel": "IPS",      "refresh_hz": 165, "hdr": false }
         }
-    }), TEST_MAX_BODY);
+    }), TEST_MAX_BODY, TEST_MAX_KEYS);
     handlers::process_set(db, &json!({
         "collection": "laptops",
         "data": {
@@ -56,25 +56,26 @@ fn seed(db: &engine::Db) {
             "lp5": { "brand": "Razer",     "model": "Blade 15",            "price": 2499, "in_stock": true,  "memory_id": "mem4", "display_id": "dsp3", "tags": ["gaming","windows","rgb"],            "specs": { "cpu": { "brand": "Intel", "cores": 14, "ghz": 4.1 }, "battery_wh": 80,  "weight_kg": 2.01 } },
             "lp6": { "brand": "Framework", "model": "Laptop 13",           "price": 849,  "in_stock": true,  "memory_id": "mem1", "display_id": "dsp1", "tags": ["modular","linux","budget"],          "specs": { "cpu": { "brand": "Intel", "cores": 10, "ghz": 3.3 }, "battery_wh": 55,  "weight_kg": 1.3  } }
         }
-    }), TEST_MAX_BODY);
+    }), TEST_MAX_BODY, TEST_MAX_KEYS);
 }
 
 const TEST_MAX_BODY: usize = 10 * 1024 * 1024;
+const TEST_MAX_KEYS: usize = 1000;
 
 fn body(r: (u16, Value)) -> Value { r.1 }
 fn status(r: &(u16, Value)) -> u16 { r.0 }
 
 fn get(db: &engine::Db, payload: serde_json::Value) -> Value {
-    handlers::process_get(db, &payload, TEST_MAX_BODY).1
+    handlers::process_get(db, &payload, TEST_MAX_BODY, TEST_MAX_KEYS).1
 }
 fn set(db: &engine::Db, payload: serde_json::Value) -> Value {
-    handlers::process_set(db, &payload, TEST_MAX_BODY).1
+    handlers::process_set(db, &payload, TEST_MAX_BODY, TEST_MAX_KEYS).1
 }
 fn update(db: &engine::Db, payload: serde_json::Value) -> Value {
-    handlers::process_update(db, &payload, TEST_MAX_BODY).1
+    handlers::process_update(db, &payload, TEST_MAX_BODY, TEST_MAX_KEYS).1
 }
 fn delete(db: &engine::Db, payload: serde_json::Value) -> Value {
-    handlers::process_delete(db, &payload, TEST_MAX_BODY).1
+    handlers::process_delete(db, &payload, TEST_MAX_BODY, TEST_MAX_KEYS).1
 }
 fn snapshot(db: &engine::Db) -> Value {
     handlers::process_snapshot(db).1
@@ -816,12 +817,12 @@ fn test_concurrent_reads_during_writes() {
             handlers::process_set(&db_w, &json!({
                 "collection": "rw",
                 "data": { format!("k{}", i): { "v": i } }
-            }), TEST_MAX_BODY);
+            }), TEST_MAX_BODY, TEST_MAX_KEYS);
         }
     });
     let reader = thread::spawn(move || {
         for _ in 0..100 {
-            let _ = handlers::process_get(&db_r, &json!({ "collection": "rw" }), TEST_MAX_BODY);
+            let _ = handlers::process_get(&db_r, &json!({ "collection": "rw" }), TEST_MAX_BODY, TEST_MAX_KEYS);
         }
     });
     writer.join().unwrap();
@@ -940,7 +941,7 @@ fn test_pitr_recovery() {
     handlers::process_set(&db, &json!({
         "collection": "pitr",
         "data": { "k1": { "v": 1 } }
-    }), TEST_MAX_BODY);
+    }), TEST_MAX_BODY, TEST_MAX_KEYS);
     
     // Capture time after first insert
     let t1 = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
@@ -950,7 +951,7 @@ fn test_pitr_recovery() {
     handlers::process_set(&db, &json!({
         "collection": "pitr",
         "data": { "k2": { "v": 2 } }
-    }), TEST_MAX_BODY);
+    }), TEST_MAX_BODY, TEST_MAX_KEYS);
     
     // 3. Perform recovery to t1
     let recovered_entries = engine::Db::recover_to(&*db.storage, Some(t1), None).unwrap();
@@ -967,6 +968,70 @@ fn test_pitr_recovery() {
     assert_eq!(recovered_entries_seq.len(), 1);
     assert_eq!(recovered_entries_seq[0].key, "k1");
     
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.snapshot.bin", path));
+}
+
+// ─── §max_keys_per_request: 1 million keys ───────────────────────────────────
+
+/// Verify that writing 1 000 000 keys in a single request succeeds when
+/// `max_keys_per_request` is set high enough, and that the correct count is
+/// returned. Also spot-checks two stored entries to confirm data integrity.
+#[test]
+fn test_one_million_keys_write() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = format!("target/test_1m_keys_{}.log", id);
+    let _ = std::fs::remove_file(&path);
+
+    let db = engine::Db::open(engine::DbConfig {
+        path: path.clone(),
+        sync_mode: true,
+        hot_threshold: 2_000_000,
+        max_body_size: 512 * 1024 * 1024, // 512 MB
+        max_keys_per_request: 1_000_000,
+        ..Default::default()
+    }).expect("open db");
+
+    // Build a map of 1 000 000 key-value pairs programmatically.
+    let mut data = serde_json::Map::with_capacity(1_000_000);
+    for i in 0..1_000_000usize {
+        data.insert(
+            format!("key_{:07}", i),
+            json!({ "index": i, "value": i * 2 }),
+        );
+    }
+    let payload = json!({
+        "collection": "million",
+        "data": data
+    });
+
+    let (status_code, response) =
+        handlers::process_set(&db, &payload, 512 * 1024 * 1024, 1_000_000);
+
+    assert_eq!(status_code, 200, "expected HTTP 200, got {}: {:?}", status_code, response);
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["count"], 1_000_000);
+
+    // Spot-check first key.
+    let spot = handlers::process_get(
+        &db,
+        &json!({ "collection": "million", "keys": "key_0000000" }),
+        512 * 1024 * 1024,
+        1_000_000,
+    );
+    assert_eq!(spot.0, 200);
+    assert_eq!(spot.1["index"], 0);
+
+    // Spot-check last key.
+    let spot2 = handlers::process_get(
+        &db,
+        &json!({ "collection": "million", "keys": "key_0999999" }),
+        512 * 1024 * 1024,
+        1_000_000,
+    );
+    assert_eq!(spot2.0, 200);
+    assert_eq!(spot2.1["index"], 999_999);
+
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.snapshot.bin", path));
 }

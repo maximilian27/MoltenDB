@@ -16,6 +16,8 @@ pub struct DbConfig {
     pub rate_limit_window: u64,
     /// Max request body size in bytes
     pub max_body_size: usize,
+    /// Max keys allowed per request (default: 1000)
+    pub max_keys_per_request: usize,
     /// Optional encryption key (32 bytes)
     #[serde(skip)]
     pub encryption_key: Option<[u8; 32]>,
@@ -33,6 +35,7 @@ impl Default for DbConfig {
             rate_limit_requests: 1000,
             rate_limit_window: 60,
             max_body_size: 10 * 1024 * 1024,
+            max_keys_per_request: 1000,
             encryption_key: None,
             post_backup_script: None,
         }

@@ -10,9 +10,9 @@ use crate::{engine, analytics};
 ///
 /// Note: this function exists but is not currently wired to an HTTP route.
 /// It is available for future use or direct calls from other handlers.
-pub fn process_analytics(db: &engine::Db, payload: &Value, max_body_size: usize) -> Value {
+pub fn process_analytics(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> Value {
     // Validate the request structure first.
-    if let Err(e) = validation::validate_request(payload, max_body_size) {
+    if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
         return json!({ "error": e.to_string() });
     }
 

@@ -106,6 +106,9 @@ pub struct Db {
     /// Maximum request body size in bytes.
     pub max_body_size: usize,
 
+    /// Maximum keys allowed per request.
+    pub max_keys_per_request: usize,
+
     /// Registered JSON schemas per collection.
     /// Key: collection name → Value: (Original JSON, Compiled Validator).
     #[cfg(feature = "schema")]
@@ -114,6 +117,12 @@ pub struct Db {
     /// Optional shell command to execute after a successful backup.
     /// Supports the {SNAPSHOT_PATH} placeholder.
     pub post_backup_script: Option<String>,
+
+    /// Whether tiered (hot+cold) storage mode is active.
+    pub tiered_mode: bool,
+
+    /// Timestamp of when this Db instance was opened, used for uptime calculation.
+    pub started_at: std::time::Instant,
 }
 
 impl Db {
@@ -138,6 +147,7 @@ impl Db {
         let rate_limit_requests = config.rate_limit_requests;
         let rate_limit_window = config.rate_limit_window;
         let max_body_size = config.max_body_size;
+        let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
         let post_backup_script = config.post_backup_script;
 
@@ -204,9 +214,12 @@ impl Db {
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
+            max_keys_per_request,
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,
+            tiered_mode,
+            started_at: std::time::Instant::now(),
         })
     }
 
@@ -221,6 +234,7 @@ impl Db {
         let rate_limit_requests = config.rate_limit_requests;
         let rate_limit_window = config.rate_limit_window;
         let max_body_size = config.max_body_size;
+        let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
         let sync_mode = config.sync_mode;
         let post_backup_script = config.post_backup_script;
@@ -261,10 +275,18 @@ impl Db {
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
+            max_keys_per_request,
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,
+            tiered_mode: config.tiered_mode,
+            started_at: std::time::Instant::now(),
         })
+    }
+
+    /// Returns the total number of hot (in-memory) keys across all collections.
+    pub fn hot_keys_count(&self) -> usize {
+        self.state.iter().map(|c| c.value().len()).sum()
     }
 
     /// Create a new broadcast receiver for real-time change notifications.

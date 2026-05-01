@@ -38,7 +38,7 @@ fn test_query_filtering() {
         "collection": "products",
         "where": {"type": "fruit"}
     });
-    let (_, results) = process_get(&db, &payload, 1024 * 1024);
+    let (_, results) = process_get(&db, &payload, 1024 * 1024, 1000);
     assert_eq!(results.as_array().unwrap().len(), 2);
     
     // Numeric comparison
@@ -46,7 +46,7 @@ fn test_query_filtering() {
         "collection": "products",
         "where": {"price": {"$gt": 1.1}}
     });
-    let (_, results) = process_get(&db, &payload, 1024 * 1024);
+    let (_, results) = process_get(&db, &payload, 1024 * 1024, 1000);
     assert_eq!(results.as_array().unwrap().len(), 2); // apple (1.5) and broccoli (1.2)
 }
 
@@ -61,7 +61,7 @@ fn test_query_sorting_pagination() {
         "count": 2
     });
     
-    let (_, results) = process_get(&db, &payload, 1024 * 1024);
+    let (_, results) = process_get(&db, &payload, 1024 * 1024, 1000);
     let arr = results.as_array().unwrap();
     assert_eq!(arr.len(), 2);
     assert_eq!(arr[0]["name"], "carrot"); // 0.8
@@ -78,7 +78,7 @@ fn test_query_projection() {
         "fields": ["name"]
     });
     
-    let (_, results) = process_get(&db, &payload, 1024 * 1024);
+    let (_, results) = process_get(&db, &payload, 1024 * 1024, 1000);
     let arr = results.as_array().unwrap();
     let first = &arr[0];
     assert!(first.get("name").is_some());
