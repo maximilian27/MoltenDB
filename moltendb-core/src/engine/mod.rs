@@ -155,7 +155,7 @@ impl Db {
         let state = Arc::new(DashMap::new());
         // Create the broadcast channel with a buffer of 100 messages.
         // If the buffer fills up (no subscribers reading), old messages are dropped.
-        let (tx, _rx) = broadcast::channel(100);
+        let (tx, _rx) = broadcast::channel(1000);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
         let query_heatmap = Arc::new(Default::default());
@@ -240,7 +240,7 @@ impl Db {
         let post_backup_script = config.post_backup_script;
 
         let state = Arc::new(DashMap::new());
-        let (tx, _rx) = broadcast::channel(100);
+        let (tx, _rx) = broadcast::channel(1000);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
         let query_heatmap = Arc::new(Default::default());

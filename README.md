@@ -87,6 +87,7 @@ let user = db.get("users", "u1");
 | Feature | Available in `moltendb-core`? | Available in `moltendb-server`? | Why? |
 | :--- | :--- | :--- | :--- |
 | `MOLTENDB_DB_PATH` | No (passed via `DbConfig`) | **Yes** | Engine needs a path; server provides the CLI flag. |
+| `MOLTENDB_HOST` | **No** | **Yes** | Core has no network listener or HTTP logic. |
 | `MOLTENDB_PORT` | **No** | **Yes** | Core has no network listener or HTTP logic. |
 | `MOLTENDB_ROOT_USER` | **No** | **Yes** | Core doesn't handle API authentication. |
 | `MOLTENDB_JWT_SECRET` | **No** | **Yes** | Server-side token security. |
@@ -771,6 +772,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | Flag | Env var | Default | Description |
 |---|---|---|---|
 | `--cert` | `MOLTENDB_TLS_CERT` | `cert.pem` | TLS certificate |
+| `--host` | `MOLTENDB_HOST` | `0.0.0.0` | IP address to bind to. Use `127.0.0.1` for localhost-only, `0.0.0.0` for all interfaces (required for Docker) |
 | `--cors-origin` | `MOLTENDB_CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s) |
 | `--jwt-secret` | `MOLTENDB_JWT_SECRET` | **REQUIRED** 🔥 | JWT signing secret |
 | `--key` | `MOLTENDB_TLS_KEY` | `key.pem` | TLS private key |

@@ -5,6 +5,7 @@
 * WebSocket revocation re-check on open connections — a background ticker checks every 30 seconds whether the authenticated token has been revoked since the connection was opened; if so, the client receives a `token_revoked` error and the connection is closed
 * Distinct WebSocket auth error codes — each failure mode now returns a specific `error` code: `invalid_message`, `invalid_action`, `missing_token`, `invalid_token`, `token_revoked`
 * Broadcast lag observability — `RecvError::Lagged` events are now logged as warnings instead of silently dropping the connection
+* Configurable bind host — new `--host` CLI flag and `MOLTENDB_HOST` env var (default `0.0.0.0`); supports any IPv4/IPv6 address, enabling Docker and multi-interface deployments without recompilation
 
 # [0.9.0] (2026-04-30)
 

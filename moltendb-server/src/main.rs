@@ -71,6 +71,12 @@ struct Config {
     #[command(subcommand)]
     command: Option<Commands>,
 
+    /// Host address to bind to [env: MOLTENDB_HOST]
+    /// Use "0.0.0.0" to accept connections from any interface (required for Docker).
+    /// Use "127.0.0.1" to restrict to localhost only.
+    #[arg(long, default_value = "0.0.0.0", env = "MOLTENDB_HOST")]
+    host: String,
+
     /// Port to listen on [env: MOLTENDB_PORT]
     #[arg(long, default_value = "1538", env = "MOLTENDB_PORT")]
     port: u16,
@@ -323,6 +329,8 @@ async fn main() {
     // These are used throughout the rest of main() to configure the server.
     // `cfg.db_path` — path to the database log file on disk (e.g. "my_database.log").
     let db_path = cfg.db_path;
+    // `cfg.host` — IP address to bind to (e.g. "0.0.0.0" or "127.0.0.1").
+    let host = cfg.host;
     // `cfg.port` — TCP port to listen on (e.g. 1538). Already parsed to u16 by clap.
     let port = cfg.port;
     // `cfg.cert` / `cfg.key` — paths to the TLS certificate and private key PEM files.
@@ -614,8 +622,14 @@ async fn main() {
         // Inject the app state (db + users) into all handlers.
         .with_state(app_state);
 
-    // Bind to all network interfaces (0.0.0.0) on the configured port.
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    // Parse the configured host + port into a SocketAddr.
+    // Supports both IPv4 ("0.0.0.0", "127.0.0.1") and IPv6 ("::" , "::1").
+    let addr: SocketAddr = format!("{}:{}", host, port)
+        .parse()
+        .unwrap_or_else(|e| {
+            error!("🔥 Invalid --host value '{}': {}", host, e);
+            std::process::exit(1);
+        });
 
     if cfg.dev_mode {
         warn!("⚠️  DEV MODE ENABLED — server is running over plain HTTP/WS. NEVER use in production!");
