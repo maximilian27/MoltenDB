@@ -141,6 +141,11 @@ struct Config {
     #[arg(long, default_value = "false", env = "MOLTENDB_DEBUG")]
     debug: bool,
 
+    /// Run over plain HTTP and WS instead of HTTPS/WSS. Ignores --cert and --key.
+    /// ⚠️  NEVER use in production — all traffic is unencrypted. [env: MOLTENDB_DEV_MODE]
+    #[arg(long, default_value = "false", env = "MOLTENDB_DEV_MODE")]
+    dev_mode: bool,
+
     /// Path to a script file to execute after a successful backup.
     /// The script will be called with the absolute path of the snapshot as its first argument. [env: MOLTENDB_POST_BACKUP_SCRIPT]
     #[arg(long, env = "MOLTENDB_POST_BACKUP_SCRIPT")]
@@ -607,7 +612,11 @@ async fn main() {
     // Bind to all network interfaces (0.0.0.0) on the configured port.
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-    info!("🔒 TLS enabled - loading certificates...");
+    if cfg.dev_mode {
+        warn!("⚠️  DEV MODE ENABLED — server is running over plain HTTP/WS. NEVER use in production!");
+    } else {
+        info!("🔒 TLS enabled - loading certificates...");
+    }
     info!("🛡️  Security headers enabled");
 
     // Create an axum_server Handle — used to trigger graceful shutdown from outside
@@ -626,32 +635,42 @@ async fn main() {
         shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
     });
 
-    // Load TLS certificates and start the server.
-    match server::load_tls_config(&cert_path, &key_path).await {
-        Ok(tls_config) => {
-            info!("🚀 MoltenDB running on https://{}:{} (HTTPS + WSS)", addr.ip(), addr.port());
+    if cfg.dev_mode {
+        // Dev mode: plain HTTP/WS — no TLS.
+        info!("🚀 MoltenDB running on http://{}:{} (HTTP + WS) [DEV MODE]", addr.ip(), addr.port());
+        axum_server::bind(addr)
+            .handle(handle)
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+    } else {
+        // Production mode: HTTPS/WSS via rustls.
+        match server::load_tls_config(&cert_path, &key_path).await {
+            Ok(tls_config) => {
+                info!("🚀 MoltenDB running on https://{}:{} (HTTPS + WSS)", addr.ip(), addr.port());
 
-            // `.serve(...).await` blocks here until graceful shutdown completes.
-            // `into_make_service()` converts the Router into a service factory
-            // that creates a new service instance for each incoming connection.
-            axum_server::bind_rustls(addr, tls_config)
-                .handle(handle)
-                .serve(app.into_make_service())
-                .await
-                .unwrap();
-
-            // At this point all in-flight requests have finished (or timed out).
-            // Dropping `db` closes the MPSC channel to the AsyncDiskStorage background
-            // thread, which causes it to flush its BufWriter and exit cleanly.
-            // This guarantees no buffered writes are lost on graceful shutdown.
-            drop(db);
-            info!("✅ Database flushed. Shutdown complete.");
-        }
-        Err(e) => {
-            error!("🔥 Failed to load TLS certificates: {}", e);
-            error!("   Cert path: {}", cert_path);
-            error!("   Key path: {}", key_path);
-            std::process::exit(1);
+                // `.serve(...).await` blocks here until graceful shutdown completes.
+                // `into_make_service()` converts the Router into a service factory
+                // that creates a new service instance for each incoming connection.
+                axum_server::bind_rustls(addr, tls_config)
+                    .handle(handle)
+                    .serve(app.into_make_service())
+                    .await
+                    .unwrap();
+            }
+            Err(e) => {
+                error!("🔥 Failed to load TLS certificates: {}", e);
+                error!("   Cert path: {}", cert_path);
+                error!("   Key path: {}", key_path);
+                std::process::exit(1);
+            }
         }
     }
+
+    // At this point all in-flight requests have finished (or timed out).
+    // Dropping `db` closes the MPSC channel to the AsyncDiskStorage background
+    // thread, which causes it to flush its BufWriter and exit cleanly.
+    // This guarantees no buffered writes are lost on graceful shutdown.
+    drop(db);
+    info!("✅ Database flushed. Shutdown complete.");
 }

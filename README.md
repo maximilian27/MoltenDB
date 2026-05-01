@@ -697,6 +697,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--root-password` | `MOLTENDB_ROOT_PASSWORD` | **REQUIRED** 🔥 | Root password |
 | `--root-user` | `MOLTENDB_ROOT_USER` | **REQUIRED** 🔥 | Root username |
 | `--debug` | `MOLTENDB_DEBUG` | `false` | Enable verbose debug logging |
+| `--dev-mode` | `MOLTENDB_DEV_MODE` | `false` | Run over plain HTTP/WS instead of HTTPS/WSS. Ignores `--cert` and `--key`. ⚠️ NEVER use in production |
 
 ### Database Engine Flags (passed to `moltendb-core`)
 

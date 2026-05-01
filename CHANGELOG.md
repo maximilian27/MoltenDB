@@ -4,6 +4,7 @@
 ### Features
 
 * configurable max keys per request for core and wasm engines (`max_keys_per_request` in `DbConfig`, `--max-keys-per-request` CLI flag / `MOLTENDB_MAX_KEYS_PER_REQUEST` env var, `maxKeysPerRequest` param in `MoltenDb.create()`)
+* dev mode: `--dev-mode` flag / `MOLTENDB_DEV_MODE` env var — runs the server over plain HTTP/WS instead of HTTPS/WSS, ignoring `--cert` and `--key` (for local development only)
 
 
 
