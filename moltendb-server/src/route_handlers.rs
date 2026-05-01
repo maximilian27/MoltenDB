@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use sysinfo::{Disks, System};
 use serde_json::{json, Value};
 use std::collections::HashMap as QueryMap;
 // Duration and Instant are used in handle_revoke to compute the prune deadline.
@@ -383,4 +384,59 @@ pub async fn handle_revoke(
         StatusCode::OK,
         Json(json!({"revoked": jti, "message": "Token has been revoked successfully"})),
     )
+}
+
+
+/// GET /system/health — public liveness check.
+///
+/// Returns 200 OK with a simple JSON payload. No authentication required.
+pub async fn handle_health() -> (StatusCode, Json<Value>) {
+    (StatusCode::OK, Json(json!({ "status": "ok", "message": "MoltenDB is running" })))
+}
+
+/// GET /system/metrics — resource usage snapshot.
+///
+/// Admin-only. Returns current RAM and disk usage for the MoltenDB process and host.
+pub async fn handle_metrics(
+    Extension(claims): Extension<auth::Claims>,
+) -> (StatusCode, Json<Value>) {
+    if !claims.is_admin() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Admin access required" })),
+        );
+    }
+
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let total_ram = sys.total_memory();
+    let used_ram = sys.used_memory();
+    let free_ram = sys.free_memory();
+
+    let pid = sysinfo::get_current_pid().ok();
+    let process_ram = pid
+        .and_then(|p| sys.process(p))
+        .map(|p| p.memory())
+        .unwrap_or(0);
+
+    let disks = Disks::new_with_refreshed_list();
+    let disk_info: Vec<Value> = disks.iter().map(|d| {
+        json!({
+            "mount": d.mount_point().to_string_lossy(),
+            "total_bytes": d.total_space(),
+            "available_bytes": d.available_space(),
+            "used_bytes": d.total_space().saturating_sub(d.available_space()),
+        })
+    }).collect();
+
+    (StatusCode::OK, Json(json!({
+        "ram": {
+            "total_bytes": total_ram,
+            "used_bytes": used_ram,
+            "free_bytes": free_ram,
+            "process_bytes": process_ram,
+        },
+        "disks": disk_info,
+    })))
 }

@@ -1654,3 +1654,28 @@ Authorization: Bearer {{col_token}}
   "exp": 9999999999
 }
 
+###
+
+
+### ══════════════════════════════════════════════════════════════════════════════
+### TELEMETRY
+### ══════════════════════════════════════════════════════════════════════════════
+
+### ✅ Health check — publicly accessible, no auth required
+### Returns: { "status": "ok", "message": "MoltenDB is running" }
+GET http://localhost:1538/system/health
+
+###
+
+### ✅ Metrics — admin only
+### Returns host RAM totals, free/used, process RAM, and per-disk usage.
+### ❌ Returns 403 Forbidden if called with a non-admin token.
+GET http://localhost:1538/system/metrics
+Authorization: Bearer {{token}}
+
+###
+
+### ❌ Non-admin token cannot access metrics — 403 Forbidden
+GET http://localhost:1538/system/metrics
+Authorization: Bearer {{col_token}}
+

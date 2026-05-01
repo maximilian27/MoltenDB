@@ -28,8 +28,9 @@ mod ws;               // WebSocket upgrade handler and per-connection logic
 
 // Re-export handlers into scope for use in the router below.
 use route_handlers::{
-    handle_delegate, handle_delete, handle_get, handle_login, handle_rest_get,
-    handle_rest_get_collection, handle_revoke, handle_set, handle_snapshot, handle_update,
+    handle_delegate, handle_delete, handle_get, handle_health, handle_login, handle_metrics,
+    handle_rest_get, handle_rest_get_collection, handle_revoke, handle_set, handle_snapshot,
+    handle_update,
 };
 use ws::ws_handler;
 
@@ -498,7 +499,8 @@ async fn main() {
         .route("/collections/{collection}", get(handle_rest_get_collection))       // GET all docs (paginated)
         .route("/collections/{collection}/docs/{key}", get(handle_rest_get))       // GET single doc
         .route("/auth/delegate", post(handle_delegate))                            // Mint scoped tokens (admin only)
-        .route("/auth/tokens/{jti}", delete(handle_revoke));                       // Revoke a token by JTI (admin only)
+        .route("/auth/tokens/{jti}", delete(handle_revoke))                        // Revoke a token by JTI (admin only)
+        .route("/system/metrics", get(handle_metrics));                            // Resource usage — admin only
 
     #[cfg(feature = "schema")]
     {
@@ -518,8 +520,9 @@ async fn main() {
 
     // Public routes are accessible without authentication.
     let public_routes = Router::new()
-        .route("/login", post(handle_login))  // Returns a JWT token on valid credentials
-        .route("/ws", get(ws_handler));       // WebSocket upgrade endpoint
+        .route("/login", post(handle_login))          // Returns a JWT token on valid credentials
+        .route("/ws", get(ws_handler))                // WebSocket upgrade endpoint
+        .route("/system/health", get(handle_health)); // Liveness check — no auth required
 
     // CORS layer — configured via --cors-origin / CORS_ORIGIN.
     // Defaults to "*" (any origin) for development convenience.

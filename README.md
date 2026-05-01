@@ -679,6 +679,54 @@ See `src/ws_test/websocket-test.html` for an interactive tester.
 
 ---
 
+## Telemetry
+
+### Health check
+
+Public endpoint — no authentication required. Use it as a liveness probe in Docker / Kubernetes.
+
+```http
+GET /system/health
+```
+
+Response:
+```json
+{ "status": "ok", "message": "MoltenDB is running" }
+```
+
+### Metrics
+
+Admin-only endpoint. Returns a snapshot of the host's RAM and disk usage, plus the memory consumed by the MoltenDB process itself.
+
+```http
+GET /system/metrics
+Authorization: Bearer <admin-token>
+```
+
+Response:
+```json
+{
+  "ram": {
+    "total_bytes": 17179869184,
+    "used_bytes": 9663676416,
+    "free_bytes": 7516192768,
+    "process_bytes": 52428800
+  },
+  "disks": [
+    {
+      "mount": "/",
+      "total_bytes": 512110190592,
+      "available_bytes": 214748364800,
+      "used_bytes": 297361825792
+    }
+  ]
+}
+```
+
+Returns `403 Forbidden` if the token does not have admin (`*:*:*`) scope.
+
+---
+
 ## Configuration Reference
 
 All options can be set via CLI flags or environment variables. CLI flags take priority.
