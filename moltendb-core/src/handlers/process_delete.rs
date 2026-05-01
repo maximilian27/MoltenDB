@@ -9,8 +9,8 @@ use crate::engine;
 ///   - Single key:  { "collection": "users", "keys": "u1" }
 ///   - Batch keys:  { "collection": "users", "keys": ["u1", "u2"] }
 ///   - Drop all:    { "collection": "users", "drop": true }
-pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u16, Value) {
-    if let Err(e) = validation::validate_request(payload, max_body_size) {
+pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
+    if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
     // Only "collection", "keys", and "drop" are valid for a delete request.

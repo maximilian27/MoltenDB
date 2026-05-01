@@ -5,13 +5,13 @@ use crate::engine;
 /// Handle a SCHEMA (register/update schema) request.
 ///
 /// Format: { "collection": "users", "schema": { "type": "object", "properties": { ... } } }
-pub fn process_schema(db: &engine::Db, payload: &Value, max_body_size: usize) -> (u16, Value) {
+pub fn process_schema(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     // Only "collection" and "schema" are valid for a schema request.
     const SCHEMA_ALLOWED: &[&str] = &["collection", "schema"];
     if let Err(e) = validation::validate_allowed_properties(payload, SCHEMA_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
-    if let Err(e) = validation::validate_request(payload, max_body_size) {
+    if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
 

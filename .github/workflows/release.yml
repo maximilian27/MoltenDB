@@ -48,9 +48,12 @@ jobs:
         with:
           files: |
             ./${{ matrix.asset_name }}
-            cert.pem
-            key.pem
-            tests/requests.http
+            tests/requests_1_reads.http
+            tests/requests_2_joins.http
+            tests/requests_3_mutations.http
+            tests/requests_4_security.http
+            tests/requests_5_schemas.http
+            tests/requests_6_auth_telemetry.http
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

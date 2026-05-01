@@ -22,6 +22,7 @@ fn open_db() -> engine::Db {
         rate_limit_requests: 100,
         rate_limit_window: 60,
         max_body_size: 10485760,
+        max_keys_per_request: 1000,
         encryption_key: None,
         post_backup_script: None,
     };
@@ -39,7 +40,7 @@ fn seed(db: &engine::Db) {
             "mem4": { "capacity_gb": 64, "type": "DDR5",   "speed_mhz": 5600, "upgradeable": true  },
             "mem5": { "capacity_gb": 36, "type": "Unified","speed_mhz": 6400, "upgradeable": false }
         }
-    }), TEST_MAX_BODY);
+    }), TEST_MAX_BODY, TEST_MAX_KEYS);
     handlers::process_set(db, &json!({
         "collection": "display",
         "data": {
@@ -49,7 +50,7 @@ fn seed(db: &engine::Db) {
             "dsp4": { "size_inch": 16.2, "resolution": "3456x2234", "panel": "Mini-LED", "refresh_hz": 120, "hdr": true  },
             "dsp5": { "size_inch": 14.0, "resolution": "2560x1600", "panel": "IPS",      "refresh_hz": 165, "hdr": false }
         }
-    }), TEST_MAX_BODY);
+    }), TEST_MAX_BODY, TEST_MAX_KEYS);
     handlers::process_set(db, &json!({
         "collection": "laptops",
         "data": {
@@ -60,25 +61,26 @@ fn seed(db: &engine::Db) {
             "lp5": { "brand": "Razer",     "model": "Blade 15",            "price": 2499, "in_stock": true,  "memory_id": "mem4", "display_id": "dsp3", "tags": ["gaming","windows","rgb"],            "specs": { "cpu": { "brand": "Intel", "cores": 14, "ghz": 4.1 }, "battery_wh": 80,  "weight_kg": 2.01 } },
             "lp6": { "brand": "Framework", "model": "Laptop 13",           "price": 849,  "in_stock": true,  "memory_id": "mem1", "display_id": "dsp1", "tags": ["modular","linux","budget"],          "specs": { "cpu": { "brand": "Intel", "cores": 10, "ghz": 3.3 }, "battery_wh": 55,  "weight_kg": 1.3  } }
         }
-    }), TEST_MAX_BODY);
+    }), TEST_MAX_BODY, TEST_MAX_KEYS);
 }
 
 const TEST_MAX_BODY: usize = 10 * 1024 * 1024;
+const TEST_MAX_KEYS: usize = 1000;
 
 fn body(r: (u16, Value)) -> Value { r.1 }
 fn status(r: &(u16, Value)) -> u16 { r.0 }
 
 fn get(db: &engine::Db, payload: serde_json::Value) -> Value {
-    handlers::process_get(db, &payload, TEST_MAX_BODY).1
+    handlers::process_get(db, &payload, TEST_MAX_BODY, TEST_MAX_KEYS).1
 }
 fn set(db: &engine::Db, payload: serde_json::Value) -> Value {
-    handlers::process_set(db, &payload, TEST_MAX_BODY).1
+    handlers::process_set(db, &payload, TEST_MAX_BODY, TEST_MAX_KEYS).1
 }
 fn update(db: &engine::Db, payload: serde_json::Value) -> Value {
-    handlers::process_update(db, &payload, TEST_MAX_BODY).1
+    handlers::process_update(db, &payload, TEST_MAX_BODY, TEST_MAX_KEYS).1
 }
 fn delete(db: &engine::Db, payload: serde_json::Value) -> Value {
-    handlers::process_delete(db, &payload, TEST_MAX_BODY).1
+    handlers::process_delete(db, &payload, TEST_MAX_BODY, TEST_MAX_KEYS).1
 }
 
 fn arr(v: &Value) -> &Vec<Value> {
@@ -721,6 +723,7 @@ fn test_persistence_survives_reopen() {
         rate_limit_requests: 100,
         rate_limit_window: 60,
         max_body_size: 10485760,
+        max_keys_per_request: 1000,
         encryption_key: None,
         post_backup_script: None,
     };
@@ -745,6 +748,7 @@ fn test_compaction_preserves_data() {
         rate_limit_requests: 100,
         rate_limit_window: 60,
         max_body_size: 10485760,
+        max_keys_per_request: 1000,
         encryption_key: None,
         post_backup_script: None,
     };
@@ -761,6 +765,7 @@ fn test_compaction_preserves_data() {
         rate_limit_requests: 100,
         rate_limit_window: 60,
         max_body_size: 10485760,
+        max_keys_per_request: 1000,
         encryption_key: None,
         post_backup_script: None,
     };
@@ -788,6 +793,7 @@ fn test_concurrent_writes() {
         rate_limit_requests: 100,
         rate_limit_window: 60,
         max_body_size: 10485760,
+        max_keys_per_request: 1000,
         encryption_key: None,
         post_backup_script: None,
     };
@@ -827,6 +833,7 @@ fn test_concurrent_reads_during_writes() {
         rate_limit_requests: 100,
         rate_limit_window: 60,
         max_body_size: 10485760,
+        max_keys_per_request: 1000,
         encryption_key: None,
         post_backup_script: None,
     };
@@ -845,12 +852,12 @@ fn test_concurrent_reads_during_writes() {
             handlers::process_set(&db_w, &json!({
                 "collection": "rw",
                 "data": { format!("k{}", i): { "v": i } }
-            }), TEST_MAX_BODY);
+            }), TEST_MAX_BODY, TEST_MAX_KEYS);
         }
     });
     let reader = thread::spawn(move || {
         for _ in 0..100 {
-            let _ = handlers::process_get(&db_r, &json!({ "collection": "rw" }), TEST_MAX_BODY);
+            let _ = handlers::process_get(&db_r, &json!({ "collection": "rw" }), TEST_MAX_BODY, TEST_MAX_KEYS);
         }
     });
     writer.join().unwrap();
@@ -955,3 +962,4 @@ fn test_analytics_with_where() {
     let result = execute_query(&db, &q);
     assert_eq!(result.result, json!(5)); // all except lp4
 }
+

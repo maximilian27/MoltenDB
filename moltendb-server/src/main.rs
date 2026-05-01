@@ -28,8 +28,9 @@ mod ws;               // WebSocket upgrade handler and per-connection logic
 
 // Re-export handlers into scope for use in the router below.
 use route_handlers::{
-    handle_delegate, handle_delete, handle_get, handle_login, handle_rest_get,
-    handle_rest_get_collection, handle_revoke, handle_set, handle_snapshot, handle_update,
+    handle_delegate, handle_delete, handle_get, handle_health, handle_login, handle_metrics,
+    handle_rest_get, handle_rest_get_collection, handle_revoke, handle_set, handle_snapshot,
+    handle_update,
 };
 use ws::ws_handler;
 
@@ -48,6 +49,7 @@ use axum::{
 // RustlsConfig = TLS configuration loaded from PEM certificate and key files.
 use std::net::SocketAddr;
 use std::sync::Arc;
+use axum::extract::DefaultBodyLimit;
 // RequestBodyLimitLayer = middleware that rejects request bodies exceeding a size limit.
 use tower_http::limit::RequestBodyLimitLayer;
 // SetResponseHeaderLayer = middleware that adds a fixed header to every response.
@@ -122,6 +124,10 @@ struct Config {
     #[arg(long, default_value = "10485760", env = "MOLTENDB_MAX_BODY_SIZE")]
     max_body_size: usize,
 
+    /// Maximum keys allowed per request. [env: MOLTENDB_MAX_KEYS_PER_REQUEST]
+    #[arg(long, default_value = "1000", env = "MOLTENDB_MAX_KEYS_PER_REQUEST")]
+    max_keys_per_request: usize,
+
     /// Allowed CORS origin(s). Use "*" to allow any origin (default, dev only).
     /// For production, set to your frontend URL, e.g. "https://app.example.com".
     /// Multiple origins can be separated by commas. [env: MOLTENDB_CORS_ORIGIN]
@@ -135,6 +141,11 @@ struct Config {
     /// Enable verbose debug logging (optimizer, indexing, compaction). [env: MOLTENDB_DEBUG]
     #[arg(long, default_value = "false", env = "MOLTENDB_DEBUG")]
     debug: bool,
+
+    /// Run over plain HTTP and WS instead of HTTPS/WSS. Ignores --cert and --key.
+    /// ⚠️  NEVER use in production — all traffic is unencrypted. [env: MOLTENDB_DEV_MODE]
+    #[arg(long, default_value = "false", env = "MOLTENDB_DEV_MODE")]
+    dev_mode: bool,
 
     /// Path to a script file to execute after a successful backup.
     /// The script will be called with the absolute path of the snapshot as its first argument. [env: MOLTENDB_POST_BACKUP_SCRIPT]
@@ -378,6 +389,7 @@ async fn main() {
         rate_limit_requests,
         rate_limit_window,
         max_body_size: cfg.max_body_size,
+        max_keys_per_request: cfg.max_keys_per_request,
         encryption_key: encryption_key.cloned(),
         post_backup_script: cfg.post_backup_script,
     };
@@ -476,7 +488,7 @@ async fn main() {
 
     // The app state is a tuple of (Db, UserStore, max_body_size) injected into every handler via State<...>.
     // Axum clones this for each request — Db and UserStore are cheap to clone (Arc-backed).
-    let app_state = (db.clone(), users, cfg.max_body_size, root_user);
+    let app_state = (db.clone(), users, cfg.max_body_size, cfg.max_keys_per_request, root_user);
 
     let mut protected_routes = Router::new()
         .route("/set", post(handle_set))           // Insert/upsert documents
@@ -487,7 +499,8 @@ async fn main() {
         .route("/collections/{collection}", get(handle_rest_get_collection))       // GET all docs (paginated)
         .route("/collections/{collection}/docs/{key}", get(handle_rest_get))       // GET single doc
         .route("/auth/delegate", post(handle_delegate))                            // Mint scoped tokens (admin only)
-        .route("/auth/tokens/{jti}", delete(handle_revoke));                       // Revoke a token by JTI (admin only)
+        .route("/auth/tokens/{jti}", delete(handle_revoke))                        // Revoke a token by JTI (admin only)
+        .route("/system/metrics", get(handle_metrics));                            // Resource usage — admin only
 
     #[cfg(feature = "schema")]
     {
@@ -507,8 +520,9 @@ async fn main() {
 
     // Public routes are accessible without authentication.
     let public_routes = Router::new()
-        .route("/login", post(handle_login))  // Returns a JWT token on valid credentials
-        .route("/ws", get(ws_handler));       // WebSocket upgrade endpoint
+        .route("/login", post(handle_login))          // Returns a JWT token on valid credentials
+        .route("/ws", get(ws_handler))                // WebSocket upgrade endpoint
+        .route("/system/health", get(handle_health)); // Liveness check — no auth required
 
     // CORS layer — configured via --cors-origin / CORS_ORIGIN.
     // Defaults to "*" (any origin) for development convenience.
@@ -585,6 +599,9 @@ async fn main() {
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("default-src 'self'; script-src 'self'; object-src 'none'"),
         ))
+        // Disable Axum's built-in 2 MB default body limit so that
+        // RequestBodyLimitLayer below is the sole enforcer.
+        .layer(DefaultBodyLimit::disable())
         // Request body size limit — rejects bodies larger than the configured limit at the HTTP layer
         // before the application code even sees them, preventing memory exhaustion.
         .layer(RequestBodyLimitLayer::new(cfg.max_body_size))
@@ -598,7 +615,11 @@ async fn main() {
     // Bind to all network interfaces (0.0.0.0) on the configured port.
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-    info!("🔒 TLS enabled - loading certificates...");
+    if cfg.dev_mode {
+        warn!("⚠️  DEV MODE ENABLED — server is running over plain HTTP/WS. NEVER use in production!");
+    } else {
+        info!("🔒 TLS enabled - loading certificates...");
+    }
     info!("🛡️  Security headers enabled");
 
     // Create an axum_server Handle — used to trigger graceful shutdown from outside
@@ -617,32 +638,42 @@ async fn main() {
         shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
     });
 
-    // Load TLS certificates and start the server.
-    match server::load_tls_config(&cert_path, &key_path).await {
-        Ok(tls_config) => {
-            info!("🚀 MoltenDB running on https://{}:{} (HTTPS + WSS)", addr.ip(), addr.port());
+    if cfg.dev_mode {
+        // Dev mode: plain HTTP/WS — no TLS.
+        info!("🚀 MoltenDB running on http://{}:{} (HTTP + WS) [DEV MODE]", addr.ip(), addr.port());
+        axum_server::bind(addr)
+            .handle(handle)
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+    } else {
+        // Production mode: HTTPS/WSS via rustls.
+        match server::load_tls_config(&cert_path, &key_path).await {
+            Ok(tls_config) => {
+                info!("🚀 MoltenDB running on https://{}:{} (HTTPS + WSS)", addr.ip(), addr.port());
 
-            // `.serve(...).await` blocks here until graceful shutdown completes.
-            // `into_make_service()` converts the Router into a service factory
-            // that creates a new service instance for each incoming connection.
-            axum_server::bind_rustls(addr, tls_config)
-                .handle(handle)
-                .serve(app.into_make_service())
-                .await
-                .unwrap();
-
-            // At this point all in-flight requests have finished (or timed out).
-            // Dropping `db` closes the MPSC channel to the AsyncDiskStorage background
-            // thread, which causes it to flush its BufWriter and exit cleanly.
-            // This guarantees no buffered writes are lost on graceful shutdown.
-            drop(db);
-            info!("✅ Database flushed. Shutdown complete.");
-        }
-        Err(e) => {
-            error!("🔥 Failed to load TLS certificates: {}", e);
-            error!("   Cert path: {}", cert_path);
-            error!("   Key path: {}", key_path);
-            std::process::exit(1);
+                // `.serve(...).await` blocks here until graceful shutdown completes.
+                // `into_make_service()` converts the Router into a service factory
+                // that creates a new service instance for each incoming connection.
+                axum_server::bind_rustls(addr, tls_config)
+                    .handle(handle)
+                    .serve(app.into_make_service())
+                    .await
+                    .unwrap();
+            }
+            Err(e) => {
+                error!("🔥 Failed to load TLS certificates: {}", e);
+                error!("   Cert path: {}", cert_path);
+                error!("   Key path: {}", key_path);
+                std::process::exit(1);
+            }
         }
     }
+
+    // At this point all in-flight requests have finished (or timed out).
+    // Dropping `db` closes the MPSC channel to the AsyncDiskStorage background
+    // thread, which causes it to flush its BufWriter and exit cleanly.
+    // This guarantees no buffered writes are lost on graceful shutdown.
+    drop(db);
+    info!("✅ Database flushed. Shutdown complete.");
 }
