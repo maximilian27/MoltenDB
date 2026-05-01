@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3NzczODczMSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjBiODNkYTE2LTk1NDAtNDY1Zi04NDZjLTQ4YTQwZDJkNzllOSJ9.G1Q7zguqEwsI4LnL8dHGokyVHKJtN7OVU4wi5375Z80
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3Nzc0Mzc0MSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjI2YzdhODJjLTFmYjItNGIwYS04OGE2LWRhOWM4MmFmZjhlNCJ9.zBnkTrRBcztl1mSvjz_zojb3i8tEmVZY0zVj3SCwIx0
 
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
@@ -837,4 +837,301 @@ Authorization: Bearer {{token}}
 ### ❌ Non-admin token cannot access metrics — 403 Forbidden
 GET http://localhost:1538/system/metrics
 Authorization: Bearer {{col_token}}
+
+
+### ══════════════════════════════════════════════════════════════════════════════
+### WEBSOCKET — REAL-TIME PUSH & PERMISSION TESTING
+###
+### MoltenDB WebSocket endpoint: ws://localhost:1538/ws  (or wss:// in prod)
+###
+### Protocol summary:
+###   1. Connect to /ws (no auth header — auth happens inside the socket).
+###   2. Send as the FIRST message:
+###        { "action": "AUTH", "token": "<jwt>" }
+###      ✅ Valid, non-revoked token  → server replies:
+###        { "status": "authenticated", "message": "..." }
+###      ❌ Invalid / revoked token   → server replies with an error and closes.
+###   3. After auth, the server pushes change events for every write on a
+###      collection the token's scopes cover:
+###        { "event": "change", "collection": "<name>", "key": "<key>", "new_v": <v> }
+###      Events for collections outside the token's scopes are silently dropped
+###      server-side — the client never sees them.
+###   4. All CRUD must go through the HTTP endpoints. WebSockets are read-only
+###      push notifications.
+###
+### HOW TO TEST WITH A WEBSOCKET CLIENT
+###   Use any WS client: websocat (CLI), Postman, Insomnia, browser DevTools, etc.
+###
+###   websocat example (install: cargo install websocat):
+###     websocat ws://localhost:1538/ws
+###     > {"action":"AUTH","token":"<paste token here>"}
+###     < {"status":"authenticated","message":"..."}
+###     (now trigger a write via HTTP in another terminal — events appear here)
+###
+###   Browser DevTools console example:
+###     const ws = new WebSocket("ws://localhost:1538/ws");
+###     ws.onmessage = e => console.log(JSON.parse(e.data));
+###     ws.onopen    = () => ws.send(JSON.stringify({action:"AUTH",token:"<token>"}));
+###
+### The HTTP requests below mint the tokens and trigger the writes you need to
+### observe the filtering in action. Run them while your WS client is connected.
+### ══════════════════════════════════════════════════════════════════════════════
+
+
+### ── SCENARIO A: Scoped token only receives events for its collection ──────────
+###
+### Token scope: read:laptops:*
+### Expected WS behaviour:
+###   ✅ Writes to `laptops`  → event pushed to this client
+###   ❌ Writes to `memory`   → event silently dropped (never reaches the client)
+###   ❌ Writes to `display`  → event silently dropped
+
+### A0. 🔌 Open the WebSocket connection with the scoped token
+###   Run this FIRST, keep it open, then run A1–A4 to observe filtered events.
+WEBSOCKET ws://localhost:1538/ws
+
+{"action": "AUTH", "token": "{{ws_laptops_token}}"}
+
+###
+
+### A1. Mint a laptops-only read token
+POST http://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "ws-laptops-watcher",
+  "scopes": ["read:laptops:*"],
+  "ttl_secs": 3600
+}
+
+###
+
+@ws_laptops_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3cy1sYXB0b3BzLXdhdGNoZXIiLCJleHAiOjE3Nzc2NjA5NjcsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6KiJdLCJqdGkiOiI5OTI3Y2RlMi01YzUzLTQyNGItYjkwMC0yYTc3NTQyOWJkZGQifQ.w30MaaLRxFE7oSbSpyMpLJJwdg6jBySSyqTxufGF1i0
+
+### A2. ✅ Trigger a write to `laptops` — WS client SHOULD receive the event:
+###   { "event": "change", "collection": "laptops", "key": "lp_ws_test", "new_v": 1 }
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp_ws_test": { "brand": "WS Test", "model": "Event Check", "price": 1, "in_stock": true }
+  }
+}
+
+###
+
+### A3. ❌ Trigger a write to `memory` — WS client should NOT receive anything
+###   (the server drops the event before sending — no message arrives on the socket)
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "memory",
+  "data": {
+    "mem_ws_test": { "capacity_gb": 8, "type": "DDR5", "speed_mhz": 5600, "upgradeable": true }
+  }
+}
+
+###
+
+### A4. Cleanup — remove the test documents
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "key": "lp_ws_test"
+}
+
+###
+
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "memory",
+  "key": "mem_ws_test"
+}
+
+###
+
+
+### ── SCENARIO B: Admin token receives events for ALL collections ──────────────
+###
+### Token scope: *:*:*
+### Expected WS behaviour:
+###   ✅ Writes to ANY collection → event pushed to this client
+
+### B1. Use the existing @admin_token (minted in LEVEL 6 above) or mint a fresh one:
+POST http://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "ws-admin-watcher",
+  "scopes": ["*:*:*"],
+  "ttl_secs": 3600
+}
+
+###
+
+@ws_admin_token = PASTE_TOKEN_HERE
+
+### B2. ✅ Write to `laptops` — admin WS client receives the event
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp_admin_ws": { "brand": "Admin WS", "model": "All Collections", "price": 1, "in_stock": true }
+  }
+}
+
+###
+
+### B0. 🔌 Open the WebSocket connection with the admin token
+###   Run this FIRST, keep it open, then run B1–B4 to observe all-collection events.
+WEBSOCKET ws://localhost:1538/ws
+
+{"action": "AUTH", "token": "{{ws_admin_token}}"}
+
+###
+
+### B3. ✅ Write to `display` — admin WS client ALSO receives this event
+###   (the laptops-only token from Scenario A would NOT receive this)
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "display",
+  "data": {
+    "dsp_admin_ws": { "size_inch": 27.0, "resolution": "3840x2160", "panel": "IPS", "refresh_hz": 144, "touchscreen": false, "hdr": true }
+  }
+}
+
+###
+
+### B4. Cleanup
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "key": "lp_admin_ws"
+}
+
+###
+
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "display",
+  "key": "dsp_admin_ws"
+}
+
+###
+
+
+### ── SCENARIO C: Revoked token is rejected on WS connect ─────────────────────
+###
+### A token that has been revoked via DELETE /auth/tokens/:jti must be rejected
+### at the WebSocket AUTH step — the connection is closed immediately.
+###
+### Steps:
+###   1. Mint a token (C1).
+###   2. Confirm it works on a normal HTTP endpoint (C2).
+###   3. Revoke it (C3).
+###   4. Try to open a WS connection with it — server must reject it (C4).
+
+### C1. Mint a short-lived token to revoke
+POST http://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "ws-revoke-test",
+  "scopes": ["read:laptops:*"],
+  "ttl_secs": 3600
+}
+
+###
+
+### Paste the token and its jti (from jwt.io or the response) here:
+@ws_revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3cy1yZXZva2UtdGVzdCIsImV4cCI6MTc3NzY2MTU3Mywic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6IjBhNGU4NzEyLWNjMWQtNGI1OC1hMGU0LWYzYjFjNWJmMWRhYyJ9.XvgnxQ5pzAEv4ws32odvB4wxnFZRaK3_5OgGDaJ678w
+@ws_revoke_jti   = 0a4e8712-cc1d-4b58-a0e4-f3b1c5bf1dac
+
+### C2. ✅ Confirm the token works before revocation
+GET http://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{ws_revoke_token}}
+
+###
+
+### C3. Revoke the token
+DELETE http://localhost:1538/auth/tokens/{{ws_revoke_jti}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "exp": 9999999999
+}
+
+###
+
+### C4. ❌ Open the WebSocket with the revoked token — server must reject it.
+###   Expected: server replies with an error JSON and closes the connection.
+WEBSOCKET ws://localhost:1538/ws
+
+{"action": "AUTH", "token": "{{ws_revoke_token}}"}
+
+###
+
+### C4b. Verify on HTTP too — should return 401:
+GET http://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{ws_revoke_token}}
+
+###
+
+
+### ── SCENARIO D: No AUTH message → immediate rejection ───────────────────────
+###
+### If the first WS message is anything other than a valid AUTH frame,
+### the server closes the connection immediately.
+
+### D1. ❌ Wrong action — server rejects and closes
+WEBSOCKET ws://localhost:1538/ws
+
+{"action": "SUBSCRIBE", "collection": "laptops"}
+
+###
+
+### D2. ❌ Missing token field — server rejects and closes
+WEBSOCKET ws://localhost:1538/ws
+
+{"action": "AUTH"}
+
+###
+
+### D3. ❌ Garbage / plain text — server rejects and closes
+WEBSOCKET ws://localhost:1538/ws
+
+hello
+
+###
+
+### In all cases the server replies:
+###   { "error": "Authentication required. Send {\"action\":\"AUTH\",\"token\":\"<jwt>\"} as the first message." }
+### and closes the socket.
 

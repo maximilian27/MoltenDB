@@ -514,7 +514,7 @@ async fn main() {
         .layer(middleware::from_fn(auth::auth_middleware))
         // Inject the RevocationStore as an extension — must wrap auth_middleware so it is
         // available in request.extensions() when auth_middleware executes.
-        .layer(Extension(revocation_store))
+        .layer(Extension(revocation_store.clone()))
         // Inject the revocations file path so handle_revoke can persist after revoking.
         .layer(Extension(auth::RevocationsPath(revocations_path)));
 
@@ -522,7 +522,9 @@ async fn main() {
     let public_routes = Router::new()
         .route("/login", post(handle_login))          // Returns a JWT token on valid credentials
         .route("/ws", get(ws_handler))                // WebSocket upgrade endpoint
-        .route("/system/health", get(handle_health)); // Liveness check — no auth required
+        .route("/system/health", get(handle_health))  // Liveness check — no auth required
+        // Inject the RevocationStore so ws_handler can reject revoked tokens.
+        .layer(Extension(revocation_store));
 
     // CORS layer — configured via --cors-origin / CORS_ORIGIN.
     // Defaults to "*" (any origin) for development convenience.
