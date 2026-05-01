@@ -102,20 +102,20 @@ impl WorkerDb {
     /// * `hot_threshold` — Optional maximum documents per collection to keep in RAM (default: 50,000).
     /// * `encryption_key` — Optional password for at-rest encryption.
     /// * `write_mode` — Optional write mode: "async" (default) or "sync".
-    /// * `rate_limit_requests` — Optional max requests per window (default: 100).
-    /// * `rate_limit_window` — Optional window size in seconds (default: 60).
     /// * `max_body_size` — Optional maximum request body size in bytes (default: 10MB).
     /// * `max_keys_per_request` — Optional maximum keys allowed per request (default: 1000).
+    /// * `in_memory` — Optional flag to run entirely in RAM with no OPFS writes (default: false).
+    ///   When `true`, all data is lost when the worker is terminated — useful for ephemeral
+    ///   session caches or testing without touching OPFS storage.
     #[wasm_bindgen]
     pub async fn create(
         db_name: &str,
         hot_threshold: Option<usize>,
         encryption_key: Option<String>,
         write_mode: Option<String>,
-        rate_limit_requests: Option<u32>,
-        rate_limit_window: Option<u64>,
         max_body_size: Option<usize>,
         max_keys_per_request: Option<usize>,
+        in_memory: Option<bool>,
     ) -> Result<WorkerDb, JsValue> {
         // Install a panic hook that converts Rust panics into readable JS error messages.
         // Without this, a Rust panic in WASM produces an unhelpful "unreachable" error.
@@ -124,8 +124,6 @@ impl WorkerDb {
 
         let threshold = hot_threshold.unwrap_or(50000);
         let sync_mode = write_mode.map(|m| m == "sync").unwrap_or(false);
-        let limit_reqs = rate_limit_requests.unwrap_or(100);
-        let limit_window = rate_limit_window.unwrap_or(60);
         let body_size = max_body_size.unwrap_or(10 * 1024 * 1024);
         let keys_limit = max_keys_per_request.unwrap_or(1000);
 
@@ -137,13 +135,14 @@ impl WorkerDb {
             path: db_name.to_string(),
             sync_mode,
             hot_threshold: threshold,
-            rate_limit_requests: limit_reqs,
-            rate_limit_window: limit_window,
             max_body_size: body_size,
             max_keys_per_request: keys_limit,
             encryption_key: master_key,
+            rate_limit_requests: None,
+            rate_limit_window: None,
             tiered_mode: false, // Tiered storage is not supported in WASM
             post_backup_script: None, // Backup scripts are not supported in WASM
+            in_memory: in_memory.unwrap_or(false),
         };
 
         // Open the database. `Db::open_wasm` creates an OpfsStorage backend,

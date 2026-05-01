@@ -144,8 +144,8 @@ impl Db {
         let sync_mode = config.sync_mode;
         let tiered_mode = config.tiered_mode;
         let hot_threshold = config.hot_threshold;
-        let rate_limit_requests = config.rate_limit_requests;
-        let rate_limit_window = config.rate_limit_window;
+        let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
+        let rate_limit_window = config.rate_limit_window.unwrap_or(60);
         let max_body_size = config.max_body_size;
         let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
@@ -245,8 +245,8 @@ impl Db {
     pub async fn open_wasm(config: DbConfig) -> Result<Self, DbError> {
         let db_name = &config.path;
         let hot_threshold = config.hot_threshold;
-        let rate_limit_requests = config.rate_limit_requests;
-        let rate_limit_window = config.rate_limit_window;
+        let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
+        let rate_limit_window = config.rate_limit_window.unwrap_or(60);
         let max_body_size = config.max_body_size;
         let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
@@ -261,23 +261,34 @@ impl Db {
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
-        // Open the OPFS file. This is async because the browser's OPFS API
-        // uses Promises which we must await.
-        let mut storage: Arc<dyn StorageBackend> =
-            Arc::new(storage::OpfsStorage::new(db_name, sync_mode).await?);
+        // Choose storage backend: pure RAM (no OPFS) or OPFS file.
+        // When in_memory = true, OpfsStorage is never opened — no file is created
+        // and no log is replayed. All data lives only in the DashMap.
+        let storage: Arc<dyn StorageBackend> = if config.in_memory {
+            Arc::new(storage::InMemoryStorage)
+        } else {
+            // Open the OPFS file. This is async because the browser's OPFS API
+            // uses Promises which we must await.
+            let base: Arc<dyn StorageBackend> =
+                Arc::new(storage::OpfsStorage::new(db_name, sync_mode).await?);
 
-        // Apply encryption wrapper if a key is provided.
-        if let Some(key) = encryption_key {
-            storage = Arc::new(storage::EncryptedStorage::new(storage, &key));
-        }
+            // Apply encryption wrapper if a key is provided.
+            let wrapped = if let Some(key) = encryption_key {
+                Arc::new(storage::EncryptedStorage::new(base, &key)) as Arc<dyn StorageBackend>
+            } else {
+                base
+            };
 
-        // Replay the log into the in-memory state.
-        storage::stream_into_state(
-            &*storage,
-            &state,
-            &indexes,
-            #[cfg(feature = "schema")] &schemas,
-        )?;
+            // Replay the log into the in-memory state.
+            storage::stream_into_state(
+                &*wrapped,
+                &state,
+                &indexes,
+                #[cfg(feature = "schema")] &schemas,
+            )?;
+
+            wrapped
+        };
 
         Ok(Self {
             state,
