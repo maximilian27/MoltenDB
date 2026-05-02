@@ -87,10 +87,12 @@ let user = db.get("users", "u1");
 | Feature | Available in `moltendb-core`? | Available in `moltendb-server`? | Why? |
 | :--- | :--- | :--- | :--- |
 | `MOLTENDB_DB_PATH` | No (passed via `DbConfig`) | **Yes** | Engine needs a path; server provides the CLI flag. |
+| `MOLTENDB_HOST` | **No** | **Yes** | Core has no network listener or HTTP logic. |
 | `MOLTENDB_PORT` | **No** | **Yes** | Core has no network listener or HTTP logic. |
 | `MOLTENDB_ROOT_USER` | **No** | **Yes** | Core doesn't handle API authentication. |
 | `MOLTENDB_JWT_SECRET` | **No** | **Yes** | Server-side token security. |
 | `MOLTENDB_SYNC_MODE` | No (passed via `DbConfig`) | **Yes** | Controls the core engine's storage behavior. |
+| `MOLTENDB_IN_MEMORY` | No (passed via `DbConfig`) | **Yes** | Bypasses the WAL; all data lives in RAM only. |
 
 > [!TIP]
 > **When using the standalone `moltendb-server` binary, all flags and environment variables are available.** The server acts as a thin wrapper that combines the engine, authentication, and networking layers. The distinction only matters if you are using `moltendb-core` as a library in your own Rust project.
@@ -660,8 +662,17 @@ wss://localhost:1538/ws
 
 **Protocol:**
 
-1. The first message **must** be `{ "action": "AUTH", "token": "<jwt>" }`. The connection is closed immediately if authentication fails.
-2. After authentication, the server pushes a change event on every write:
+1. The first message **must** be `{ "action": "AUTH", "token": "<jwt>" }`. The connection is closed immediately if authentication fails, with one of the following structured error codes:
+
+   | `error` code | Cause |
+   |---|---|
+   | `invalid_message` | First frame was not valid JSON or not a text frame |
+   | `invalid_action` | First message was not an `AUTH` action |
+   | `missing_token` | `AUTH` frame had no `token` field |
+   | `invalid_token` | JWT verification failed (expired, wrong secret, malformed) |
+   | `token_revoked` | Token has been revoked via `DELETE /auth/tokens/:jti` |
+
+2. After authentication, the server pushes a change event on every write **for collections the token's scopes allow `read` access to**. Events for other collections are silently filtered out. Admin tokens (`*:*:*`) receive all events.
    ```json
    { "event": "change", "collection": "laptops", "key": "lp2", "new_v": 3 }
    ```
@@ -674,6 +685,8 @@ wss://localhost:1538/ws
    - `new_v` is the document's `_v` after the write, or `null` for deletes/drops
    - `key: "*"` means the entire collection was dropped
 3. Clients fetch fresh data via HTTP after receiving a notification.
+
+**Revocation on open connections:** If a token is revoked while a WebSocket connection is already open, the server will detect this within 30 seconds, send a `token_revoked` error, and close the connection.
 
 See `src/ws_test/websocket-test.html` for an interactive tester.
 
@@ -760,6 +773,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | Flag | Env var | Default | Description |
 |---|---|---|---|
 | `--cert` | `MOLTENDB_TLS_CERT` | `cert.pem` | TLS certificate |
+| `--host` | `MOLTENDB_HOST` | `0.0.0.0` | IP address to bind to. Use `127.0.0.1` for localhost-only, `0.0.0.0` for all interfaces (required for Docker) |
 | `--cors-origin` | `MOLTENDB_CORS_ORIGIN` | `*` ⚠️ | Allowed CORS origin(s) |
 | `--jwt-secret` | `MOLTENDB_JWT_SECRET` | **REQUIRED** 🔥 | JWT signing secret |
 | `--key` | `MOLTENDB_TLS_KEY` | `key.pem` | TLS private key |
@@ -782,6 +796,7 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--post-backup-script` | `MOLTENDB_POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup |
 | `--rate-limit-requests` | `MOLTENDB_RATE_LIMIT_REQS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Window size in seconds |
+| `--in-memory` | `MOLTENDB_IN_MEMORY` | `false` | Run entirely in RAM — no WAL, no disk I/O. All data is lost on exit. Ideal for ephemeral caches and CI environments |
 | `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` |
 | `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
@@ -811,6 +826,11 @@ Single append-only log file. All writes go to `my_database.log`. Compaction rewr
 
 ### Tiered (`--storage-mode tiered`)
 Recommended for large datasets (100k+ documents). Active writes go to a hot log (kept < 50 MB). When the hot log exceeds the threshold, all current entries are promoted to a cold log (`my_database.cold.log`) which is read via memory-mapped file on startup — the OS pages in only the data actually needed.
+
+### In-Memory (`--in-memory`)
+Bypasses the WAL and all disk I/O entirely. All data lives exclusively in the RAM `DashMap` — no log file is created or written. This turns MoltenDB into a pure in-process cache with the full query engine (filters, joins, indexes, pub/sub) on top. Compaction and revocation-file persistence are automatically skipped. A startup warning is printed to make the ephemeral nature explicit.
+
+> ⚠️ **All data is lost when the server exits.** Use this mode for ephemeral caches, session stores, CI test environments, or any scenario where durability is not required.
 
 ### Write modes
 - **async** (default): writes are buffered in memory and flushed every 50 ms. Up to 50 ms of data loss on a hard crash. Highest throughput.

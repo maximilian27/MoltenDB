@@ -73,8 +73,13 @@ await init();
 
 // 2. Open (or create) the OPFS database file
 //    ✅ Use the static factory — NOT `new WorkerDb(name)` (deprecated)
-//    Optional parameters (hot_threshold, encryption_key, write_mode, etc.):
+//    Optional parameters (all optional after db_name):
+//      hot_threshold, encryption_key, write_mode,
+//      max_body_size, max_keys_per_request, in_memory
+//
+//    Pass `true` for in_memory to skip OPFS entirely (ephemeral session cache):
 const db = await WorkerDb.create("my_database", 100000, "my-encryption-password", "async");
+// In-memory (no OPFS writes, data lost on worker termination):
 
 // 3. Subscribe to real-time mutation events
 db.subscribe((eventStr) => {
@@ -131,9 +136,9 @@ export class WorkerDb {
     hot_threshold?: number,
     encryption_key?: string,
     write_mode?: string,
-    rate_limit_requests?: number,
-    rate_limit_window?: number,
-    max_body_size?: number
+    max_body_size?: number,
+    max_keys_per_request?: number,
+    in_memory?: boolean
   ): Promise<WorkerDb>;
   handle_message(msg: { action: string; [key: string]: unknown }): unknown;
   subscribe(callback: (eventStr: string) => void): void;

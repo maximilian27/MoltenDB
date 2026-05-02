@@ -122,6 +122,7 @@ pub struct Db {
     pub tiered_mode: bool,
 
     /// Timestamp of when this Db instance was opened, used for uptime calculation.
+    #[cfg(not(target_arch = "wasm32"))]
     pub started_at: std::time::Instant,
 }
 
@@ -144,30 +145,37 @@ impl Db {
         let sync_mode = config.sync_mode;
         let tiered_mode = config.tiered_mode;
         let hot_threshold = config.hot_threshold;
-        let rate_limit_requests = config.rate_limit_requests;
-        let rate_limit_window = config.rate_limit_window;
+        let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
+        let rate_limit_window = config.rate_limit_window.unwrap_or(60);
         let max_body_size = config.max_body_size;
         let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
         let post_backup_script = config.post_backup_script;
+        let in_memory = config.in_memory;
 
         // Create the shared in-memory state containers.
         let state = Arc::new(DashMap::new());
         // Create the broadcast channel with a buffer of 100 messages.
         // If the buffer fills up (no subscribers reading), old messages are dropped.
-        let (tx, _rx) = broadcast::channel(100);
+        let (tx, _rx) = broadcast::channel(1000);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
         let query_heatmap = Arc::new(Default::default());
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
-        // Ensure the parent directory exists.
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            std::fs::create_dir_all(parent)?;
+        // Ensure the parent directory exists (skipped in in-memory mode — no file is created).
+        if !in_memory {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
         }
 
         // Choose the base storage backend based on the configured mode.
+        //
+        //   in_memory = true    → InMemoryStorage: all data lives in the DashMap only.
+        //                         No disk I/O at all. Data is lost on exit.
+        //                         Ideal for ephemeral caches and CI environments.
         //
         //   tiered_mode = true  → TieredStorage: hot log (async writes) + cold log
         //                         (mmap reads). Best for large datasets. The cold log
@@ -178,7 +186,9 @@ impl Db {
         //
         //   default             → AsyncDiskStorage: writes buffered in memory, flushed
         //                         every 50ms. Highest throughput, up to 50ms data loss.
-        let base_storage: Arc<dyn StorageBackend> = if tiered_mode {
+        let base_storage: Arc<dyn StorageBackend> = if in_memory {
+            Arc::new(storage::InMemoryStorage)
+        } else if tiered_mode {
             Arc::new(storage::TieredStorage::new(path)?)
         } else if sync_mode {
             Arc::new(storage::SyncDiskStorage::new(path)?)
@@ -187,10 +197,15 @@ impl Db {
         };
 
         // Optionally wrap the base storage in EncryptedStorage.
+        // Encryption is skipped in in-memory mode — there is nothing to encrypt on disk.
         // EncryptedStorage is transparent — it encrypts on write and decrypts
         // on read, so the rest of the engine doesn't know encryption is happening.
-        let storage: Arc<dyn StorageBackend> = if let Some(key) = encryption_key {
-            Arc::new(storage::EncryptedStorage::new(base_storage, &key))
+        let storage: Arc<dyn StorageBackend> = if !in_memory {
+            if let Some(key) = encryption_key {
+                Arc::new(storage::EncryptedStorage::new(base_storage, &key))
+            } else {
+                base_storage
+            }
         } else {
             base_storage
         };
@@ -219,6 +234,7 @@ impl Db {
             schemas,
             post_backup_script,
             tiered_mode,
+            #[cfg(not(target_arch = "wasm32"))]
             started_at: std::time::Instant::now(),
         })
     }
@@ -231,8 +247,8 @@ impl Db {
     pub async fn open_wasm(config: DbConfig) -> Result<Self, DbError> {
         let db_name = &config.path;
         let hot_threshold = config.hot_threshold;
-        let rate_limit_requests = config.rate_limit_requests;
-        let rate_limit_window = config.rate_limit_window;
+        let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
+        let rate_limit_window = config.rate_limit_window.unwrap_or(60);
         let max_body_size = config.max_body_size;
         let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
@@ -240,30 +256,41 @@ impl Db {
         let post_backup_script = config.post_backup_script;
 
         let state = Arc::new(DashMap::new());
-        let (tx, _rx) = broadcast::channel(100);
+        let (tx, _rx) = broadcast::channel(1000);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
         let query_heatmap = Arc::new(Default::default());
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
-        // Open the OPFS file. This is async because the browser's OPFS API
-        // uses Promises which we must await.
-        let mut storage: Arc<dyn StorageBackend> =
-            Arc::new(storage::OpfsStorage::new(db_name, sync_mode).await?);
+        // Choose storage backend: pure RAM (no OPFS) or OPFS file.
+        // When in_memory = true, OpfsStorage is never opened — no file is created
+        // and no log is replayed. All data lives only in the DashMap.
+        let storage: Arc<dyn StorageBackend> = if config.in_memory {
+            Arc::new(storage::InMemoryStorage)
+        } else {
+            // Open the OPFS file. This is async because the browser's OPFS API
+            // uses Promises which we must await.
+            let base: Arc<dyn StorageBackend> =
+                Arc::new(storage::OpfsStorage::new(db_name, sync_mode).await?);
 
-        // Apply encryption wrapper if a key is provided.
-        if let Some(key) = encryption_key {
-            storage = Arc::new(storage::EncryptedStorage::new(storage, &key));
-        }
+            // Apply encryption wrapper if a key is provided.
+            let wrapped = if let Some(key) = encryption_key {
+                Arc::new(storage::EncryptedStorage::new(base, &key)) as Arc<dyn StorageBackend>
+            } else {
+                base
+            };
 
-        // Replay the log into the in-memory state.
-        storage::stream_into_state(
-            &*storage,
-            &state,
-            &indexes,
-            #[cfg(feature = "schema")] &schemas,
-        )?;
+            // Replay the log into the in-memory state.
+            storage::stream_into_state(
+                &*wrapped,
+                &state,
+                &indexes,
+                #[cfg(feature = "schema")] &schemas,
+            )?;
+
+            wrapped
+        };
 
         Ok(Self {
             state,
@@ -280,7 +307,6 @@ impl Db {
             schemas,
             post_backup_script,
             tiered_mode: config.tiered_mode,
-            started_at: std::time::Instant::now(),
         })
     }
 
@@ -413,6 +439,17 @@ impl Db {
         )
     }
     
+    /// Wipe all in-memory state — documents, indexes, and query heatmap.
+    /// Used by the WASM layer when a browser tab unloads in in-memory mode,
+    /// so that any tab refresh clears the shared RAM store for all tabs.
+    pub fn clear_all(&self) {
+        self.state.clear();
+        self.indexes.clear();
+        self.query_heatmap.clear();
+        #[cfg(feature = "schema")]
+        self.schemas.clear();
+    }
+
     /// Compact the log file — rewrite it to contain only the current state.
     ///
     /// This removes all dead entries (superseded INSERTs, DELETE tombstones)

@@ -10,10 +10,10 @@ pub struct DbConfig {
     pub sync_mode: bool,
     /// Max documents to keep in RAM per collection
     pub hot_threshold: usize,
-    /// Rate limiting: max requests per window
-    pub rate_limit_requests: u32,
-    /// Rate limiting: window size in seconds
-    pub rate_limit_window: u64,
+    /// Rate limiting: max requests per window (server-only, None = disabled/use default)
+    pub rate_limit_requests: Option<u32>,
+    /// Rate limiting: window size in seconds (server-only, None = disabled/use default)
+    pub rate_limit_window: Option<u64>,
     /// Max request body size in bytes
     pub max_body_size: usize,
     /// Max keys allowed per request (default: 1000)
@@ -23,6 +23,8 @@ pub struct DbConfig {
     pub encryption_key: Option<[u8; 32]>,
     /// Optional script to run after backups
     pub post_backup_script: Option<String>,
+    /// Run entirely in RAM — no disk I/O, all data lost on exit
+    pub in_memory: bool,
 }
 
 impl Default for DbConfig {
@@ -32,12 +34,13 @@ impl Default for DbConfig {
             tiered_mode: false,
             sync_mode: false,
             hot_threshold: 50000,
-            rate_limit_requests: 1000,
-            rate_limit_window: 60,
+            rate_limit_requests: Some(1000),
+            rate_limit_window: Some(60),
             max_body_size: 10 * 1024 * 1024,
             max_keys_per_request: 1000,
             encryption_key: None,
             post_backup_script: None,
+            in_memory: false,
         }
     }
 }

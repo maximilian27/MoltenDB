@@ -11,8 +11,10 @@ use axum::{
         State,
     },
     extract::ws::Utf8Bytes,
+    Extension,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
+use tokio::time::{interval, Duration};
 use tracing::warn;
 
 // ─── WebSocket handler ────────────────────────────────────────────────────────
@@ -24,60 +26,89 @@ use tracing::warn;
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State((db, _, _max_body_size, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    Extension(revocation_store): Extension<auth::RevocationStore>,
 ) -> impl axum::response::IntoResponse {
     // `on_upgrade` completes the handshake and calls our handler with the socket.
-    ws.on_upgrade(|socket| handle_socket(socket, db))
+    ws.on_upgrade(|socket| handle_socket(socket, db, revocation_store))
 }
 
 /// Handle an authenticated WebSocket connection.
 ///
 /// Protocol:
 ///   1. The first message MUST be `{ "action": "AUTH", "token": "<jwt>" }`.
+///      The token is verified AND checked against the revocation store.
 ///      If authentication fails the connection is closed immediately.
 ///   2. After authentication the client can send `{ "action": "SUBSCRIBE", "collection": "<name>" }`
 ///      to register interest in a collection, or `{ "action": "UNSUBSCRIBE", "collection": "<name>" }`
-///      to deregister. Subscriptions are purely advisory — the server pushes change events
-///      regardless of subscription state for now, but the field is reserved for future
-///      per-collection filtering.
-///   3. The server pushes a change event to the client whenever any write (insert, update,
-///      delete, drop) occurs on the database:
+///      to deregister. Subscriptions are purely advisory — the server already filters events
+///      by the token's scopes, so only authorised collections are pushed.
+///   3. The server pushes a change event to the client whenever a write (insert, update,
+///      delete, drop) occurs on a collection the token is authorised to read:
 ///        `{ "event": "change", "collection": "<name>", "key": "<key>", "new_v": <version> }`
+///      Events for collections outside the token's scopes are silently dropped.
 ///      All CRUD operations must be performed via the HTTP endpoints (POST /get, /set, /update,
 ///      /delete). WebSockets are exclusively for real-time push notifications.
 ///
 /// The socket is split into a sender and receiver, each running in their own task.
 /// This allows sending and receiving to happen concurrently without blocking each other.
-async fn handle_socket(mut socket: WebSocket, db: engine::Db) {
-    // Step 1: Require the first message to be an AUTH message.
-    let is_authenticated = match socket.next().await {
+async fn handle_socket(mut socket: WebSocket, db: engine::Db, revocation_store: auth::RevocationStore) {
+    // Step 1: Require the first message to be an AUTH frame.
+    // We return a distinct error string for each failure mode so the client
+    // knows exactly what went wrong instead of getting a generic message.
+    enum AuthResult {
+        Ok(auth::Claims),
+        Err(&'static str),
+    }
+
+    let auth_result = match socket.next().await {
         Some(Ok(Message::Text(text))) => {
-            if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&text) {
-                if payload["action"].as_str() == Some("AUTH") {
-                    if let Some(token) = payload["token"].as_str() {
-                        auth::verify_token(token).is_ok()
+            match serde_json::from_str::<serde_json::Value>(&text) {
+                Err(_) => AuthResult::Err(
+                    r#"{"error":"invalid_message","detail":"Could not parse JSON. Expected {\"action\":\"AUTH\",\"token\":\"<jwt>\"}"}"#,
+                ),
+                Ok(payload) => {
+                    if payload["action"].as_str() != Some("AUTH") {
+                        AuthResult::Err(
+                            r#"{"error":"invalid_action","detail":"First message must have \"action\":\"AUTH\". Use HTTP endpoints for CRUD operations."}"#,
+                        )
+                    } else if let Some(token) = payload["token"].as_str() {
+                        match auth::verify_token(token) {
+                            Err(_) => AuthResult::Err(
+                                r#"{"error":"invalid_token","detail":"JWT verification failed. The token may be expired, malformed, or signed with the wrong secret."}"#,
+                            ),
+                            Ok(c) => {
+                                if revocation_store.is_revoked(&c.jti) {
+                                    warn!("🔒 Rejected WebSocket connection: token JTI '{}' is revoked.", c.jti);
+                                    AuthResult::Err(
+                                        r#"{"error":"token_revoked","detail":"This token has been revoked. Mint a new token via POST /auth/tokens."}"#,
+                                    )
+                                } else {
+                                    AuthResult::Ok(c)
+                                }
+                            }
+                        }
                     } else {
-                        false
+                        AuthResult::Err(
+                            r#"{"error":"missing_token","detail":"AUTH message is missing the \"token\" field. Expected {\"action\":\"AUTH\",\"token\":\"<jwt>\"}"}"#,
+                        )
                     }
-                } else {
-                    false
                 }
-            } else {
-                false
             }
         }
-        _ => false,
+        _ => AuthResult::Err(
+            r#"{"error":"invalid_message","detail":"First message must be a text frame containing {\"action\":\"AUTH\",\"token\":\"<jwt>\"}"}"#,
+        ),
     };
 
-    if !is_authenticated {
-        let _ = socket
-            .send(Message::Text(Utf8Bytes::from(
-                r#"{"error":"Authentication required. Send {\"action\":\"AUTH\",\"token\":\"<jwt>\"} as the first message."}"#,
-            )))
-            .await;
-        let _ = socket.close().await;
-        warn!("🔒 Rejected unauthenticated WebSocket connection.");
-        return;
-    }
+    let claims = match auth_result {
+        AuthResult::Ok(c) => c,
+        AuthResult::Err(msg) => {
+            let _ = socket.send(Message::Text(Utf8Bytes::from(msg))).await;
+            let _ = socket.close().await;
+            warn!("🔒 Rejected WebSocket connection: {}", msg);
+            return;
+        }
+    };
 
     // Authentication succeeded — confirm and explain the subscription-only protocol.
     let _ = socket
@@ -105,17 +136,58 @@ async fn handle_socket(mut socket: WebSocket, db: engine::Db) {
     });
 
     // Spawn a task that forwards database change events to the client.
+    // Only events for collections the token is authorised to read are forwarded.
+    // Admin tokens (scope "*:*:*") receive all events.
+    // Every 30 s the task re-checks the revocation store so that revoking a token
+    // terminates any already-open connection within that window.
     let mut send_task = tokio::spawn(async move {
+        let mut revocation_check = interval(Duration::from_secs(30));
+        revocation_check.tick().await; // consume the immediate first tick
         loop {
             tokio::select! {
-                // A broadcast event from the database is ready to push.
-                Ok(msg) = rx.recv() => {
-                    if sender.send(Message::Text(Utf8Bytes::from(msg))).await.is_err() {
-                        break; // Client disconnected.
+                _ = revocation_check.tick() => {
+                    if revocation_store.is_revoked(&claims.jti) {
+                        warn!("🔒 Closing WebSocket: token JTI '{}' was revoked after connection was established.", claims.jti);
+                        let _ = sender.send(Message::Text(Utf8Bytes::from(
+                            r#"{"error":"token_revoked","detail":"Your token has been revoked. The connection is being closed."}"#,
+                        ))).await;
+                        break;
                     }
                 }
-                // Broadcast channel closed (server shutting down) — exit.
-                else => break,
+                recv_result = rx.recv() => {
+                    match recv_result {
+                        Ok(msg) => {
+                            // Parse the collection name from the broadcast event so we can
+                            // check whether this client's token covers it.
+                            // Event shape: {"event":"change","collection":"<name>","key":"<key>","new_v":<v>}
+                            let allowed = if let Ok(event) = serde_json::from_str::<serde_json::Value>(&msg) {
+                                if let Some(collection) = event.get("collection").and_then(|v| v.as_str()) {
+                                    claims.has_collection_access("read", collection)
+                                } else {
+                                    // Malformed event — skip it.
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
+                            if allowed {
+                                if sender.send(Message::Text(Utf8Bytes::from(msg))).await.is_err() {
+                                    break; // Client disconnected.
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            // The broadcast buffer overflowed — we missed n events.
+                            // Log a warning but keep the connection alive.
+                            warn!("⚠️  WebSocket send task lagged: {} events dropped for this client.", n);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            // Broadcast channel closed (server shutting down) — exit.
+                            break;
+                        }
+                    }
+                }
             }
         }
     });
