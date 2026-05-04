@@ -30,6 +30,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod disk;
 mod encrypted;
+mod memory;
 // tiered.rs provides MmapLogReader (memory-mapped cold log reads) and
 // TieredStorage (hot + cold two-tier backend for large-scale deployments).
 #[cfg(not(target_arch = "wasm32"))]
@@ -39,6 +40,7 @@ mod tiered;
 #[cfg(not(target_arch = "wasm32"))]
 pub use disk::{AsyncDiskStorage, SyncDiskStorage};
 pub use encrypted::EncryptedStorage;
+pub use memory::InMemoryStorage;
 // Re-export TieredStorage so engine/mod.rs and main.rs can use it directly.
 #[cfg(not(target_arch = "wasm32"))]
 pub use tiered::TieredStorage;

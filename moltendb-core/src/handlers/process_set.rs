@@ -36,7 +36,7 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
                 let ref_key        = &ref_str[dot_pos + 1..]; // e.g. "mem4"
 
                 // O(1) hash-map lookup — no scanning, no joins at query time.
-                if let Some(referenced_doc) = db.get(ref_collection, ref_key) {
+                if let Some(referenced_doc) = db.get(ref_collection, vec![ref_key.to_string()]).remove(ref_key) {
                     // Embed the full referenced document under the alias key.
                     result.insert(alias.clone(), referenced_doc);
                 }
@@ -79,7 +79,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 items.push((k.clone(), resolved));
             }
 
-            match db.insert_batch(col, items) {
+            match db.insert(col, items) {
                 Ok(_) => {
                     // Check collection size for auto-eviction (Hybrid Bitcask).
                     if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
@@ -114,7 +114,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 items.push((id, resolved));
             }
 
-            match db.insert_batch(col, items) {
+            match db.insert(col, items) {
                 Ok(_) => {
                     // Check collection size for auto-eviction (Hybrid Bitcask).
                     if let Ok(count) = db.evict_collection(col, db.hot_threshold) {

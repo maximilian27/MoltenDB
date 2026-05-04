@@ -24,7 +24,7 @@ fn test_hot_cold_transition() {
     let db = open_db(2);
     
     // Insert 3 documents into "items" collection
-    db.insert_batch("items", vec![
+    db.insert("items", vec![
         ("k1".to_string(), json!({"v": 1})),
         ("k2".to_string(), json!({"v": 2})),
         ("k3".to_string(), json!({"v": 3})),
@@ -36,9 +36,9 @@ fn test_hot_cold_transition() {
     assert!(evicted > 0, "Should have evicted some documents");
     
     // Verify we can still get all documents (transparent fetch)
-    let v1 = db.get("items", "k1").unwrap();
-    let v2 = db.get("items", "k2").unwrap();
-    let v3 = db.get("items", "k3").unwrap();
+    let v1 = db.get("items", vec!["k1".to_string()]).remove("k1").unwrap();
+    let v2 = db.get("items", vec!["k2".to_string()]).remove("k2").unwrap();
+    let v3 = db.get("items", vec!["k3".to_string()]).remove("k3").unwrap();
     
     assert_eq!(v1["v"], 1);
     assert_eq!(v2["v"], 2);

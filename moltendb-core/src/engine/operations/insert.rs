@@ -1,5 +1,5 @@
 // ─── operations/insert.rs ─────────────────────────────────────────────────────
-// Insert operation: insert_batch.
+// Insert operation: insert.
 // ─────────────────────────────────────────────────────────────────────────────
 
 use dashmap::{DashMap, DashSet};
@@ -21,7 +21,7 @@ use super::super::types::{DbError, LogEntry};
 /// The in-memory state may be partially updated at that point — this is
 /// acceptable because the log is the source of truth and the in-memory state
 /// is rebuilt from it on the next startup.
-pub fn insert_batch(
+pub fn insert(
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,

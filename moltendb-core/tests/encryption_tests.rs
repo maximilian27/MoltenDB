@@ -29,7 +29,7 @@ fn test_encryption_automatic_if_key_provided() {
             encryption_key: Some(key),
             ..Default::default()
         }).expect("Failed to open encrypted db");
-        db.insert_batch("secrets", vec![("top".to_string(), json!({"data": "hidden"}))]).unwrap();
+        db.insert("secrets", vec![("top".to_string(), json!({"data": "hidden"}))]).unwrap();
     }
 
     // 2. Try to open without encryption (should fail to replay or see garbage)
@@ -38,7 +38,7 @@ fn test_encryption_automatic_if_key_provided() {
         sync_mode: true,
         ..Default::default()
     }).expect("Failed to open db without encryption");
-    let val = db_no_enc.get("secrets", "top");
+    let val = db_no_enc.get("secrets", vec!["top".to_string()]).remove("top");
     assert!(val.is_none(), "Should not be able to read encrypted data without key");
 
     // 3. Open again with encryption
@@ -48,7 +48,7 @@ fn test_encryption_automatic_if_key_provided() {
         encryption_key: Some(key),
         ..Default::default()
     }).expect("Failed to reopen encrypted db");
-    let val_enc = db_enc.get("secrets", "top");
+    let val_enc = db_enc.get("secrets", vec!["top".to_string()]).remove("top");
     if val_enc.is_none() {
         panic!("Should read encrypted data with key, but got None. Path: {}", path);
     }
@@ -69,7 +69,7 @@ fn test_plain_json_if_no_key_provided() {
             sync_mode: true,
             ..Default::default()
         }).expect("Failed to open plain db");
-        db.insert_batch("public", vec![("info".to_string(), json!({"data": "visible"}))]).unwrap();
+        db.insert("public", vec![("info".to_string(), json!({"data": "visible"}))]).unwrap();
     }
 
     // 2. Verify it's plain JSON on disk
@@ -83,7 +83,7 @@ fn test_plain_json_if_no_key_provided() {
         sync_mode: true,
         ..Default::default()
     }).expect("Failed to reopen plain db");
-    let val = db2.get("public", "info").unwrap();
+    let val = db2.get("public", vec!["info".to_string()]).remove("info").unwrap();
     assert_eq!(val["data"], "visible");
 
     let _ = std::fs::remove_file(&path);

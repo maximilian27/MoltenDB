@@ -1,0 +1,211 @@
+### ─── IN-MEMORY MODE TEST SUITE ──────────────────────────────────────────────
+### Start MoltenDB with the --in-memory flag (or MOLTENDB_IN_MEMORY=true) before
+### running these requests. Data is stored only in RAM — nothing is written to the
+### WAL log on disk. Restarting the server will wipe all data.
+###
+###   moltendb-server --in-memory --root-user admin --root-password admin123
+###
+### Collections used: `books` and `authors` — completely distinct from the
+### laptops/memory/display collections used in other test files.
+### ──────────────────────────────────────────────────────────────────────────────
+
+
+### ─── STEP 1: Login ──────────────────────────────────────────────────────────
+
+POST http://localhost:1538/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin123"
+}
+
+### Paste the token from the response here:
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3Nzc0Njc0NCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjY2MDQ5NDQwLTJlYjgtNDAzYS1iNTkyLTliYzM5MmNhNGU2NiJ9.NcK7qCCZ4Fz4TlNNm9jsFZlXlMtTiX6Vji3ghxBwsd8
+
+
+### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
+### §1 and §2 must be run in order. Books reference authors via `author_id`.
+### After seeding, restart the server and confirm all data is gone — that proves
+### the in-memory mode is working and nothing was persisted to disk.
+
+### §1. Seed the `authors` collection
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "authors",
+  "data": {
+    "auth1": { "name": "Frank Herbert",    "nationality": "American", "born": 1920, "active": false },
+    "auth2": { "name": "Ursula K. Le Guin","nationality": "American", "born": 1929, "active": false },
+    "auth3": { "name": "Liu Cixin",        "nationality": "Chinese",  "born": 1963, "active": true  },
+    "auth4": { "name": "N.K. Jemisin",     "nationality": "American", "born": 1972, "active": true  },
+    "auth5": { "name": "Isaac Asimov",     "nationality": "American", "born": 1920, "active": false }
+  }
+}
+
+### §2. Seed the `books` collection
+### Each book has a foreign key `author_id` pointing to the `authors` collection.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books",
+  "data": {
+    "bk1": { "title": "Dune",                      "author_id": "auth1", "year": 1965, "genre": "sci-fi",  "pages": 412, "in_print": true,  "rating": 4.8 },
+    "bk2": { "title": "The Left Hand of Darkness", "author_id": "auth2", "year": 1969, "genre": "sci-fi",  "pages": 286, "in_print": true,  "rating": 4.5 },
+    "bk3": { "title": "The Three-Body Problem",    "author_id": "auth3", "year": 2008, "genre": "sci-fi",  "pages": 400, "in_print": true,  "rating": 4.6 },
+    "bk4": { "title": "The Fifth Season",          "author_id": "auth4", "year": 2015, "genre": "fantasy", "pages": 468, "in_print": true,  "rating": 4.7 },
+    "bk5": { "title": "Foundation",                "author_id": "auth5", "year": 1951, "genre": "sci-fi",  "pages": 244, "in_print": true,  "rating": 4.6 },
+    "bk6": { "title": "Children of Dune",          "author_id": "auth1", "year": 1976, "genre": "sci-fi",  "pages": 444, "in_print": false, "rating": 4.2 }
+  }
+}
+
+
+### ─── STEP 3: Reads ───────────────────────────────────────────────────────────
+
+### §3. Get all books — confirm all 6 are in RAM
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books",
+  "fields": ["title", "year", "genre", "rating"]
+}
+
+### §4. Filter — only sci-fi books with rating above 4.5
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books",
+  "fields": ["title", "genre", "rating"],
+  "where": {
+    "genre": "sci-fi",
+    "rating": { "$gt": 4.5 }
+  },
+  "sort": [{ "field": "rating", "order": "desc" }]
+}
+
+### §5. Join — books with their author details embedded
+### Expected: each book document gets an `author` object with name + nationality
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books",
+  "fields": ["title", "year", "rating"],
+  "joins": [
+    { "author": { "from": "authors", "on": "author_id", "fields": ["name", "nationality"] } }
+  ],
+  "sort": [{ "field": "year", "order": "asc" }]
+}
+
+### §6. Join with WHERE — only currently in-print books, with full author info
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books",
+  "fields": ["title", "genre", "in_print"],
+  "joins": [
+    { "author": { "from": "authors", "on": "author_id" } }
+  ],
+  "where": { "in_print": true }
+}
+
+
+### ─── STEP 4: Updates ─────────────────────────────────────────────────────────
+
+### §7. Update a single book — mark "Children of Dune" back in print and fix rating
+### Confirm the change is visible immediately (RAM update, no WAL flush needed)
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books",
+  "data": {
+    "bk6": { "title": "Children of Dune", "author_id": "auth1", "year": 1976, "genre": "sci-fi", "pages": 444, "in_print": true, "rating": 4.4 }
+  }
+}
+
+### §8. Verify the update — bk6 should now show in_print: true and rating: 4.4
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books",
+  "where": { "title": { "$contains": "Children" } }
+}
+
+### §9. Update an author — Liu Cixin wins an award, bump his record
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "authors",
+  "data": {
+    "auth3": { "name": "Liu Cixin", "nationality": "Chinese", "born": 1963, "active": true, "awards": ["Hugo Award"] }
+  }
+}
+
+
+### ─── STEP 5: Deletes ─────────────────────────────────────────────────────────
+
+### §10. Delete a book — remove "Foundation" from the in-memory store
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books",
+  "keys": ["bk5"]
+}
+
+### §11. Confirm deletion — get all books, bk5 (Foundation) should be gone
+### Expected: 5 books returned, no Foundation entry
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books",
+  "fields": ["title", "author_id"],
+  "sort": [{ "field": "title", "order": "asc" }]
+}
+
+### §12. Delete an author — remove Isaac Asimov (whose book was already deleted)
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "authors",
+  "keys": ["auth5"]
+}
+
+
+### ─── STEP 6: Persistence Check (manual) ────────────────────────────────────
+### Stop the server (Ctrl+C) and restart it with --in-memory again.
+### Then run §3 again — the response should be empty (no books), proving that
+### nothing was written to disk and the RAM store was wiped on shutdown.
+###
+###   Expected after restart: { "data": [], "count": 0 }
+
+### §13. Post-restart check — should return empty (no data survived the restart)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "books"
+}

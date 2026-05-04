@@ -169,15 +169,15 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     // Otherwise, fall back to the keys specified in the request, or get all.
     let results: HashMap<String, Value> = if used_index {
         // Index hit — fetch only the candidate documents (fast path).
-        db.get_batch(col_name, candidate_keys)
+        db.get(col_name, candidate_keys)
     } else {
         match payload.get("keys") {
             // Single key lookup: { "keys": "u1" }
-            Some(Value::String(k)) => db.get_batch(col_name, vec![k.to_string()]),
+            Some(Value::String(k)) => db.get(col_name, vec![k.to_string()]),
             // Batch key lookup: { "keys": ["u1", "u2"] }
             Some(Value::Array(arr)) => {
                 let ks = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
-                db.get_batch(col_name, ks)
+                db.get(col_name, ks)
             }
             // No keys specified — return all documents in the collection.
             _ => db.get_all(col_name),
@@ -266,7 +266,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
 
                 // If the foreign key exists, look up the related document.
                 if let Some(fk_val) = fk_val_opt {
-                    if let Some(related_doc) = db.get(target_col, &fk_val) {
+                    if let Some(related_doc) = db.get(target_col, vec![fk_val.clone()]).remove(&fk_val) {
                         // Optionally project the joined document to specific fields.
                         let final_related = if let Some(j_fields) = join_fields {
                             query::project(&related_doc, j_fields)

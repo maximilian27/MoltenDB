@@ -71,6 +71,12 @@ struct Config {
     #[command(subcommand)]
     command: Option<Commands>,
 
+    /// Host address to bind to [env: MOLTENDB_HOST]
+    /// Use "0.0.0.0" to accept connections from any interface (required for Docker).
+    /// Use "127.0.0.1" to restrict to localhost only.
+    #[arg(long, default_value = "0.0.0.0", env = "MOLTENDB_HOST")]
+    host: String,
+
     /// Port to listen on [env: MOLTENDB_PORT]
     #[arg(long, default_value = "1538", env = "MOLTENDB_PORT")]
     port: u16,
@@ -157,6 +163,12 @@ struct Config {
     /// Higher values use more RAM but provide sub-microsecond speeds for more documents.
     #[arg(long, default_value = "50000", env = "MOLTENDB_HOT_THRESHOLD")]
     hot_threshold: usize,
+
+    /// Run entirely in RAM — bypass the WAL and disk storage completely.
+    /// All data is lost when the server exits. Ideal for ephemeral caches,
+    /// CI environments, or Redis-like use cases. [env: MOLTENDB_IN_MEMORY]
+    #[arg(long, default_value = "false", env = "MOLTENDB_IN_MEMORY")]
+    in_memory: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -323,6 +335,8 @@ async fn main() {
     // These are used throughout the rest of main() to configure the server.
     // `cfg.db_path` — path to the database log file on disk (e.g. "my_database.log").
     let db_path = cfg.db_path;
+    // `cfg.host` — IP address to bind to (e.g. "0.0.0.0" or "127.0.0.1").
+    let host = cfg.host;
     // `cfg.port` — TCP port to listen on (e.g. 1538). Already parsed to u16 by clap.
     let port = cfg.port;
     // `cfg.cert` / `cfg.key` — paths to the TLS certificate and private key PEM files.
@@ -347,6 +361,7 @@ async fn main() {
     //            the cold data that's actually needed, reducing startup RAM usage.
     // anything else = single-file mode (AsyncDiskStorage or SyncDiskStorage).
     let is_tiered_mode = cfg.storage_mode.to_lowercase() == "tiered";
+    let is_in_memory = cfg.in_memory;
 
     // ── Encryption key setup ──────────────────────────────────────────────────
     //
@@ -386,12 +401,13 @@ async fn main() {
         sync_mode: is_sync_mode,
         tiered_mode: is_tiered_mode,
         hot_threshold: cfg.hot_threshold,
-        rate_limit_requests,
-        rate_limit_window,
+        rate_limit_requests: Some(rate_limit_requests),
+        rate_limit_window: Some(rate_limit_window),
         max_body_size: cfg.max_body_size,
         max_keys_per_request: cfg.max_keys_per_request,
         encryption_key: encryption_key.cloned(),
         post_backup_script: cfg.post_backup_script,
+        in_memory: cfg.in_memory,
     };
 
     let db = match engine::Db::open(db_config) {
@@ -402,9 +418,14 @@ async fn main() {
         }
     };
 
-    // Spawn a background task for log compaction.
+    if is_in_memory {
+        warn!("⚡ IN-MEMORY MODE — all data is stored in RAM only. Nothing will be persisted to disk. Data will be lost on exit.");
+    }
+
+    // Spawn a background task for log compaction (skipped in --in-memory mode — there is no log to compact).
     // `db.clone()` is cheap — Db is Arc-backed, so this just increments a counter.
     // `tokio::spawn` runs the async block concurrently with the main server task.
+    if !is_in_memory {
     let bg_db = db.clone();
     let bg_db_path = db_path.clone();
     tokio::spawn(async move {
@@ -436,6 +457,7 @@ async fn main() {
             }
         }
     });
+    } // end if !is_in_memory (compaction task)
 
     // Initialize the user store with the admin user and password from Config.
     // We've already verified they are present above.
@@ -458,6 +480,7 @@ async fn main() {
 
     // Spawn a background task to prune expired revocation entries every 60 seconds
     // and persist the updated store to disk so the file stays clean.
+    // In --in-memory mode we still prune in RAM but skip the disk save.
     let prune_store = revocation_store.clone();
     let prune_revocations_path = revocations_path.clone();
     tokio::spawn(async move {
@@ -465,7 +488,9 @@ async fn main() {
         loop {
             interval.tick().await;
             prune_store.prune();
-            prune_store.save_to_file(&prune_revocations_path);
+            if !is_in_memory {
+                prune_store.save_to_file(&prune_revocations_path);
+            }
         }
     });
     info!("🔒 Token revocation store initialized");
@@ -514,7 +539,7 @@ async fn main() {
         .layer(middleware::from_fn(auth::auth_middleware))
         // Inject the RevocationStore as an extension — must wrap auth_middleware so it is
         // available in request.extensions() when auth_middleware executes.
-        .layer(Extension(revocation_store))
+        .layer(Extension(revocation_store.clone()))
         // Inject the revocations file path so handle_revoke can persist after revoking.
         .layer(Extension(auth::RevocationsPath(revocations_path)));
 
@@ -522,7 +547,9 @@ async fn main() {
     let public_routes = Router::new()
         .route("/login", post(handle_login))          // Returns a JWT token on valid credentials
         .route("/ws", get(ws_handler))                // WebSocket upgrade endpoint
-        .route("/system/health", get(handle_health)); // Liveness check — no auth required
+        .route("/system/health", get(handle_health))  // Liveness check — no auth required
+        // Inject the RevocationStore so ws_handler can reject revoked tokens.
+        .layer(Extension(revocation_store));
 
     // CORS layer — configured via --cors-origin / CORS_ORIGIN.
     // Defaults to "*" (any origin) for development convenience.
@@ -612,8 +639,14 @@ async fn main() {
         // Inject the app state (db + users) into all handlers.
         .with_state(app_state);
 
-    // Bind to all network interfaces (0.0.0.0) on the configured port.
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    // Parse the configured host + port into a SocketAddr.
+    // Supports both IPv4 ("0.0.0.0", "127.0.0.1") and IPv6 ("::" , "::1").
+    let addr: SocketAddr = format!("{}:{}", host, port)
+        .parse()
+        .unwrap_or_else(|e| {
+            error!("🔥 Invalid --host value '{}': {}", host, e);
+            std::process::exit(1);
+        });
 
     if cfg.dev_mode {
         warn!("⚠️  DEV MODE ENABLED — server is running over plain HTTP/WS. NEVER use in production!");
