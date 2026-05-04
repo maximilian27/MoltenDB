@@ -45,7 +45,6 @@ pub use storage::{AsyncDiskStorage, SyncDiskStorage};
 
 // DashMap = concurrent hash map. DashSet = concurrent hash set.
 use dashmap::{DashMap, DashSet};
-use tracing::{info};
 // Value = dynamically-typed JSON value.
 use serde_json::Value;
 // Standard HashMap — used for return values from get operations.
@@ -53,7 +52,6 @@ use std::collections::HashMap;
 // Arc = thread-safe reference-counted pointer.
 // Wrapping fields in Arc allows Db to be cheaply cloned — all clones share
 // the same underlying data.
-use std::ops::ControlFlow;
 use std::sync::Arc;
 // Tokio's broadcast channel: one sender, many receivers.
 // Used to push real-time change notifications to WebSocket subscribers.
@@ -262,63 +260,13 @@ impl Db {
     ///   - One INSERT entry per live document (current value only).
     ///   - One INDEX entry per registered index (index data is rebuilt on replay).
     pub fn compact(&self) -> Result<(), DbError> {
-        info!("🔨 Starting Log Compaction...");
-
-        // Build the minimal set of entries representing the current state.
-        let mut entries = Vec::new();
-
-        // One INSERT per live document across all collections.
-        for col_ref in self.state.iter() {
-            let col_name = col_ref.key();
-            for item_ref in col_ref.value().iter() {
-                // To compact, we need the full Value. If it's Cold, we fetch it from storage.
-                let entry = match item_ref.value() {
-                    crate::engine::types::DocumentState::Hot(v) => {
-                        types::LogEntry::new(
-                            "INSERT".to_string(),
-                            col_name.clone(),
-                            item_ref.key().clone(),
-                            v.clone(),
-                        )
-                    }
-                    crate::engine::types::DocumentState::Cold(ptr) => {
-                        let bytes = self.storage.read_at(ptr.offset, ptr.length)?;
-                        serde_json::from_slice(&bytes)?
-                    }
-                };
-                entries.push(entry);
-            }
-        }
-
-        // One SCHEMA entry per collection.
-        #[cfg(feature = "schema")]
-        for schema_ref in self.schemas.iter() {
-            let col_name = schema_ref.key();
-            let (schema_json, _) = &**schema_ref.value();
-            entries.push(types::LogEntry::new(
-                "SCHEMA".to_string(),
-                col_name.clone(),
-                "".to_string(),
-                schema_json.clone(),
-            ));
-        }
-
-        // One INDEX entry per registered index.
-        // The index name format is "collection:field" — we split it to get both parts.
-        for index_ref in self.indexes.iter() {
-            let parts: Vec<&str> = index_ref.key().split(':').collect();
-            if parts.len() == 2 {
-                entries.push(types::LogEntry::new(
-                    "INDEX".to_string(),
-                    parts[0].to_string(),
-                    parts[1].to_string(),       // field name
-                    serde_json::json!(null),
-                ));
-            }
-        }
-
-        // Delegate the actual file rewrite (and snapshot write) to the storage backend.
-        self.storage.compact_with_hook(entries.clone(), self.post_backup_script.clone())?;
+        let entries = operations::compact(
+            &self.state,
+            #[cfg(feature = "schema")] &self.schemas,
+            &self.indexes,
+            &*self.storage,
+            self.post_backup_script.clone(),
+        )?;
 
         // After compaction the log is rewritten and all old RecordPointers are invalid.
         // Promote every Cold entry in the in-memory state to Hot so subsequent reads
@@ -335,7 +283,6 @@ impl Db {
             }
         }
 
-        info!("✅ Log Compaction Finished!");
         Ok(())
     }
 
@@ -344,43 +291,7 @@ impl Db {
     /// This converts `Hot(Value)` entries into `Cold(RecordPointer)` entries.
     /// In this v1, it re-scans the log to find the exact byte offsets for the documents.
     pub fn evict_collection(&self, collection: &str, limit: usize) -> Result<usize, DbError> {
-        let col_len = if let Some(col) = self.state.get(collection) {
-            col.len()
-        } else {
-            return Err(DbError::CollectionNotFound);
-        };
-
-        if col_len <= limit {
-            return Ok(0);
-        }
-
-        let mut evicted_count = 0;
-        let mut offset = 0u64;
-        let to_evict = col_len - limit;
-
-        // To evict properly, we need the pointers. Since we don't store them for
-        // Hot documents, we re-scan the log to find them.
-        self.storage.stream_log_into(&mut |entry, length| {
-            if entry.collection == collection {
-                if evicted_count < to_evict {
-                    if let Some(col) = self.state.get(collection) {
-                        if let Some(mut doc_state) = col.get_mut(&entry.key) {
-                            if let crate::engine::types::DocumentState::Hot(_) = *doc_state {
-                                *doc_state = crate::engine::types::DocumentState::Cold(crate::engine::types::RecordPointer {
-                                    offset,
-                                    length,
-                                });
-                                evicted_count += 1;
-                            }
-                        }
-                    }
-                }
-            }
-            offset += (length + 1) as u64;
-            ControlFlow::Continue(())
-        })?;
-
-        Ok(evicted_count)
+        operations::evict_collection(&self.state, &*self.storage, collection, limit)
     }
 
     /// Recover the database state to a specific point in time or sequence number.
@@ -393,124 +304,6 @@ impl Db {
         to_time: Option<u64>,
         to_seq: Option<u64>,
     ) -> Result<Vec<LogEntry>, DbError> {
-        let state: DashMap<String, DashMap<String, crate::engine::types::DocumentState>> = DashMap::new();
-        let indexes: DashMap<String, DashMap<String, DashSet<String>>> = DashMap::new();
-        #[cfg(feature = "schema")]
-        let schemas: DashMap<String, Arc<(serde_json::Value, jsonschema::Validator)>> = DashMap::new();
-
-            let mut offset = 0u64;
-            let mut count = 0u64;
-            let mut current_tx_entries = Vec::new();
-            let mut current_tx_id = None;
-            
-            storage.stream_log_into(&mut |entry, length| {
-                // Condition 1: Check Timestamp
-                if let Some(t) = to_time {
-                    if entry._t > t {
-                        return ControlFlow::Break(());
-                    }
-                }
-    
-                // Condition 2: Check Sequence
-                if let Some(s) = to_seq {
-                    if count >= s {
-                        return ControlFlow::Break(());
-                    }
-                }
-
-            let pointer = crate::engine::types::RecordPointer {
-                offset,
-                length,
-            };
-
-            match entry.cmd.as_str() {
-                "TX_BEGIN" => {
-                    current_tx_id = Some(entry.key.clone());
-                    current_tx_entries.clear();
-                }
-                "TX_COMMIT" => {
-                    if current_tx_id.as_ref() == Some(&entry.key) {
-                        for (e, p) in current_tx_entries.drain(..) {
-                            crate::engine::storage::apply_entry(
-                                &e,
-                                &state,
-                                &indexes,
-                                #[cfg(feature = "schema")] &schemas,
-                                Some(p),
-                            );
-                        }
-                        current_tx_id = None;
-                    }
-                }
-                _ => {
-                    if current_tx_id.is_some() {
-                        current_tx_entries.push((entry, pointer));
-                    } else {
-                        crate::engine::storage::apply_entry(
-                            &entry,
-                            &state,
-                            &indexes,
-                            #[cfg(feature = "schema")] &schemas,
-                            Some(pointer),
-                        );
-                    }
-                }
-            }
-
-            count += 1;
-            offset += (length + 1) as u64;
-            ControlFlow::Continue(())
-        })?;
-
-        // Convert the recovered state into LogEntries (similar to compact logic)
-        let mut entries = Vec::new();
-        for col_ref in state.iter() {
-            let col_name = col_ref.key();
-            for item_ref in col_ref.value().iter() {
-                let entry = match item_ref.value() {
-                    crate::engine::types::DocumentState::Hot(v) => {
-                        LogEntry::new(
-                            "INSERT".to_string(),
-                            col_name.clone(),
-                            item_ref.key().clone(),
-                            v.clone(),
-                        )
-                    }
-                    crate::engine::types::DocumentState::Cold(ptr) => {
-                        let bytes = storage.read_at(ptr.offset, ptr.length).unwrap_or_default();
-                        serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-                            LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), serde_json::Value::Null)
-                        })
-                    }
-                };
-                entries.push(entry);
-            }
-        }
-
-        #[cfg(feature = "schema")]
-        for schema_ref in schemas.iter() {
-            let col_name = schema_ref.key();
-            let (schema_json, _) = &**schema_ref.value();
-            entries.push(LogEntry::new(
-                "SCHEMA".to_string(),
-                col_name.clone(),
-                "".to_string(),
-                schema_json.clone(),
-            ));
-        }
-
-        for index_ref in indexes.iter() {
-            let parts: Vec<&str> = index_ref.key().split(':').collect();
-            if parts.len() == 2 {
-                entries.push(LogEntry::new(
-                    "INDEX".to_string(),
-                    parts[0].to_string(),
-                    parts[1].to_string(),
-                    serde_json::json!(null),
-                ));
-            }
-        }
-
-        Ok(entries)
+        operations::recover_to(storage, to_time, to_seq)
     }
 }
