@@ -191,21 +191,9 @@ impl Db {
         Ok(updated)
     }
 
-    /// Delete a single document by key.
-    pub fn delete(&self, collection: &str, key: &str) -> Result<(), DbError> {
+    /// Delete one or more documents by key. Pass a single key to delete one document.
+    pub fn delete(&self, collection: &str, keys: Vec<String>) -> Result<(), DbError> {
         operations::delete(
-            &self.state,
-            &self.indexes,
-            &self.storage,
-            &self.tx,
-            collection,
-            key,
-        )
-    }
-
-    /// Delete multiple documents by key in one call.
-    pub fn delete_batch(&self, collection: &str, keys: Vec<String>) -> Result<(), DbError> {
-        operations::delete_batch(
             &self.state,
             &self.indexes,
             &self.storage,

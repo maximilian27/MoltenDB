@@ -39,7 +39,7 @@ fn test_basic_crud() {
     assert_eq!(u1_updated["name"], "Alice"); // Ensure name is preserved (Db::update is partial)
     
     // Delete
-    db.delete("users", "u2").expect("Delete failed");
+    db.delete("users", vec!["u2".to_string()]).expect("Delete failed");
     assert!(db.get("users", vec!["u2".to_string()]).is_empty());
 }
 
