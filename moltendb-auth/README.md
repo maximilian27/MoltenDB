@@ -165,9 +165,8 @@ The root token never leaves your backend. Clients only ever receive a narrowly s
 
 ---
 
-## Current limitations (v0.10.0)
+## Current limitations (v0.10.2)
 
-- **Single root user** — one root user is configured at startup via `--root-user` / `--root-password`. There is no HTTP endpoint to create or delete users at runtime. Your own user table handles that.
 - **No token refresh** — tokens expire after the configured TTL. Re-mint via `/auth/delegate` when needed.
 - **In-memory revocation only** — the revocation store is persisted to a `.revocations.json` file alongside the WAL and reloaded on startup, but revocations are not replicated across nodes.
 - **JWT secret via CLI arg** — `--jwt-secret` appears in the process list. For production, pass it via the `MOLTENDB_JWT_SECRET` environment variable instead.
