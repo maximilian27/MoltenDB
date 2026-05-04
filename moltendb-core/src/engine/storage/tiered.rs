@@ -84,9 +84,9 @@ use std::sync::Arc;
 /// Maximum size of the hot log before it is promoted to the cold tier.
 /// When compact() is called and the hot log exceeds this size, the hot log
 /// is appended to the cold log and a fresh hot log is started.
-/// 100 MB is a good default: small enough for fast startup replay, large enough
+/// 50 MB is a good default: small enough for fast startup replay, large enough
 /// to avoid too-frequent promotions.
-const HOT_TIER_MAX_BYTES: u64 = 100 * 1024 * 1024; // 100 MB
+const HOT_TIER_MAX_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 
 // ─── MmapLogReader ────────────────────────────────────────────────────────────
 

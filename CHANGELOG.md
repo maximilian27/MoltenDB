@@ -1,3 +1,11 @@
+# [0.10.1] (2026-05-04)
+### Refactor
+* Extracted `Db::open()` (native) and `Db::open_wasm()` (WASM) from `engine/mod.rs` into dedicated files `engine/open.rs` and `engine/open_wasm.rs`; `engine/mod.rs` now only declares and delegates
+* Removed duplicate single-key `get` method; renamed `get_batch` to `get` — callers now pass `Vec<String>` and receive `HashMap<String, Value>`; all call sites and tests updated
+* Removed duplicate single-key `delete` method; renamed `delete_batch` to `delete` — callers now pass `Vec<String>`; all call sites and tests updated
+* Renamed `insert_batch` to `insert` across the entire codebase for consistency with the new `get`/`delete` naming
+* Moved `compact`, `evict_collection`, and `recover_to` implementations from `engine/mod.rs` into dedicated files `operations/compact.rs`, `operations/evict.rs`, and `operations/recover.rs`; `engine/mod.rs` is now a thin delegation layer
+
 # [0.10.0] (2026-05-01)
 ### Features
 * WebSocket JWT scope filtering — each connected client only receives change events for collections their token's scopes grant `read` access to; admin tokens (`*:*:*`) receive all events
