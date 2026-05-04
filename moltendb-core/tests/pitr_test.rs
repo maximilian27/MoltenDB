@@ -20,7 +20,7 @@ fn test_pitr_timestamp_metadata() {
         .unwrap()
         .as_millis() as u64;
     
-    db.insert_batch("test", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();
+    db.insert("test", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();
     
     let t_end = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -50,7 +50,7 @@ fn test_pitr_timestamp_metadata() {
         sync_mode: true,
         ..Default::default()
     }).unwrap();
-    let _k1 = db2.get("test", "k1").expect("k1 should be recovered");
+    let _k1 = db2.get("test", vec!["k1".to_string()]).remove("k1").expect("k1 should be recovered");
     
     // Instead, we verify that PITR recovery works which relies on _t.
     let sync_storage = moltendb_core::engine::SyncDiskStorage::new(log_path_str).unwrap();

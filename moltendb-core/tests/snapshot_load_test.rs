@@ -22,7 +22,7 @@ fn test_snapshot_load_with_empty_log() {
             max_body_size: 1024 * 1024,
             ..Default::default()
         }).unwrap();
-        db.insert_batch("users", vec![
+        db.insert("users", vec![
             ("user1".to_string(), json!({"name": "Alice"})),
             ("user2".to_string(), json!({"name": "Bob"})),
         ]).unwrap();
@@ -48,8 +48,8 @@ fn test_snapshot_load_with_empty_log() {
         }).unwrap();
         
         // 5. Try to get data
-        let user1 = db.get("users", "user1");
-        let user2 = db.get("users", "user2");
+        let user1 = db.get("users", vec!["user1".to_string()]).remove("user1");
+        let user2 = db.get("users", vec!["user2".to_string()]).remove("user2");
 
         assert!(user1.is_some(), "User1 should be loaded from snapshot");
         assert_eq!(user1.unwrap()["name"], "Alice");

@@ -38,7 +38,7 @@ pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize, ma
                     debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
                 }
             }
-            match db.delete(col, k) {
+            match db.delete(col, vec![k.to_string()]) {
                 Ok(_)  => (200, json!({ "status": "ok", "deleted": 1 })),
                 Err(e) => (500, json!({ "error": "Failed to delete key", "details": e.to_string(), "statusCode": 500 }))
             }
@@ -60,7 +60,7 @@ pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize, ma
                 }
             }
 
-            match db.delete_batch(col, keys) {
+            match db.delete(col, keys) {
                 Ok(_)  => (200, json!({ "status": "ok", "deleted": count })),
                 Err(e) => (500, json!({ "error": "Failed to delete batch", "details": e.to_string(), "statusCode": 500 }))
             }

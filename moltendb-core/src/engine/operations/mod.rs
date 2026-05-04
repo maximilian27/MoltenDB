@@ -22,8 +22,16 @@ mod read;
 mod insert;
 mod update;
 mod delete;
+mod compact;
+mod evict;
+#[cfg(not(target_arch = "wasm32"))]
+mod recover;
 
-pub use read::{get, get_all, get_batch};
-pub use insert::insert_batch;
+pub use read::{get, get_all};
+pub use insert::insert;
 pub use update::update;
-pub use delete::{delete, delete_batch, delete_collection};
+pub use delete::{delete, delete_collection};
+pub use compact::compact;
+pub use evict::evict_collection;
+#[cfg(not(target_arch = "wasm32"))]
+pub use recover::recover_to;

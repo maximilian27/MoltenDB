@@ -16,7 +16,7 @@ fn test_snapshot_versioning() {
         sync_mode: true,
         ..Default::default()
     }).unwrap();
-    db.insert_batch("test", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();
+    db.insert("test", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();
     
     // 2. Compact for the first time -> creates snapshot.bin
     db.compact().expect("First compaction failed");
@@ -31,7 +31,7 @@ fn test_snapshot_versioning() {
     sleep(Duration::from_secs(1));
 
     // 3. Write more data and compact again -> should move first snapshot to backup/
-    db.insert_batch("test", vec![("k2".to_string(), json!({"v": 2}))]).unwrap();
+    db.insert("test", vec![("k2".to_string(), json!({"v": 2}))]).unwrap();
     db.compact().expect("Second compaction failed");
     
     assert!(snapshot_path.exists(), "Current snapshot should still exist");
@@ -47,7 +47,7 @@ fn test_snapshot_versioning() {
 
     // 4. Third compaction
     sleep(Duration::from_secs(1));
-    db.insert_batch("test", vec![("k3".to_string(), json!({"v": 3}))]).unwrap();
+    db.insert("test", vec![("k3".to_string(), json!({"v": 3}))]).unwrap();
     db.compact().expect("Third compaction failed");
     
     let backups: Vec<_> = fs::read_dir(&backup_dir).unwrap().collect();

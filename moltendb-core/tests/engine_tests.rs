@@ -26,21 +26,21 @@ fn test_basic_crud() {
         ("u1".to_string(), json!({"name": "Alice", "age": 30})),
         ("u2".to_string(), json!({"name": "Bob", "age": 25})),
     ];
-    db.insert_batch("users", items).expect("Insert failed");
+    db.insert("users", items).expect("Insert failed");
     
     // Get
-    let u1 = db.get("users", "u1").expect("Failed to get u1");
+    let u1 = db.get("users", vec!["u1".to_string()]).remove("u1").expect("Failed to get u1");
     assert_eq!(u1["name"], "Alice");
     
     // Update
     db.update("users", "u1", json!({"age": 31})).expect("Update failed");
-    let u1_updated = db.get("users", "u1").unwrap();
+    let u1_updated = db.get("users", vec!["u1".to_string()]).remove("u1").unwrap();
     assert_eq!(u1_updated["age"], 31);
     assert_eq!(u1_updated["name"], "Alice"); // Ensure name is preserved (Db::update is partial)
     
     // Delete
-    db.delete("users", "u2").expect("Delete failed");
-    assert!(db.get("users", "u2").is_none());
+    db.delete("users", vec!["u2".to_string()]).expect("Delete failed");
+    assert!(db.get("users", vec!["u2".to_string()]).is_empty());
 }
 
 #[test]
@@ -51,13 +51,13 @@ fn test_batch_operations() {
         (format!("k{}", i), json!({"v": i}))
     }).collect::<Vec<_>>();
     
-    db.insert_batch("bench", items).expect("Batch insert failed");
+    db.insert("bench", items).expect("Batch insert failed");
     
     let all = db.get_all("bench");
     assert_eq!(all.len(), 100);
     
     let keys = vec!["k0".to_string(), "k50".to_string(), "k99".to_string()];
-    let batch = db.get_batch("bench", keys);
+    let batch = db.get("bench", keys);
     assert_eq!(batch.len(), 3);
     assert_eq!(batch["k50"]["v"], 50);
 }
@@ -77,7 +77,7 @@ fn test_persistence() {
             sync_mode: true,
             ..Default::default()
         }).unwrap();
-        db.insert_batch("items", vec![("k1".to_string(), json!({"val": 100}))]).unwrap();
+        db.insert("items", vec![("k1".to_string(), json!({"val": 100}))]).unwrap();
     }
 
     // Reopen
@@ -86,7 +86,7 @@ fn test_persistence() {
         sync_mode: true,
         ..Default::default()
     }).unwrap();
-    let val = db2.get("items", "k1").unwrap();
+    let val = db2.get("items", vec!["k1".to_string()]).remove("k1").unwrap();
     assert_eq!(val["val"], 100);
     
     let _ = std::fs::remove_file(&path);
@@ -97,12 +97,12 @@ fn test_compaction() {
     let db = open_db();
     
     // Write some data
-    db.insert_batch("c", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();
+    db.insert("c", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();
     db.update("c", "k1", json!({"v": 2})).unwrap();
     db.update("c", "k1", json!({"v": 3})).unwrap();
     
     db.compact().expect("Compaction failed");
     
-    let val = db.get("c", "k1").unwrap();
+    let val = db.get("c", vec!["k1".to_string()]).remove("k1").unwrap();
     assert_eq!(val["v"], 3);
 }

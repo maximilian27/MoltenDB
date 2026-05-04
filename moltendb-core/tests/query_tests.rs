@@ -25,7 +25,7 @@ fn seed_data(db: &Db) {
         ("p3".to_string(), json!({"type": "vegetable", "name": "carrot", "price": 0.8})),
         ("p4".to_string(), json!({"type": "vegetable", "name": "broccoli", "price": 1.2})),
     ];
-    db.insert_batch("products", items).unwrap();
+    db.insert("products", items).unwrap();
 }
 
 #[test]

@@ -29,7 +29,9 @@ mod storage;    // StorageBackend trait + concrete implementations
 mod config;     // DbConfig struct
 #[cfg(feature = "schema")]
 mod schema;     // JSON Schema validation
-mod operations; // get, get_all, insert_batch, update, delete, etc.
+mod operations; // get, get_all, insert, update, delete, etc.
+mod open;       // Db::open() — native constructor
+mod open_wasm;  // Db::open_wasm() — WASM constructor
 
 // Re-export LogEntry so it can be used by tests and other crates.
 pub use types::{DbError, LogEntry};
@@ -43,7 +45,6 @@ pub use storage::{AsyncDiskStorage, SyncDiskStorage};
 
 // DashMap = concurrent hash map. DashSet = concurrent hash set.
 use dashmap::{DashMap, DashSet};
-use tracing::{info};
 // Value = dynamically-typed JSON value.
 use serde_json::Value;
 // Standard HashMap — used for return values from get operations.
@@ -51,7 +52,6 @@ use std::collections::HashMap;
 // Arc = thread-safe reference-counted pointer.
 // Wrapping fields in Arc allows Db to be cheaply cloned — all clones share
 // the same underlying data.
-use std::ops::ControlFlow;
 use std::sync::Arc;
 // Tokio's broadcast channel: one sender, many receivers.
 // Used to push real-time change notifications to WebSocket subscribers.
@@ -127,189 +127,6 @@ pub struct Db {
 }
 
 impl Db {
-    /// Open (or create) a database at the given file path.
-    /// Only available on native (non-WASM) builds.
-    ///
-    /// `sync_mode`      — if true, use SyncDiskStorage (flush on every write).
-    ///                    if false, use AsyncDiskStorage (flush every 50ms).
-    ///                    Ignored when `tiered_mode` is true.
-    /// `tiered_mode`    — if true, use TieredStorage (hot + cold two-tier backend).
-    ///                    Hot writes go to the active log; cold data is archived and
-    ///                    read via mmap on startup. Best for large datasets (100k+ docs).
-    ///                    Enable with STORAGE_MODE=tiered environment variable.
-    /// `encryption_key` — if Some, wrap the storage in EncryptedStorage.
-    ///                    if None, data is stored in plaintext (not recommended).
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn open(config: DbConfig) -> Result<Self, DbError> {
-        let path = &config.path;
-        let sync_mode = config.sync_mode;
-        let tiered_mode = config.tiered_mode;
-        let hot_threshold = config.hot_threshold;
-        let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
-        let rate_limit_window = config.rate_limit_window.unwrap_or(60);
-        let max_body_size = config.max_body_size;
-        let max_keys_per_request = config.max_keys_per_request;
-        let encryption_key = config.encryption_key;
-        let post_backup_script = config.post_backup_script;
-        let in_memory = config.in_memory;
-
-        // Create the shared in-memory state containers.
-        let state = Arc::new(DashMap::new());
-        // Create the broadcast channel with a buffer of 100 messages.
-        // If the buffer fills up (no subscribers reading), old messages are dropped.
-        let (tx, _rx) = broadcast::channel(1000);
-        let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
-            Arc::new(Default::default());
-        let query_heatmap = Arc::new(Default::default());
-        #[cfg(feature = "schema")]
-        let schemas = Arc::new(DashMap::new());
-
-        // Ensure the parent directory exists (skipped in in-memory mode — no file is created).
-        if !in_memory {
-            if let Some(parent) = std::path::Path::new(path).parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-
-        // Choose the base storage backend based on the configured mode.
-        //
-        //   in_memory = true    → InMemoryStorage: all data lives in the DashMap only.
-        //                         No disk I/O at all. Data is lost on exit.
-        //                         Ideal for ephemeral caches and CI environments.
-        //
-        //   tiered_mode = true  → TieredStorage: hot log (async writes) + cold log
-        //                         (mmap reads). Best for large datasets. The cold log
-        //                         accumulates promoted hot data and is paged by the OS.
-        //
-        //   sync_mode = true    → SyncDiskStorage: every write is flushed to disk
-        //                         immediately. Zero data loss, lower throughput.
-        //
-        //   default             → AsyncDiskStorage: writes buffered in memory, flushed
-        //                         every 50ms. Highest throughput, up to 50ms data loss.
-        let base_storage: Arc<dyn StorageBackend> = if in_memory {
-            Arc::new(storage::InMemoryStorage)
-        } else if tiered_mode {
-            Arc::new(storage::TieredStorage::new(path)?)
-        } else if sync_mode {
-            Arc::new(storage::SyncDiskStorage::new(path)?)
-        } else {
-            Arc::new(storage::AsyncDiskStorage::new(path)?)
-        };
-
-        // Optionally wrap the base storage in EncryptedStorage.
-        // Encryption is skipped in in-memory mode — there is nothing to encrypt on disk.
-        // EncryptedStorage is transparent — it encrypts on write and decrypts
-        // on read, so the rest of the engine doesn't know encryption is happening.
-        let storage: Arc<dyn StorageBackend> = if !in_memory {
-            if let Some(key) = encryption_key {
-                Arc::new(storage::EncryptedStorage::new(base_storage, &key))
-            } else {
-                base_storage
-            }
-        } else {
-            base_storage
-        };
-
-        // Replay the log (or snapshot + delta) into the in-memory state.
-        // After this call, `state` and `indexes` reflect the persisted data.
-        storage::stream_into_state(
-            &*storage,
-            &state,
-            &indexes,
-            #[cfg(feature = "schema")] &schemas,
-        )?;
-
-        Ok(Self {
-            state,
-            storage,
-            tx,
-            indexes,
-            query_heatmap,
-            hot_threshold,
-            rate_limit_requests,
-            rate_limit_window,
-            max_body_size,
-            max_keys_per_request,
-            #[cfg(feature = "schema")]
-            schemas,
-            post_backup_script,
-            tiered_mode,
-            #[cfg(not(target_arch = "wasm32"))]
-            started_at: std::time::Instant::now(),
-        })
-    }
-
-    /// Open (or create) a database in the browser using OPFS.
-    /// Only available on WASM builds. Async because OPFS APIs return Promises.
-    ///
-    /// `db_name` — the filename in the OPFS root directory (e.g. "analytics_db").
-    #[cfg(target_arch = "wasm32")]
-    pub async fn open_wasm(config: DbConfig) -> Result<Self, DbError> {
-        let db_name = &config.path;
-        let hot_threshold = config.hot_threshold;
-        let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
-        let rate_limit_window = config.rate_limit_window.unwrap_or(60);
-        let max_body_size = config.max_body_size;
-        let max_keys_per_request = config.max_keys_per_request;
-        let encryption_key = config.encryption_key;
-        let sync_mode = config.sync_mode;
-        let post_backup_script = config.post_backup_script;
-
-        let state = Arc::new(DashMap::new());
-        let (tx, _rx) = broadcast::channel(1000);
-        let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
-            Arc::new(Default::default());
-        let query_heatmap = Arc::new(Default::default());
-        #[cfg(feature = "schema")]
-        let schemas = Arc::new(DashMap::new());
-
-        // Choose storage backend: pure RAM (no OPFS) or OPFS file.
-        // When in_memory = true, OpfsStorage is never opened — no file is created
-        // and no log is replayed. All data lives only in the DashMap.
-        let storage: Arc<dyn StorageBackend> = if config.in_memory {
-            Arc::new(storage::InMemoryStorage)
-        } else {
-            // Open the OPFS file. This is async because the browser's OPFS API
-            // uses Promises which we must await.
-            let base: Arc<dyn StorageBackend> =
-                Arc::new(storage::OpfsStorage::new(db_name, sync_mode).await?);
-
-            // Apply encryption wrapper if a key is provided.
-            let wrapped = if let Some(key) = encryption_key {
-                Arc::new(storage::EncryptedStorage::new(base, &key)) as Arc<dyn StorageBackend>
-            } else {
-                base
-            };
-
-            // Replay the log into the in-memory state.
-            storage::stream_into_state(
-                &*wrapped,
-                &state,
-                &indexes,
-                #[cfg(feature = "schema")] &schemas,
-            )?;
-
-            wrapped
-        };
-
-        Ok(Self {
-            state,
-            storage,
-            tx,
-            indexes,
-            query_heatmap,
-            hot_threshold,
-            rate_limit_requests,
-            rate_limit_window,
-            max_body_size,
-            max_keys_per_request,
-            #[cfg(feature = "schema")]
-            schemas,
-            post_backup_script,
-            tiered_mode: config.tiered_mode,
-        })
-    }
-
     /// Returns the total number of hot (in-memory) keys across all collections.
     pub fn hot_keys_count(&self) -> usize {
         self.state.iter().map(|c| c.value().len()).sum()
@@ -322,9 +139,10 @@ impl Db {
         self.tx.subscribe()
     }
 
-    /// Retrieve a single document by key. Returns None if not found.
-    pub fn get(&self, collection: &str, key: &str) -> Option<Value> {
-        operations::get(&self.state, &self.storage, collection, key)
+    /// Retrieve documents by their keys. Returns a HashMap of found key→value pairs.
+    /// Missing keys are silently skipped. Pass a single key to retrieve one document.
+    pub fn get(&self, collection: &str, keys: Vec<String>) -> HashMap<String, Value> {
+        operations::get(&self.state, &self.storage, collection, keys)
     }
 
     /// Retrieve all documents in a collection as a HashMap.
@@ -332,15 +150,10 @@ impl Db {
         operations::get_all(&self.state, &self.storage, collection)
     }
 
-    /// Retrieve a specific set of documents by their keys.
-    pub fn get_batch(&self, collection: &str, keys: Vec<String>) -> HashMap<String, Value> {
-        operations::get_batch(&self.state, &self.storage, collection, keys)
-    }
-
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
-    pub fn insert_batch(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
-        operations::insert_batch(
+    pub fn insert(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
+        operations::insert(
             &self.state,
             &self.indexes,
             &self.storage,
@@ -376,21 +189,9 @@ impl Db {
         Ok(updated)
     }
 
-    /// Delete a single document by key.
-    pub fn delete(&self, collection: &str, key: &str) -> Result<(), DbError> {
+    /// Delete one or more documents by key. Pass a single key to delete one document.
+    pub fn delete(&self, collection: &str, keys: Vec<String>) -> Result<(), DbError> {
         operations::delete(
-            &self.state,
-            &self.indexes,
-            &self.storage,
-            &self.tx,
-            collection,
-            key,
-        )
-    }
-
-    /// Delete multiple documents by key in one call.
-    pub fn delete_batch(&self, collection: &str, keys: Vec<String>) -> Result<(), DbError> {
-        operations::delete_batch(
             &self.state,
             &self.indexes,
             &self.storage,
@@ -459,63 +260,13 @@ impl Db {
     ///   - One INSERT entry per live document (current value only).
     ///   - One INDEX entry per registered index (index data is rebuilt on replay).
     pub fn compact(&self) -> Result<(), DbError> {
-        info!("🔨 Starting Log Compaction...");
-
-        // Build the minimal set of entries representing the current state.
-        let mut entries = Vec::new();
-
-        // One INSERT per live document across all collections.
-        for col_ref in self.state.iter() {
-            let col_name = col_ref.key();
-            for item_ref in col_ref.value().iter() {
-                // To compact, we need the full Value. If it's Cold, we fetch it from storage.
-                let entry = match item_ref.value() {
-                    crate::engine::types::DocumentState::Hot(v) => {
-                        types::LogEntry::new(
-                            "INSERT".to_string(),
-                            col_name.clone(),
-                            item_ref.key().clone(),
-                            v.clone(),
-                        )
-                    }
-                    crate::engine::types::DocumentState::Cold(ptr) => {
-                        let bytes = self.storage.read_at(ptr.offset, ptr.length)?;
-                        serde_json::from_slice(&bytes)?
-                    }
-                };
-                entries.push(entry);
-            }
-        }
-
-        // One SCHEMA entry per collection.
-        #[cfg(feature = "schema")]
-        for schema_ref in self.schemas.iter() {
-            let col_name = schema_ref.key();
-            let (schema_json, _) = &**schema_ref.value();
-            entries.push(types::LogEntry::new(
-                "SCHEMA".to_string(),
-                col_name.clone(),
-                "".to_string(),
-                schema_json.clone(),
-            ));
-        }
-
-        // One INDEX entry per registered index.
-        // The index name format is "collection:field" — we split it to get both parts.
-        for index_ref in self.indexes.iter() {
-            let parts: Vec<&str> = index_ref.key().split(':').collect();
-            if parts.len() == 2 {
-                entries.push(types::LogEntry::new(
-                    "INDEX".to_string(),
-                    parts[0].to_string(),
-                    parts[1].to_string(),       // field name
-                    serde_json::json!(null),
-                ));
-            }
-        }
-
-        // Delegate the actual file rewrite (and snapshot write) to the storage backend.
-        self.storage.compact_with_hook(entries.clone(), self.post_backup_script.clone())?;
+        let entries = operations::compact(
+            &self.state,
+            #[cfg(feature = "schema")] &self.schemas,
+            &self.indexes,
+            &*self.storage,
+            self.post_backup_script.clone(),
+        )?;
 
         // After compaction the log is rewritten and all old RecordPointers are invalid.
         // Promote every Cold entry in the in-memory state to Hot so subsequent reads
@@ -532,7 +283,6 @@ impl Db {
             }
         }
 
-        info!("✅ Log Compaction Finished!");
         Ok(())
     }
 
@@ -541,43 +291,7 @@ impl Db {
     /// This converts `Hot(Value)` entries into `Cold(RecordPointer)` entries.
     /// In this v1, it re-scans the log to find the exact byte offsets for the documents.
     pub fn evict_collection(&self, collection: &str, limit: usize) -> Result<usize, DbError> {
-        let col_len = if let Some(col) = self.state.get(collection) {
-            col.len()
-        } else {
-            return Err(DbError::CollectionNotFound);
-        };
-
-        if col_len <= limit {
-            return Ok(0);
-        }
-
-        let mut evicted_count = 0;
-        let mut offset = 0u64;
-        let to_evict = col_len - limit;
-
-        // To evict properly, we need the pointers. Since we don't store them for
-        // Hot documents, we re-scan the log to find them.
-        self.storage.stream_log_into(&mut |entry, length| {
-            if entry.collection == collection {
-                if evicted_count < to_evict {
-                    if let Some(col) = self.state.get(collection) {
-                        if let Some(mut doc_state) = col.get_mut(&entry.key) {
-                            if let crate::engine::types::DocumentState::Hot(_) = *doc_state {
-                                *doc_state = crate::engine::types::DocumentState::Cold(crate::engine::types::RecordPointer {
-                                    offset,
-                                    length,
-                                });
-                                evicted_count += 1;
-                            }
-                        }
-                    }
-                }
-            }
-            offset += (length + 1) as u64;
-            ControlFlow::Continue(())
-        })?;
-
-        Ok(evicted_count)
+        operations::evict_collection(&self.state, &*self.storage, collection, limit)
     }
 
     /// Recover the database state to a specific point in time or sequence number.
@@ -590,124 +304,6 @@ impl Db {
         to_time: Option<u64>,
         to_seq: Option<u64>,
     ) -> Result<Vec<LogEntry>, DbError> {
-        let state: DashMap<String, DashMap<String, crate::engine::types::DocumentState>> = DashMap::new();
-        let indexes: DashMap<String, DashMap<String, DashSet<String>>> = DashMap::new();
-        #[cfg(feature = "schema")]
-        let schemas: DashMap<String, Arc<(serde_json::Value, jsonschema::Validator)>> = DashMap::new();
-
-            let mut offset = 0u64;
-            let mut count = 0u64;
-            let mut current_tx_entries = Vec::new();
-            let mut current_tx_id = None;
-            
-            storage.stream_log_into(&mut |entry, length| {
-                // Condition 1: Check Timestamp
-                if let Some(t) = to_time {
-                    if entry._t > t {
-                        return ControlFlow::Break(());
-                    }
-                }
-    
-                // Condition 2: Check Sequence
-                if let Some(s) = to_seq {
-                    if count >= s {
-                        return ControlFlow::Break(());
-                    }
-                }
-
-            let pointer = crate::engine::types::RecordPointer {
-                offset,
-                length,
-            };
-
-            match entry.cmd.as_str() {
-                "TX_BEGIN" => {
-                    current_tx_id = Some(entry.key.clone());
-                    current_tx_entries.clear();
-                }
-                "TX_COMMIT" => {
-                    if current_tx_id.as_ref() == Some(&entry.key) {
-                        for (e, p) in current_tx_entries.drain(..) {
-                            crate::engine::storage::apply_entry(
-                                &e,
-                                &state,
-                                &indexes,
-                                #[cfg(feature = "schema")] &schemas,
-                                Some(p),
-                            );
-                        }
-                        current_tx_id = None;
-                    }
-                }
-                _ => {
-                    if current_tx_id.is_some() {
-                        current_tx_entries.push((entry, pointer));
-                    } else {
-                        crate::engine::storage::apply_entry(
-                            &entry,
-                            &state,
-                            &indexes,
-                            #[cfg(feature = "schema")] &schemas,
-                            Some(pointer),
-                        );
-                    }
-                }
-            }
-
-            count += 1;
-            offset += (length + 1) as u64;
-            ControlFlow::Continue(())
-        })?;
-
-        // Convert the recovered state into LogEntries (similar to compact logic)
-        let mut entries = Vec::new();
-        for col_ref in state.iter() {
-            let col_name = col_ref.key();
-            for item_ref in col_ref.value().iter() {
-                let entry = match item_ref.value() {
-                    crate::engine::types::DocumentState::Hot(v) => {
-                        LogEntry::new(
-                            "INSERT".to_string(),
-                            col_name.clone(),
-                            item_ref.key().clone(),
-                            v.clone(),
-                        )
-                    }
-                    crate::engine::types::DocumentState::Cold(ptr) => {
-                        let bytes = storage.read_at(ptr.offset, ptr.length).unwrap_or_default();
-                        serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-                            LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), serde_json::Value::Null)
-                        })
-                    }
-                };
-                entries.push(entry);
-            }
-        }
-
-        #[cfg(feature = "schema")]
-        for schema_ref in schemas.iter() {
-            let col_name = schema_ref.key();
-            let (schema_json, _) = &**schema_ref.value();
-            entries.push(LogEntry::new(
-                "SCHEMA".to_string(),
-                col_name.clone(),
-                "".to_string(),
-                schema_json.clone(),
-            ));
-        }
-
-        for index_ref in indexes.iter() {
-            let parts: Vec<&str> = index_ref.key().split(':').collect();
-            if parts.len() == 2 {
-                entries.push(LogEntry::new(
-                    "INDEX".to_string(),
-                    parts[0].to_string(),
-                    parts[1].to_string(),
-                    serde_json::json!(null),
-                ));
-            }
-        }
-
-        Ok(entries)
+        operations::recover_to(storage, to_time, to_seq)
     }
 }
