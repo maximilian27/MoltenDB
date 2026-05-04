@@ -79,7 +79,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 items.push((k.clone(), resolved));
             }
 
-            match db.insert_batch(col, items) {
+            match db.insert(col, items) {
                 Ok(_) => {
                     // Check collection size for auto-eviction (Hybrid Bitcask).
                     if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
@@ -114,7 +114,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 items.push((id, resolved));
             }
 
-            match db.insert_batch(col, items) {
+            match db.insert(col, items) {
                 Ok(_) => {
                     // Check collection size for auto-eviction (Hybrid Bitcask).
                     if let Ok(count) = db.evict_collection(col, db.hot_threshold) {

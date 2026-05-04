@@ -29,7 +29,7 @@ mod storage;    // StorageBackend trait + concrete implementations
 mod config;     // DbConfig struct
 #[cfg(feature = "schema")]
 mod schema;     // JSON Schema validation
-mod operations; // get, get_all, insert_batch, update, delete, etc.
+mod operations; // get, get_all, insert, update, delete, etc.
 mod open;       // Db::open() — native constructor
 mod open_wasm;  // Db::open_wasm() — WASM constructor
 
@@ -154,8 +154,8 @@ impl Db {
 
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
-    pub fn insert_batch(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
-        operations::insert_batch(
+    pub fn insert(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
+        operations::insert(
             &self.state,
             &self.indexes,
             &self.storage,

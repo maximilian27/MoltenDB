@@ -50,7 +50,7 @@ use super::StorageBackend;
 /// (the document simply won't appear in queries on that field).
 ///
 /// Called from:
-///   - operations::insert_batch() — when a new document is written
+///   - operations::insert() — when a new document is written
 ///   - storage::apply_entry() / replay_log_entries() — during startup replay
 pub fn index_doc(
     // The full index map: "collection:field" → (field_value → set of doc keys)
@@ -96,7 +96,7 @@ pub fn index_doc(
 /// index entries to remove.
 ///
 /// Called from:
-///   - operations::insert_batch() — before overwriting an existing document
+///   - operations::insert() — before overwriting an existing document
 ///   - operations::delete() / delete_batch() — before deleting a document
 ///   - storage::apply_entry() / replay_log_entries() — during startup replay
 pub fn unindex_doc(

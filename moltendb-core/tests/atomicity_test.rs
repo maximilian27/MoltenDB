@@ -11,7 +11,7 @@ async fn test_batch_atomicity() {
         let db = Db::open(DbConfig {
             path: log_path.to_string(),
             sync_mode: true,
-            rate_limit_window: 1,
+            rate_limit_window: Some(1),
             max_body_size: 1024 * 1024,
             ..Default::default()
         }).unwrap();
@@ -41,11 +41,11 @@ async fn test_batch_atomicity() {
         let db = Db::open(DbConfig {
             path: log_path.to_string(),
             sync_mode: true,
-            rate_limit_window: 1,
+            rate_limit_window: Some(1),
             max_body_size: 1024 * 1024,
             ..Default::default()
         }).unwrap();
-        assert!(db.get("test", "key1").is_none(), "Key1 should not exist because transaction was never committed");
+        assert!(db.get("test", vec!["key1".to_string()]).remove("key1").is_none(), "Key1 should not exist because transaction was never committed");
     }
 
     // 3. Write a full batch using the proper API
@@ -53,7 +53,7 @@ async fn test_batch_atomicity() {
         let db = Db::open(DbConfig {
             path: log_path.to_string(),
             sync_mode: true,
-            rate_limit_window: 1,
+            rate_limit_window: Some(1),
             max_body_size: 1024 * 1024,
             ..Default::default()
         }).unwrap();
@@ -61,10 +61,10 @@ async fn test_batch_atomicity() {
             ("key2".to_string(), json!({"data": "should exist"})),
             ("key3".to_string(), json!({"data": "also should exist"})),
         ];
-        db.insert_batch("test", items).unwrap();
+        db.insert("test", items).unwrap();
         
-        assert!(db.get("test", "key2").is_some());
-        assert!(db.get("test", "key3").is_some());
+        assert!(db.get("test", vec!["key2".to_string()]).remove("key2").is_some());
+        assert!(db.get("test", vec!["key3".to_string()]).remove("key3").is_some());
     }
 
     // 4. Reopen again. The full batch should be present.
@@ -72,13 +72,13 @@ async fn test_batch_atomicity() {
         let db = Db::open(DbConfig {
             path: log_path.to_string(),
             sync_mode: true,
-            rate_limit_window: 1,
+            rate_limit_window: Some(1),
             max_body_size: 1024 * 1024,
             ..Default::default()
         }).unwrap();
-        assert!(db.get("test", "key2").is_some(), "Key2 should exist after proper commit");
-        assert!(db.get("test", "key3").is_some(), "Key3 should exist after proper commit");
-        assert!(db.get("test", "key1").is_none(), "Key1 should still not exist");
+        assert!(db.get("test", vec!["key2".to_string()]).remove("key2").is_some(), "Key2 should exist after proper commit");
+        assert!(db.get("test", vec!["key3".to_string()]).remove("key3").is_some(), "Key3 should exist after proper commit");
+        assert!(db.get("test", vec!["key1".to_string()]).remove("key1").is_none(), "Key1 should still not exist");
     }
 
     let _ = std::fs::remove_file(log_path);

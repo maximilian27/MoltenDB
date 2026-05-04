@@ -38,7 +38,7 @@ async fn test_post_backup_hook_execution() {
     }).expect("Failed to open db");
     
     // 2. Insert some data so there is something to compact
-    db.insert_batch("test", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();
+    db.insert("test", vec![("k1".to_string(), json!({"v": 1}))]).unwrap();
     
     // 3. Trigger compaction (which triggers the hook)
     db.compact().expect("Compaction failed");

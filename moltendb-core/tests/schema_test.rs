@@ -24,18 +24,18 @@ async fn test_schema_enforcement() {
 
     // 2. Insert valid document
     let valid_doc = json!({ "name": "Alice", "age": 30 });
-    db.insert_batch("users", vec![("u1".to_string(), valid_doc)]).unwrap();
+    db.insert("users", vec![("u1".to_string(), valid_doc)]).unwrap();
 
     // 3. Insert invalid document (wrong type)
     let invalid_doc = json!({ "name": "Bob", "age": "thirty" });
-    let result = db.insert_batch("users", vec![("u2".to_string(), invalid_doc)]);
+    let result = db.insert("users", vec![("u2".to_string(), invalid_doc)]);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("Schema Validation Error"));
 
     // 4. Insert invalid document (missing required field)
     let missing_field = json!({ "age": 25 });
-    let result = db.insert_batch("users", vec![("u3".to_string(), missing_field)]);
+    let result = db.insert("users", vec![("u3".to_string(), missing_field)]);
     assert!(result.is_err());
 
     // 5. Update with invalid data
@@ -76,7 +76,7 @@ async fn test_schema_persistence() {
             ..Default::default()
         }).unwrap();
         let invalid_doc = json!({ "count": "many" });
-        let result = db.insert_batch("items", vec![("i1".to_string(), invalid_doc)]);
+        let result = db.insert("items", vec![("i1".to_string(), invalid_doc)]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Schema Validation Error"));
     }
