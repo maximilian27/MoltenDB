@@ -141,19 +141,15 @@ impl Db {
         self.tx.subscribe()
     }
 
-    /// Retrieve a single document by key. Returns None if not found.
-    pub fn get(&self, collection: &str, key: &str) -> Option<Value> {
-        operations::get(&self.state, &self.storage, collection, key)
+    /// Retrieve documents by their keys. Returns a HashMap of found key→value pairs.
+    /// Missing keys are silently skipped. Pass a single key to retrieve one document.
+    pub fn get(&self, collection: &str, keys: Vec<String>) -> HashMap<String, Value> {
+        operations::get(&self.state, &self.storage, collection, keys)
     }
 
     /// Retrieve all documents in a collection as a HashMap.
     pub fn get_all(&self, collection: &str) -> HashMap<String, Value> {
         operations::get_all(&self.state, &self.storage, collection)
-    }
-
-    /// Retrieve a specific set of documents by their keys.
-    pub fn get_batch(&self, collection: &str, keys: Vec<String>) -> HashMap<String, Value> {
-        operations::get_batch(&self.state, &self.storage, collection, keys)
     }
 
     /// Insert or overwrite multiple documents in one call.

@@ -36,7 +36,7 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
                 let ref_key        = &ref_str[dot_pos + 1..]; // e.g. "mem4"
 
                 // O(1) hash-map lookup — no scanning, no joins at query time.
-                if let Some(referenced_doc) = db.get(ref_collection, ref_key) {
+                if let Some(referenced_doc) = db.get(ref_collection, vec![ref_key.to_string()]).remove(ref_key) {
                     // Embed the full referenced document under the alias key.
                     result.insert(alias.clone(), referenced_doc);
                 }

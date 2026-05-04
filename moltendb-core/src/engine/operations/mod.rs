@@ -23,7 +23,7 @@ mod insert;
 mod update;
 mod delete;
 
-pub use read::{get, get_all, get_batch};
+pub use read::{get, get_all};
 pub use insert::insert_batch;
 pub use update::update;
 pub use delete::{delete, delete_batch, delete_collection};
