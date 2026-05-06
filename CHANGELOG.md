@@ -1,3 +1,7 @@
+# [0.10.3] (2026-05-06)
+### Bug Fixes
+* Fixed stale index entries after log replay: Cold documents are now correctly unindexed during startup replay when a `DELETE` entry is encountered; previously only Hot (in-RAM) documents were unindexed, leaving Cold (disk-pointer) documents in the index after deletion
+
 # [0.10.2] (2026-05-04)
 ### Refactor
 * Extracted `Db::open()` (native) and `Db::open_wasm()` (WASM) from `engine/mod.rs` into dedicated files `engine/open.rs` and `engine/open_wasm.rs`; `engine/mod.rs` now only declares and delegates
