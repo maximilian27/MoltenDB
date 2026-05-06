@@ -64,6 +64,7 @@ pub fn recover_to(
                             &indexes,
                             #[cfg(feature = "schema")] &schemas,
                             Some(p),
+                            storage,
                         );
                     }
                     current_tx_id = None;
@@ -79,6 +80,7 @@ pub fn recover_to(
                         &indexes,
                         #[cfg(feature = "schema")] &schemas,
                         Some(pointer),
+                        storage,
                     );
                 }
             }

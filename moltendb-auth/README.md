@@ -165,7 +165,7 @@ The root token never leaves your backend. Clients only ever receive a narrowly s
 
 ---
 
-## Current limitations (v0.10.2)
+## Current limitations (v0.10.3)
 
 - **No token refresh** — tokens expire after the configured TTL. Re-mint via `/auth/delegate` when needed.
 - **In-memory revocation only** — the revocation store is persisted to a `.revocations.json` file alongside the WAL and reloaded on startup, but revocations are not replicated across nodes.

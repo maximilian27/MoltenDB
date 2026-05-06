@@ -54,7 +54,6 @@ pub use wasm::OpfsStorage;
 // ── Shared imports ────────────────────────────────────────────────────────────
 // These are used by both the trait definition and the replay functions below.
 use crate::engine::types::{DbError, LogEntry};
-#[cfg(feature = "schema")]
 use serde_json::Value;
 use std::ops::ControlFlow;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
@@ -212,6 +211,7 @@ pub fn stream_into_state(
                             indexes,
                             #[cfg(feature = "schema")] schemas,
                             pointer,
+                            storage,
                         );
                     }
                     active_tx = None;
@@ -233,6 +233,7 @@ pub fn stream_into_state(
                         indexes,
                         #[cfg(feature = "schema")] schemas,
                         p,
+                        storage,
                     );
                 }
             }
@@ -263,6 +264,7 @@ pub fn apply_entry(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     pointer: Option<crate::engine::types::RecordPointer>,
+    storage: &dyn StorageBackend,
 ) {
     match entry.cmd.as_str() {
         "INSERT" => {
@@ -284,20 +286,21 @@ pub fn apply_entry(
         }
         "DELETE" => {
             if let Some(col) = state.get(&entry.collection) {
-                // To unindex, we need the Value. If it's Cold, we'd have to fetch it.
-                // However, during REPLAY, we can just skip unindexing if we don't have the value,
-                // BUT that would break if a DELETE follows an INSERT.
-                // Actually, unindex_doc needs the Value.
-                // For simplicity in this v1 of Hybrid, we'll fetch if needed or change unindex_doc.
-                // Wait, if it's Cold, we don't have the value.
-                // I'll leave a TODO here and for now just handle Hot.
                 if let Some(old_state) = col.get(&entry.key) {
-                    if let crate::engine::types::DocumentState::Hot(old_val) = old_state.value() {
-                         crate::engine::indexing::unindex_doc(
+                    let old_val: Option<Value> = match old_state.value() {
+                        crate::engine::types::DocumentState::Hot(v) => Some(v.clone()),
+                        crate::engine::types::DocumentState::Cold(ptr) => {
+                            storage.read_at(ptr.offset, ptr.length).ok()
+                                .and_then(|bytes| serde_json::from_slice::<LogEntry>(&bytes).ok())
+                                .map(|e| e.value)
+                        }
+                    };
+                    if let Some(val) = old_val {
+                        crate::engine::indexing::unindex_doc(
                             indexes,
                             &entry.collection,
                             &entry.key,
-                            old_val,
+                            &val,
                         );
                     }
                 }
