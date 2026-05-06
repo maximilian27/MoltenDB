@@ -54,7 +54,6 @@ pub use wasm::OpfsStorage;
 // ── Shared imports ────────────────────────────────────────────────────────────
 // These are used by both the trait definition and the replay functions below.
 use crate::engine::types::{DbError, LogEntry};
-#[cfg(feature = "schema")]
 use serde_json::Value;
 use std::ops::ControlFlow;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
