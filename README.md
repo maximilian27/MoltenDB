@@ -821,20 +821,85 @@ Executing external scripts carries inherent risks. MoltenDB mitigates some of th
 
 ## Storage Modes
 
-### Standard (default)
-Single append-only log file. All writes go to `my_database.log`. Compaction rewrites the file to contain only current state (triggered when file > 100 MB or every hour). A binary snapshot is written on each compaction so the next startup only replays the delta, not the full log.
+MoltenDB has four storage modes. Choose based on your dataset size and durability requirements:
+
+| Mode | Flag | Best for |
+|---|---|---|
+| `async` (default) | `--write-mode async` | Small–medium datasets, max throughput |
+| `sync` | `--write-mode sync` | Small–medium datasets, zero data loss per write |
+| `tiered` | `--storage-mode tiered` | Large datasets (100k+ docs), bounded RAM |
+| `in-memory` | `--in-memory` | Ephemeral caches, CI, session stores |
+
+### Standard / Async (default)
+
+Single append-only log file (`my_database.log`). Writes are buffered in memory and flushed to disk every **50 ms** — up to 50 ms of data can be lost on a hard crash. Highest write throughput. Compaction is triggered when the log exceeds 100 MB or every hour; a binary snapshot is written so the next startup only replays the delta, not the full log.
+
+### Standard / Sync (`--write-mode sync`)
+
+Same single-file layout as async, but every write blocks until the OS confirms the data is on disk. **Zero data loss on crash.** Lower throughput than async. Use this when losing even 50 ms of writes is unacceptable (financial records, audit logs).
 
 ### Tiered (`--storage-mode tiered`)
-Recommended for large datasets (100k+ documents). Active writes go to a hot log (kept < 50 MB). When the hot log exceeds the threshold, all current entries are promoted to a cold log (`my_database.cold.log`) which is read via memory-mapped file on startup — the OS pages in only the data actually needed.
+
+Recommended for large datasets (100k+ documents). The hot tier keeps the most recently active documents in RAM (`DashMap`). When a collection exceeds `--hot-threshold` documents, the oldest are evicted to a cold log (`my_database.cold.log`) which is read via memory-mapped file — the OS pages in only the data actually needed, so reads of cold documents cost ~50 µs rather than a full disk seek.
+
+**How the two thresholds interact:**
+
+| Setting | Controls | Layer | Configurable? |
+|---|---|---|---|
+| `--hot-threshold` (default 50 000) | Max documents per collection kept in RAM | Engine (DashMap) | Yes — CLI / env var |
+| `HOT_TIER_MAX_BYTES` (100 MB, hardcoded) | Max size of the hot log file on disk | Storage (log file) | No |
+
+These are **not alternatives** — they work together. `--hot-threshold` decides *when* to evict a document from RAM; the cold log is *where* it goes. Without the cold tier, eviction has no destination and `--hot-threshold` would be a no-op.
+
+Because cold documents are stored in the cold log and not in the snapshot, **snapshot files stay small** regardless of total dataset size. A collection with 10 million documents on disk only contributes 50 000 entries to the snapshot.
 
 ### In-Memory (`--in-memory`)
+
 Bypasses the WAL and all disk I/O entirely. All data lives exclusively in the RAM `DashMap` — no log file is created or written. This turns MoltenDB into a pure in-process cache with the full query engine (filters, joins, indexes, pub/sub) on top. Compaction and revocation-file persistence are automatically skipped. A startup warning is printed to make the ephemeral nature explicit.
 
 > ⚠️ **All data is lost when the server exits.** Use this mode for ephemeral caches, session stores, CI test environments, or any scenario where durability is not required.
 
-### Write modes
+### Write modes summary
 - **async** (default): writes are buffered in memory and flushed every 50 ms. Up to 50 ms of data loss on a hard crash. Highest throughput.
-- **sync**: every write blocks until the OS confirms the data. Zero data loss on crash. Lower throughput.
+- **sync**: every write blocks until the OS confirms the data. Zero data loss on crash. Lower throughput. Note: there is no sync equivalent for tiered mode — tiered always uses async writes to the hot log.
+
+---
+
+## Snapshots, Compaction & Data Safety
+
+### What happens during compaction
+
+Compaction is triggered automatically when the log file exceeds 100 MB or every hour. It:
+
+1. Writes the complete current in-memory state to a **temp snapshot file** — the live snapshot is untouched at this point.
+2. **Moves the existing snapshot** to `backup/<name>.snapshot.bin.<unix_timestamp>.bak` — the old snapshot is never deleted.
+3. **Atomically renames** the temp file to the live snapshot — a single OS rename, so there is no window where neither file exists.
+4. **Resets the live log to empty** — but all data is already captured in the new snapshot before this happens.
+
+### Is any data lost during compaction?
+
+**No.** The new snapshot is a full state dump — it contains every document that existed at compaction time, including documents first inserted many compactions ago. There is no snapshot chain to traverse; each snapshot is self-contained.
+
+```
+Compaction 1:  snapshot_1 = { doc_A, doc_B }
+Compaction 2:  snapshot_2 = { doc_A, doc_B, doc_C }   ← doc_A still here
+Compaction 3:  snapshot_3 = { doc_A, doc_B, doc_C, doc_D }  ← doc_A still here
+```
+
+Data is only gone if it was explicitly deleted or overwritten before the compaction ran.
+
+### What the `backup/` folder contains
+
+Every compaction moves the previous snapshot to `backup/` as a `.bak` file. These are point-in-time copies of the full database state. They are:
+- **Not loaded at startup** — only the current snapshot is used.
+- **Not pruned automatically** — they accumulate indefinitely. Clean them up manually or add a retention policy.
+- Useful for **manual point-in-time recovery** via the `recover` CLI command.
+
+### How large snapshots are loaded at startup
+
+At startup, `stream_into_state` reads the snapshot file and applies each entry **directly into the `DashMap`** as it is read — there is no intermediate buffer. Peak RAM usage at startup is approximately **1× the snapshot file size** (just the DashMap being built).
+
+For tiered mode, cold documents are stored in the cold log and are **not included in the snapshot**, so snapshot files stay small even for very large datasets. The snapshot only captures the hot tier.
 
 ---
 
@@ -980,6 +1045,43 @@ MoltenDB/
 └── assets/
     └── logo.png
 ```
+
+---
+
+## Horizontal Scaling
+
+MoltenDB is currently a **single-node, embedded database**. Its state lives in `DashMap` in memory, backed by an append-only log on disk. There is no built-in concept of nodes, replication, or sharding.
+
+### Single-node throughput
+
+| Operation | Throughput | Bottleneck |
+|---|---|---|
+| Reads (`get`, `get_all`) | 100k–500k+ req/s | None — pure lock-free `DashMap` lookups |
+| Writes (`insert`, `delete`, `update`) | 10k–50k req/s | Sequential log writer (one `Mutex`-guarded append) |
+
+Reads are fully parallel and scale with CPU cores. Writes are bounded by disk I/O on the log writer.
+
+### Scaling options
+
+#### Option 1 — Read replicas (easiest, read-heavy workloads)
+
+One **primary** node accepts all writes. One or more **replica** nodes tail the primary's log and replay entries via the same `apply_entry` path used at startup. Reads are distributed across replicas; writes always go to the primary.
+
+MoltenDB already has most of the building blocks: the append-only log is the source of truth, `stream_into_state` / `apply_entry` already replay log entries into RAM state, and the WebSocket broadcast could be repurposed to stream log entries to replicas.
+
+**What needs to be added:** a replication protocol (push log entries from primary → replicas), a `read_only` flag on replicas, and a load balancer to route reads to replicas and writes to the primary.
+
+#### Option 2 — Sharding (write-heavy workloads)
+
+Split collections across nodes — each node owns a subset of the data. Requires a shard map and a coordinator or client-side routing layer. Most complex option but gives true write scalability.
+
+#### Option 3 — Active-active (high availability)
+
+Multiple nodes accept writes independently and sync with each other. Requires conflict resolution. MoltenDB already has conflict detection logic (`_v` optimistic locking), but full multi-master is a significant undertaking.
+
+### Recommended path
+
+**Read replicas** are the most natural first step given the existing architecture. A single node with read replicas will scale very far before sharding becomes necessary — the single node already handles hundreds of thousands of reads per second.
 
 ---
 

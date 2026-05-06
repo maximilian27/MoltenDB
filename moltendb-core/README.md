@@ -130,13 +130,80 @@ By default, any collection exceeding **50,000 documents** will automatically evi
 
 ## Storage modes
 
-| Mode | Use case |
-|---|---|
-| `DiskStorage` (sync) | Durable writes. Each write is flushed to disk before returning. Slower but safer for mission-critical data. |
-| `DiskStorage` (async) | Blazing fast, high-throughput writes. Data is buffered and flushed in the background. Recommended for most web use-cases. |
-| `TieredStorage` | 100k+ documents — separates hot and cold log files |
-| `EncryptedStorage` | At-rest encryption with ChaCha20-Poly1305 |
-| `OpfsStorage` | Browser WASM — Origin Private File System |
+MoltenDB has four storage backends. Choose based on your dataset size and durability requirements:
+
+| Mode | `DbConfig` field | Best for |
+|---|---|---|
+| `AsyncDiskStorage` (default) | `sync_mode: false` | Small–medium datasets, max throughput |
+| `SyncDiskStorage` | `sync_mode: true` | Small–medium datasets, zero data loss per write |
+| `TieredStorage` | `tiered_mode: true` | Large datasets (100k+ docs), bounded RAM |
+| `InMemoryStorage` | `in_memory: true` | Ephemeral caches, CI, tests |
+
+### Async (default)
+
+Single append-only log file. Writes are buffered and flushed to disk every **50 ms** — up to 50 ms of data can be lost on a hard crash. Highest write throughput.
+
+### Sync (`sync_mode: true`)
+
+Same single-file layout as async, but every write blocks until the OS confirms the data is on disk. **Zero data loss on crash.** Lower throughput. Use this when losing even 50 ms of writes is unacceptable (financial records, audit logs).
+
+> Note: there is no sync equivalent for tiered mode — tiered always uses async writes to the hot log.
+
+### Tiered (`tiered_mode: true`)
+
+Recommended for large datasets (100k+ documents). The hot tier keeps the most recently active documents in RAM (`DashMap`). When a collection exceeds `hot_threshold` documents (default: 50 000), the oldest are evicted to a cold log read via memory-mapped file.
+
+**How the two thresholds interact:**
+
+| Setting | Controls | Configurable? |
+|---|---|---|
+| `hot_threshold` (default 50 000) | Max documents per collection kept in RAM | Yes — `DbConfig::hot_threshold` |
+| `HOT_TIER_MAX_BYTES` (100 MB, hardcoded) | Max size of the hot log file on disk | No |
+
+These are **not alternatives** — they work together. `hot_threshold` decides *when* to evict a document from RAM; the cold log is *where* it goes. Without the cold tier, eviction has no destination.
+
+Because cold documents are stored in the cold log and not in the snapshot, **snapshot files stay small** regardless of total dataset size.
+
+### In-Memory (`in_memory: true`)
+
+Bypasses the WAL and all disk I/O entirely. All data lives exclusively in the RAM `DashMap`. Compaction is skipped. All data is lost when the process exits.
+
+### `EncryptedStorage`
+
+Wraps any of the above backends with ChaCha20-Poly1305 at-rest encryption. Enable via `DbConfig::encryption_key`.
+
+### `OpfsStorage`
+
+Browser WASM only — uses the Origin Private File System (OPFS) as the storage backend instead of the native filesystem.
+
+---
+
+## Snapshots, Compaction & Data Safety
+
+Compaction is triggered automatically when the log file exceeds 100 MB or every hour. It:
+
+1. Writes the complete current in-memory state to a **temp snapshot file** — the live snapshot is untouched at this point.
+2. **Moves the existing snapshot** to `backup/<name>.snapshot.bin.<unix_timestamp>.bak` — the old snapshot is never deleted.
+3. **Atomically renames** the temp file to the live snapshot — a single OS rename, no window where neither file exists.
+4. **Resets the live log to empty** — all data is already captured in the new snapshot before this happens.
+
+### No data is lost across compactions
+
+Each snapshot is a **full state dump**, not a diff. A document inserted in compaction 1 is present in every subsequent snapshot until it is explicitly deleted:
+
+```
+Compaction 1:  snapshot = { doc_A, doc_B }
+Compaction 2:  snapshot = { doc_A, doc_B, doc_C }   ← doc_A still here
+Compaction 3:  snapshot = { doc_A, doc_B, doc_C, doc_D }  ← doc_A still here
+```
+
+### The `backup/` folder
+
+Every compaction moves the previous snapshot to `backup/` as a `.bak` file — a point-in-time copy of the full database state. These files are not loaded at startup and are not pruned automatically. Use them for manual point-in-time recovery via `Db::recover_to`.
+
+### Startup RAM usage
+
+At startup, `stream_into_state` reads the snapshot and applies each entry **directly into the `DashMap`** as it is read — no intermediate buffer. Peak RAM at startup is approximately **1× the snapshot file size**. For tiered mode, cold documents are not included in the snapshot, so startup cost scales with the hot tier only.
 
 ---
 
