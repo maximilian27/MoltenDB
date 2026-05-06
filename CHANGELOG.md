@@ -1,3 +1,8 @@
+# [1.0.0-rc1] (2026-05-06)
+### Performance
+* Removed intermediate `Vec<LogEntry>` from snapshot loading path — entries are now streamed directly into the in-memory `DashMap` as they are read from disk, halving peak startup RAM usage for large snapshots (previously `~2×` snapshot file size, now `~1×`)
+* Snapshot files are now gzip-compressed using `flate2` (pure Rust, WASM-compatible); typical JSON snapshots compress 3×–8×, significantly reducing disk usage and improving startup I/O on large datasets; magic header updated to `MOLTSNG2` for forward/backward compatibility — old `MOLTSNAP` snapshots are gracefully ignored and state is rebuilt from the WAL
+
 # [0.10.3] (2026-05-06)
 ### Bug Fixes
 * Fixed stale index entries after log replay: Cold documents are now correctly unindexed during startup replay when a `DELETE` entry is encountered; previously only Hot (in-RAM) documents were unindexed, leaving Cold (disk-pointer) documents in the index after deletion

@@ -6,13 +6,14 @@
 // were written AFTER the snapshot was taken — instead of replaying the entire
 // log from the beginning. This dramatically reduces startup time for large DBs.
 //
-// Snapshot file format (binary, little-endian):
-//   [8 bytes]  magic header: "MOLTSNAP"
+// Snapshot file format (binary, little-endian, gzip-compressed body):
+//   [8 bytes]  magic header: "MOLTSNG2"  ("MOLTSNAP" = legacy uncompressed)
 //   [8 bytes]  seq: number of log lines captured in this snapshot
 //   [8 bytes]  count: number of LogEntry records that follow
+//   --- everything below this point is gzip-compressed ---
 //   for each entry:
-//     [8 bytes]  len: byte length of the bincode-encoded entry
-//     [len bytes] bincode-encoded LogEntry
+//     [8 bytes]  len: byte length of the JSON-encoded entry
+//     [len bytes] JSON-encoded LogEntry
 // ─────────────────────────────────────────────────────────────────────────────
 
 use crate::engine::types::{DbError, LogEntry};
@@ -20,7 +21,10 @@ use std::fs::{File, OpenOptions};
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::time::SystemTime;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use flate2::read::GzDecoder;
 
 /// Returns the path of the binary snapshot file for a given log file path.
 /// Convention: `my_database.log` → `my_database.log.snapshot.bin`
@@ -38,30 +42,35 @@ pub fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> Result<
         .write(true)
         .truncate(true) // overwrite any existing content
         .open(&tmp)?;
-    let mut w = BufWriter::new(file);
+    // Write the uncompressed header first, then compress the body.
+    let mut raw = BufWriter::new(file);
 
-    // Magic header so we can detect corrupt/wrong files on load.
-    w.write_all(b"MOLTSNAP")?;
+    // Magic header — "MOLTSNG2" signals gzip-compressed body.
+    raw.write_all(b"MOLTSNG2")?;
     // Sequence number: how many log lines are already captured here.
-    w.write_all(&seq.to_le_bytes())?;
+    raw.write_all(&seq.to_le_bytes())?;
 
-    // Number of entries, so the reader can pre-allocate a Vec.
+    // Number of entries written into the compressed body.
     let count = entries.len() as u64;
-    w.write_all(&count.to_le_bytes())?;
+    raw.write_all(&count.to_le_bytes())?;
+
+    // Flush the header so the GzEncoder starts right after it.
+    raw.flush()?;
+
+    // Wrap the underlying file in a gzip encoder for the body.
+    let file_inner = raw.into_inner().map_err(|_| DbError::WriteError)?;
+    let mut gz = GzEncoder::new(BufWriter::new(file_inner), Compression::default());
 
     // Each entry is length-prefixed so the reader knows how many bytes to read.
     for entry in entries {
-        // We use JSON for snapshots as well for now to avoid bincode issues with dynamic Value
         let encoded = serde_json::to_vec(entry).map_err(|_| DbError::WriteError)?;
         let len = encoded.len() as u64;
-        w.write_all(&len.to_le_bytes())?;
-        w.write_all(&encoded)?;
+        gz.write_all(&len.to_le_bytes())?;
+        gz.write_all(&encoded)?;
     }
 
-    // Flush the BufWriter to ensure all bytes reach the OS buffer.
-    w.flush()?;
-    // Drop the writer to release the file handle before renaming (required on Windows).
-    drop(w);
+    // Finish the gzip stream and flush everything to disk.
+    gz.finish().map_err(|_| DbError::WriteError)?;
 
     // Before renaming the new snapshot, move the old one to the backup folder.
     if Path::new(&path).exists() {
@@ -111,32 +120,42 @@ pub fn load_snapshot(
     tracing::info!("🔍 Attempting to load snapshot from {}", path);
     let mut file = File::open(&path).ok()?;
 
-    use std::io::Read;
-
-    // Validate the magic header — if it doesn't match, the file is not ours.
+    // Validate the magic header.
     let mut magic = [0u8; 8];
     file.read_exact(&mut magic).ok()?;
-    if &magic != b"MOLTSNAP" {
-        tracing::warn!("❌ Invalid snapshot magic header");
-        return None;
-    }
+
+    let compressed = match &magic {
+        b"MOLTSNG2" => true,
+        b"MOLTSNAP" => {
+            tracing::warn!("⚠️  Old uncompressed snapshot detected — falling back to log replay");
+            return None;
+        }
+        _ => {
+            tracing::warn!("❌ Invalid snapshot magic header");
+            return None;
+        }
+    };
+    let _ = compressed; // always true for now; kept for future format detection
 
     // Read the sequence number (how many log lines to skip on replay).
     let mut seq_bytes = [0u8; 8];
     file.read_exact(&mut seq_bytes).ok()?;
     let seq = u64::from_le_bytes(seq_bytes);
 
-    // Read the entry count (used only for progress logging).
+    // Read the entry count (written before the compressed body).
     let mut count_bytes = [0u8; 8];
     file.read_exact(&mut count_bytes).ok()?;
     let count = u64::from_le_bytes(count_bytes) as usize;
 
     tracing::info!("📂 Snapshot header: seq={}, count={}", seq, count);
 
+    // Wrap the rest of the file in a gzip decoder.
+    let mut gz = GzDecoder::new(file);
+
     for i in 0..count {
         // Read the length prefix for this entry.
         let mut len_bytes = [0u8; 8];
-        if let Err(e) = file.read_exact(&mut len_bytes) {
+        if let Err(e) = gz.read_exact(&mut len_bytes) {
             tracing::error!("❌ Failed to read entry {} length: {}", i, e);
             return None;
         }
@@ -144,7 +163,7 @@ pub fn load_snapshot(
 
         // Read exactly `len` bytes and deserialize with JSON.
         let mut buf = vec![0u8; len];
-        if let Err(e) = file.read_exact(&mut buf) {
+        if let Err(e) = gz.read_exact(&mut buf) {
             tracing::error!("❌ Failed to read entry {} data: {}", i, e);
             return None;
         }

@@ -979,28 +979,34 @@ MoltenDB/
 │       ├── query.rs                  — query AST evaluator ($eq, $in, $regex, $contains, $or, $and, …)
 │       ├── validation.rs             — collection name / document depth / size guards
 │       ├── engine/
-│       │   ├── mod.rs                — Db struct, open() / open_wasm()
+│       │   ├── mod.rs                — Db struct, thin delegation layer
+│       │   ├── open.rs               — Db::open() — native startup (disk / tiered / encrypted)
+│       │   ├── open_wasm.rs          — Db::open_wasm() — WASM/OPFS startup
 │       │   ├── config.rs             — DbConfig (path, encryption key, storage options)
 │       │   ├── indexing.rs           — auto-indexing, query heatmap
 │       │   ├── schema.rs             — JSON Schema validation per collection
-│       │   ├── types.rs              — LogEntry, DbError
-│       │   ├── operations/           — CRUD operations (split module)
-│       │   │   ├── mod.rs            — re-exports: get, insert_batch, update, delete, …
+│       │   ├── types.rs              — LogEntry, DbError, DocumentState, RecordPointer
+│       │   ├── operations/           — all engine operations (one file per operation)
+│       │   │   ├── mod.rs            — re-exports: get, get_all, insert, update, delete, …
 │       │   │   ├── common.rs         — shared helpers (now_iso())
-│       │   │   ├── read.rs           — get, get_all, get_batch
-│       │   │   ├── insert.rs         — insert_batch (versioning, schema validation, WAL)
+│       │   │   ├── read.rs           — get (batch, Vec<String> → HashMap), get_all
+│       │   │   ├── insert.rs         — insert (batch, versioning, schema validation, WAL)
 │       │   │   ├── update.rs         — update (partial patch, _v optimistic lock, WAL)
-│       │   │   └── delete.rs         — delete, delete_batch, delete_collection
+│       │   │   ├── delete.rs         — delete (batch, Vec<String>), delete_collection
+│       │   │   ├── compact.rs        — compact (build log entries, call compact_with_hook)
+│       │   │   ├── evict.rs          — evict_collection (Hot→Cold, bounded RAM)
+│       │   │   └── recover.rs        — recover_to (PITR restore from backup snapshot)
 │       │   └── storage/
-│       │       ├── mod.rs            — StorageBackend trait, startup WAL replay
+│       │       ├── mod.rs            — StorageBackend trait, apply_entry, startup WAL replay
 │       │       ├── disk/             — disk storage (split module)
 │       │       │   ├── mod.rs        — re-exports: AsyncDiskStorage, SyncDiskStorage, helpers
 │       │       │   ├── async_storage.rs — MPSC channel + background Tokio flush task
 │       │       │   ├── sync_storage.rs  — Mutex-guarded BufWriter, immediate flush
 │       │       │   ├── log.rs        — stream_log_entries, write_compacted_log, count_log_lines
 │       │       │   └── snapshot.rs   — write_snapshot, load_snapshot, atomic rename, backup rotation
+│       │       ├── memory.rs         — InMemoryStorage (ephemeral, no disk)
 │       │       ├── encrypted.rs      — XChaCha20-Poly1305 + Argon2id encryption wrapper
-│       │       ├── tiered.rs         — TieredStorage, MmapLogReader
+│       │       ├── tiered.rs         — TieredStorage, MmapLogReader (hot log + cold mmap)
 │       │       └── wasm.rs           — OpfsStorage (browser OPFS backend)
 │       └── handlers/
 │           ├── mod.rs
@@ -1040,7 +1046,14 @@ MoltenDB/
 │       └── lib.rs                    — wasm-bindgen entry point, OPFS-backed Db
 │
 ├── tests/
-│   └── requests.http                 — documented example requests for every endpoint
+│   ├── requests_1_reads.http         — GET / query / field-selection examples
+│   ├── requests_2_joins.http         — join query examples
+│   ├── requests_3_mutations.http     — SET / UPDATE / DELETE examples
+│   ├── requests_4_security.http      — auth / JWT / rate-limit examples
+│   ├── requests_5_schemas.http       — schema definition examples
+│   ├── requests_6_auth_telemetry.http — delegation / revocation / telemetry examples
+│   ├── requests_7_in_memory.http     — in-memory mode examples
+│   └── stress_fetch.http             — stress-test request file
 ├── pkg/                              — generated WASM package (wasm-pack output)
 └── assets/
     └── logo.png
