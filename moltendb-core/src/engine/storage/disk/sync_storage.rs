@@ -156,20 +156,15 @@ impl StorageBackend for SyncDiskStorage {
     ) -> Result<u64, DbError> {
         let mut count = 0u64;
         // Fast path: load snapshot and replay only the delta.
-        if let Some((snapshot_entries, seq)) = load_snapshot(&self.path) {
-            tracing::info!(
-                "⚡ Snapshot loaded ({} entries, seq {}). Replaying delta only...",
-                snapshot_entries.len(),
-                seq
-            );
-            for entry in snapshot_entries {
-                // Entries from snapshot MUST be Hot because they are not in the log file
-                // and thus don't have a valid RecordPointer for this log instance.
-                if let ControlFlow::Break(_) = f(entry, 0) {
-                    return Ok(count);
-                }
+        if let Some(seq) = load_snapshot(&self.path, &mut |entry| {
+            // Entries from snapshot MUST be Hot because they are not in the log file
+            // and thus don't have a valid RecordPointer for this log instance.
+            let res = f(entry, 0);
+            if let ControlFlow::Continue(_) = res {
                 count += 1;
             }
+            res
+        }) {
             if let ControlFlow::Break(_) = stream_log_entries(&self.path, seq, |e, l| {
                 let res = f(e, l);
                 if let ControlFlow::Continue(_) = res {

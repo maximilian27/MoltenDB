@@ -252,15 +252,15 @@ impl StorageBackend for AsyncDiskStorage {
     ) -> Result<u64, DbError> {
         let mut count = 0u64;
         // Attempt to load the binary snapshot for fast startup.
-        if let Some((snapshot_entries, seq)) = load_snapshot(&self.path) {
-            for entry in snapshot_entries {
-                // Entries from snapshot MUST be Hot because they are not in the log file
-                // and thus don't have a valid RecordPointer for this log instance.
-                if let ControlFlow::Break(_) = f(entry, 0) {
-                    return Ok(count);
-                }
+        if let Some(seq) = load_snapshot(&self.path, &mut |entry| {
+            // Entries from snapshot MUST be Hot because they are not in the log file
+            // and thus don't have a valid RecordPointer for this log instance.
+            let res = f(entry, 0);
+            if let ControlFlow::Continue(_) = res {
                 count += 1;
             }
+            res
+        }) {
             // Then replay only the log lines that came after the snapshot.
             // `seq` is the number of lines to skip (already in the snapshot).
             if let ControlFlow::Break(_) = stream_log_entries(&self.path, seq, |e, l| {

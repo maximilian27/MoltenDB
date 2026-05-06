@@ -17,6 +17,7 @@
 
 use crate::engine::types::{DbError, LogEntry};
 use std::fs::{File, OpenOptions};
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::time::SystemTime;
 use std::io::{BufWriter, Write};
@@ -90,18 +91,24 @@ pub fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> Result<
     Ok(())
 }
 
-/// Try to load a previously written binary snapshot.
-/// Returns `Some((entries, seq))` on success, or `None` if:
+/// Try to load a previously written binary snapshot, streaming entries directly
+/// into the provided callback `f` without collecting them into an intermediate Vec.
+///
+/// Returns `Some(seq)` on success, or `None` if:
 ///   - the snapshot file doesn't exist (first run)
 ///   - the magic header doesn't match (corrupt file)
 ///   - any read fails (truncated file, wrong format)
-pub fn load_snapshot(log_path: &str) -> Option<(Vec<LogEntry>, u64)> {
+///
+/// If `f` returns `ControlFlow::Break`, iteration stops early and `None` is returned.
+pub fn load_snapshot(
+    log_path: &str,
+    f: &mut dyn FnMut(LogEntry) -> ControlFlow<(), ()>,
+) -> Option<u64> {
     let path = snapshot_path(log_path);
     if !Path::new(&path).exists() {
         return None;
     }
     tracing::info!("🔍 Attempting to load snapshot from {}", path);
-    // If the file doesn't exist, open() returns Err and we return None.
     let mut file = File::open(&path).ok()?;
 
     use std::io::Read;
@@ -111,7 +118,7 @@ pub fn load_snapshot(log_path: &str) -> Option<(Vec<LogEntry>, u64)> {
     file.read_exact(&mut magic).ok()?;
     if &magic != b"MOLTSNAP" {
         tracing::warn!("❌ Invalid snapshot magic header");
-        return None; // Not a valid snapshot file
+        return None;
     }
 
     // Read the sequence number (how many log lines to skip on replay).
@@ -119,31 +126,30 @@ pub fn load_snapshot(log_path: &str) -> Option<(Vec<LogEntry>, u64)> {
     file.read_exact(&mut seq_bytes).ok()?;
     let seq = u64::from_le_bytes(seq_bytes);
 
-    // Read the entry count so we can pre-allocate the Vec.
+    // Read the entry count (used only for progress logging).
     let mut count_bytes = [0u8; 8];
     file.read_exact(&mut count_bytes).ok()?;
     let count = u64::from_le_bytes(count_bytes) as usize;
 
     tracing::info!("📂 Snapshot header: seq={}, count={}", seq, count);
 
-    let mut entries = Vec::with_capacity(count);
     for i in 0..count {
         // Read the length prefix for this entry.
         let mut len_bytes = [0u8; 8];
         if let Err(e) = file.read_exact(&mut len_bytes) {
-             tracing::error!("❌ Failed to read entry {} length: {}", i, e);
-             return None;
+            tracing::error!("❌ Failed to read entry {} length: {}", i, e);
+            return None;
         }
         let len = u64::from_le_bytes(len_bytes) as usize;
 
         // Read exactly `len` bytes and deserialize with JSON.
         let mut buf = vec![0u8; len];
         if let Err(e) = file.read_exact(&mut buf) {
-             tracing::error!("❌ Failed to read entry {} data: {}", i, e);
-             return None;
+            tracing::error!("❌ Failed to read entry {} data: {}", i, e);
+            return None;
         }
 
-        // If the entry is all zeros or empty, it might be a partial write
+        // If the entry is all zeros or empty, it might be a partial write.
         if len > 0 && buf.iter().all(|&b| b == 0) {
             tracing::error!("❌ Entry {} data is all zeros. Snapshot might be corrupt.", i);
             return None;
@@ -162,8 +168,12 @@ pub fn load_snapshot(log_path: &str) -> Option<(Vec<LogEntry>, u64)> {
                 return None;
             }
         };
-        entries.push(entry);
+
+        // Stream directly into the caller — no intermediate Vec.
+        if let ControlFlow::Break(_) = f(entry) {
+            return None;
+        }
     }
 
-    Some((entries, seq))
+    Some(seq)
 }
