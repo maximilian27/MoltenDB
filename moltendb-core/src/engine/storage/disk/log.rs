@@ -107,19 +107,6 @@ where
     Ok(ControlFlow::Continue(()))
 }
 
-/// Count the total number of lines in the log file.
-/// This is used when writing a snapshot to record the current sequence number
-/// (i.e. "the snapshot covers the first N lines of the log").
-pub fn count_log_lines(path: &str) -> u64 {
-    if let Ok(file) = File::open(path) {
-        // .lines() is lazy — it reads one line at a time, so this doesn't
-        // load the whole file into memory.
-        BufReader::new(file).lines().count() as u64
-    } else {
-        0 // File doesn't exist yet
-    }
-}
-
 // ─── read_log (still needed by EncryptedStorage wrapper) ─────────────────────
 //
 // EncryptedStorage wraps another StorageBackend and decrypts entries before

@@ -1002,7 +1002,7 @@ MoltenDB/
 │       │       │   ├── mod.rs        — re-exports: AsyncDiskStorage, SyncDiskStorage, helpers
 │       │       │   ├── async_storage.rs — MPSC channel + background Tokio flush task
 │       │       │   ├── sync_storage.rs  — Mutex-guarded BufWriter, immediate flush
-│       │       │   ├── log.rs        — stream_log_entries, write_compacted_log, count_log_lines
+│       │       │   ├── log.rs        — stream_log_entries, read_log_from_disk, write_compacted_log
 │       │       │   └── snapshot.rs   — write_snapshot, load_snapshot, atomic rename, backup rotation
 │       │       ├── memory.rs         — InMemoryStorage (ephemeral, no disk)
 │       │       ├── encrypted.rs      — XChaCha20-Poly1305 + Argon2id encryption wrapper

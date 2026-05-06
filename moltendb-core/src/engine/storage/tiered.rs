@@ -62,10 +62,9 @@
 // The StorageBackend trait that TieredStorage implements.
 use super::StorageBackend;
 // AsyncDiskStorage is the hot-tier writer — all new writes go through it.
-// count_log_lines: counts lines in the hot log to record the snapshot sequence number.
 // write_snapshot: writes a binary snapshot of the hot tier for fast next startup.
 // write_compacted_log: writes a minimal compacted log to a temp file before swapping.
-use super::disk::{AsyncDiskStorage, count_log_lines, write_snapshot, write_compacted_log};
+use super::disk::{AsyncDiskStorage, write_snapshot, write_compacted_log};
 // Our internal data types.
 use crate::engine::types::{DbError, LogEntry};
 // memmap2 provides safe(r) memory-mapped file access.
