@@ -6,6 +6,8 @@
 #[cfg(target_arch = "wasm32")]
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
+use std::sync::atomic::AtomicBool;
+#[cfg(target_arch = "wasm32")]
 use dashmap::{DashMap, DashSet};
 #[cfg(target_arch = "wasm32")]
 use tokio::sync::broadcast;
@@ -87,6 +89,7 @@ impl Db {
             schemas,
             post_backup_script,
             tiered_mode: config.tiered_mode,
+            io_fault: Arc::new(AtomicBool::new(false)),
         })
     }
 }

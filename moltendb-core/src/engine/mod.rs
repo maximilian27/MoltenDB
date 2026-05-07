@@ -53,6 +53,7 @@ use std::collections::HashMap;
 // Wrapping fields in Arc allows Db to be cheaply cloned — all clones share
 // the same underlying data.
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 // Tokio's broadcast channel: one sender, many receivers.
 // Used to push real-time change notifications to WebSocket subscribers.
 use tokio::sync::broadcast;
@@ -121,6 +122,12 @@ pub struct Db {
     /// Whether tiered (hot+cold) storage mode is active.
     pub tiered_mode: bool,
 
+    /// Circuit-breaker flag shared with `AsyncDiskStorage`.
+    /// When the background writer encounters a fatal I/O error it sets this to
+    /// `true`. All subsequent write operations return `DbError::StorageFault`
+    /// immediately, preventing silent data loss.
+    pub io_fault: Arc<AtomicBool>,
+
     /// Timestamp of when this Db instance was opened, used for uptime calculation.
     #[cfg(not(target_arch = "wasm32"))]
     pub started_at: std::time::Instant,
@@ -153,6 +160,11 @@ impl Db {
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
     pub fn insert(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
         operations::insert(operations::InsertParams {
             state: &self.state,
             indexes: &self.indexes,
@@ -171,6 +183,11 @@ impl Db {
     /// Partially update a document — merges `updates` into the existing document.
     /// Returns true if the document was found and updated, false if not found.
     pub fn update(&self, collection: &str, key: &str, updates: Value) -> Result<bool, DbError> {
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
         let updated = operations::update(operations::UpdateParams {
             state: &self.state,
             indexes: &self.indexes,
@@ -191,6 +208,11 @@ impl Db {
 
     /// Delete one or more documents by key. Pass a single key to delete one document.
     pub fn delete(&self, collection: &str, keys: Vec<String>) -> Result<(), DbError> {
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
         operations::delete(
             &self.state,
             &self.indexes,

@@ -160,6 +160,11 @@ pub enum DbError {
     /// The document version provided by the client is outdated.
     Conflict,
 
+    /// The background disk I/O thread encountered a fatal error (e.g. disk full).
+    /// The engine is now in read-only mode — new writes are rejected until the
+    /// process is restarted and the underlying storage issue is resolved.
+    StorageFault(String),
+
     /// A document failed JSON schema validation.
     #[cfg(feature = "schema")]
     SchemaValidationError(String),
@@ -179,6 +184,7 @@ impl fmt::Display for DbError {
             DbError::TypeMismatch(msg) => write!(f, "Type Mismatch: {}", msg),
             DbError::CollectionNotFound => write!(f, "Collection Not Found"),
             DbError::Conflict => write!(f, "Conflict: Document version is outdated"),
+            DbError::StorageFault(msg) => write!(f, "Storage fault — system is in read-only mode: {}", msg),
             #[cfg(feature = "schema")]
             DbError::SchemaValidationError(msg) => write!(f, "Schema Validation Error: {}", msg),
         }

@@ -6,6 +6,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::AtomicBool;
+#[cfg(not(target_arch = "wasm32"))]
 use dashmap::{DashMap, DashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::broadcast;
@@ -77,6 +79,8 @@ impl Db {
         //
         //   default             → AsyncDiskStorage: writes buffered in memory, flushed
         //                         every 50ms. Highest throughput, up to 50ms data loss.
+        // For AsyncDiskStorage, capture the io_fault flag before wrapping in Arc.
+        let mut io_fault_arc: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let base_storage: Arc<dyn crate::engine::storage::StorageBackend> = if in_memory {
             Arc::new(storage::InMemoryStorage)
         } else if tiered_mode {
@@ -84,7 +88,9 @@ impl Db {
         } else if sync_mode {
             Arc::new(storage::SyncDiskStorage::new(path)?)
         } else {
-            Arc::new(storage::AsyncDiskStorage::new(path)?)
+            let async_storage = storage::AsyncDiskStorage::new(path)?;
+            io_fault_arc = Arc::clone(&async_storage.io_fault);
+            Arc::new(async_storage)
         };
 
         // Optionally wrap the base storage in EncryptedStorage.
@@ -125,6 +131,7 @@ impl Db {
             schemas,
             post_backup_script,
             tiered_mode,
+            io_fault: io_fault_arc,
             #[cfg(not(target_arch = "wasm32"))]
             started_at: std::time::Instant::now(),
         })

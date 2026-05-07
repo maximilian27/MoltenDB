@@ -18,6 +18,8 @@ use crate::engine::types::{DbError, LogEntry};
 use std::fs::OpenOptions;
 use std::ops::ControlFlow;
 use std::io::{BufWriter, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -25,6 +27,10 @@ use tokio::task::JoinHandle;
 ///
 /// Writes are sent over an MPSC channel and flushed to disk every 50 ms by a
 /// background Tokio task. The write path never blocks the caller.
+///
+/// If the background task encounters a fatal I/O error (e.g. disk full), it
+/// sets `io_fault` to `true`. The engine checks this flag before every write
+/// and rejects new writes with `DbError::StorageFault` while it is set.
 pub struct AsyncDiskStorage {
     /// The sending half of the MPSC channel. Cloning this is cheap — all
     /// clones share the same underlying channel.
@@ -33,6 +39,9 @@ pub struct AsyncDiskStorage {
     path: String,
     /// Handle to the background writer task. Stored so Drop can await it.
     writer_task: Option<JoinHandle<()>>,
+    /// Circuit-breaker flag. Set to `true` by the background task on any fatal
+    /// I/O error. Checked by the engine on every write to prevent silent data loss.
+    pub io_fault: Arc<AtomicBool>,
 }
 
 impl AsyncDiskStorage {
@@ -42,6 +51,8 @@ impl AsyncDiskStorage {
         // `log_tx` (sender) is kept in the struct; `log_rx` (receiver) goes to the task.
         let (log_tx, mut log_rx) = mpsc::unbounded_channel::<String>();
         let path_clone = path.to_string();
+        let io_fault = Arc::new(AtomicBool::new(false));
+        let fault_flag = Arc::clone(&io_fault);
 
         // Spawn a Tokio task that owns the file handle and BufWriter.
         // This task runs for the lifetime of the server.
@@ -107,7 +118,9 @@ impl AsyncDiskStorage {
                         } else {
                             // Normal log line — append it to the BufWriter's buffer.
                             if let Err(e) = writeln!(w, "{}", log_line) {
-                                tracing::error!("Failed to write to disk: {}", e);
+                                tracing::error!("Fatal disk write error — entering read-only mode: {}", e);
+                                fault_flag.store(true, Ordering::Relaxed);
+                                break;
                             }
                         }
                     }
@@ -116,7 +129,11 @@ impl AsyncDiskStorage {
                     Ok(None) => break,
                     // Timeout fired — no message in the last 50 ms. Flush buffered data.
                     Err(_) => {
-                        let _ = w.flush();
+                        if let Err(e) = w.flush() {
+                            tracing::error!("Fatal disk flush error — entering read-only mode: {}", e);
+                            fault_flag.store(true, Ordering::Relaxed);
+                            break;
+                        }
                     }
                 }
             }
@@ -128,6 +145,7 @@ impl AsyncDiskStorage {
             sender: Some(log_tx),
             path: path.to_string(),
             writer_task: Some(writer_task),
+            io_fault,
         })
     }
 }
