@@ -29,6 +29,10 @@ If you meet these conditions, the Licensor grants you a non-exclusive, royalty-f
 
 If your organization exceeds the Revenue Limit, or if you wish to provide the Licensed Work as a managed service, you must purchase a Commercial License from the Licensor.
 
+### Distribution Requirements
+
+Any redistribution of the Licensed Work, whether in source or binary form, must include a copy of this license. You may not distribute the Licensed Work or any derivative works without attaching this license in its entirety.
+
 ### BSL General Terms
 
 If your use of the Licensed Work does not comply with the Additional Use Grant, you may still use the Licensed Work strictly for non-production, internal testing, and development purposes.
