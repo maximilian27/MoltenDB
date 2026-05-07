@@ -157,11 +157,10 @@ impl MmapLogReader {
             if let Ok(json_str) = line {
                 let length = json_str.len() as u32;
                 // Ignore lines that fail to parse (partial writes on crash).
-                if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str) {
-                    if let ControlFlow::Break(_) = f(entry, length) {
+                if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str)
+                    && let ControlFlow::Break(_) = f(entry, length) {
                         return ControlFlow::Break(());
                     }
-                }
             }
         }
         ControlFlow::Continue(())
@@ -214,12 +213,10 @@ impl TieredStorage {
         // Derive the cold path from the hot path.
         // If hot_path ends in ".log", replace it with ".cold.log".
         // Otherwise, just append ".cold.log".
-        let cold_path = if hot_path.ends_with(".log") {
-            // "my_database.log" → "my_database.cold.log"
-            format!("{}.cold.log", &hot_path[..hot_path.len() - 4])
-        } else {
-            format!("{}.cold.log", hot_path)
-        };
+        let cold_path = format!(
+            "{}.cold.log",
+            hot_path.strip_suffix(".log").unwrap_or(hot_path)
+        );
 
         // Open the hot-tier writer. AsyncDiskStorage creates the file if it
         // doesn't exist and starts the background flush task.

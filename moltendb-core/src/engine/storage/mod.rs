@@ -270,7 +270,7 @@ pub fn apply_entry(
         "INSERT" => {
             let col = state
                 .entry(entry.collection.clone())
-                .or_insert_with(DashMap::new);
+                .or_default();
 
             // During replay, we use the pointer (Cold). For live writes, we store the Value (Hot).
             let doc_state = if let Some(p) = pointer {

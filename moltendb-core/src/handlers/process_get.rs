@@ -111,8 +111,8 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 // For $gt/$gte/$lt/$lte, we can't do a single hash lookup, but we
                 // can scan the index values (which are much fewer than all documents)
                 // to find matching keys. This is faster than a full collection scan.
-                if !used_index {
-                    if let Some(cond_obj) = condition.as_object() {
+                if !used_index
+                    && let Some(cond_obj) = condition.as_object() {
                         // Check if any range operator is present in the condition.
                         let has_range = cond_obj.keys().any(|op| {
                             matches!(op.as_str(), "$gt" | "$greaterThan" | "$gte" | "$lt" | "$lessThan" | "$lte")
@@ -159,7 +159,6 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                             }
                         }
                     }
-                }
             }
         }
     }
@@ -265,8 +264,8 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 };
 
                 // If the foreign key exists, look up the related document.
-                if let Some(fk_val) = fk_val_opt {
-                    if let Some(related_doc) = db.get(target_col, vec![fk_val.clone()]).remove(&fk_val) {
+                if let Some(fk_val) = fk_val_opt
+                    && let Some(related_doc) = db.get(target_col, vec![fk_val.clone()]).remove(&fk_val) {
                         // Optionally project the joined document to specific fields.
                         let final_related = if let Some(j_fields) = join_fields {
                             query::project(&related_doc, j_fields)
@@ -278,7 +277,6 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                             doc_obj.insert(alias.clone(), final_related);
                         }
                     }
-                }
             }
         }
 
@@ -286,14 +284,13 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         // Fast key.starts_with() check injected by handle_get for prefix-scoped tokens
         // (e.g. "read:laptops:store_A_*"). Runs before the expensive AST evaluator so
         // unauthorised keys are skipped without ever entering evaluate_where.
-        if let Some(prefixes) = payload.get("_allowed_prefixes").and_then(|p| p.as_array()) {
-            if !prefixes.is_empty() {
+        if let Some(prefixes) = payload.get("_allowed_prefixes").and_then(|p| p.as_array())
+            && !prefixes.is_empty() {
                 let allowed = prefixes.iter()
                     .filter_map(|p| p.as_str())
                     .any(|prefix| key.starts_with(prefix));
                 if !allowed { continue; }
             }
-        }
 
         // ── WHERE filtering ───────────────────────────────────────────────────
         // Even if we used an index, we still apply the full WHERE clause here.
@@ -313,17 +310,15 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             let mut projected = query::project(&doc, fields);
 
             // Also include any joined fields that were embedded above.
-            if !join_aliases.is_empty() {
-                if let Some(doc_obj) = doc.as_object() {
-                    if let Some(proj_obj) = projected.as_object_mut() {
+            if !join_aliases.is_empty()
+                && let Some(doc_obj) = doc.as_object()
+                    && let Some(proj_obj) = projected.as_object_mut() {
                         for alias in &join_aliases {
                             if let Some(joined_val) = doc_obj.get(alias) {
                                 proj_obj.insert(alias.clone(), joined_val.clone());
                             }
                         }
                     }
-                }
-            }
             projected
         } else if let Some(excluded) = excluded_fields_req {
             // Exclude: remove the specified fields, keep everything else.
@@ -335,11 +330,10 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
 
         // ALWAYS include _v, regardless of projection or exclusion.
         // It's essential for concurrency control.
-        if let Some(v_val) = doc.get("_v") {
-            if let Some(obj) = processed_doc.as_object_mut() {
+        if let Some(v_val) = doc.get("_v")
+            && let Some(obj) = processed_doc.as_object_mut() {
                 obj.insert("_v".to_string(), v_val.clone());
             }
-        }
 
         final_results.insert(key, processed_doc);
     }
@@ -350,11 +344,10 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     // For single-key lookups ({ "keys": "u1" }), return just the document value
     // directly — no array wrapper, no _key injection. The caller already knows
     // which key they asked for.
-    if let Some(Value::String(_)) = payload.get("keys") {
-        if let Some(first_val) = final_results.values().next().cloned() {
+    if let Some(Value::String(_)) = payload.get("keys")
+        && let Some(first_val) = final_results.values().next().cloned() {
             return (200, first_val);
         }
-    }
 
     // ── Apply sort ────────────────────────────────────────────────────────────
     // Convert the HashMap into a Vec so we can sort it.

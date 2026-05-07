@@ -32,18 +32,16 @@ pub fn recover_to(
 
     storage.stream_log_into(&mut |entry, length| {
         // Condition 1: Check Timestamp
-        if let Some(t) = to_time {
-            if entry._t > t {
+        if let Some(t) = to_time
+            && entry._t > t {
                 return ControlFlow::Break(());
             }
-        }
 
         // Condition 2: Check Sequence
-        if let Some(s) = to_seq {
-            if count >= s {
+        if let Some(s) = to_seq
+            && count >= s {
                 return ControlFlow::Break(());
             }
-        }
 
         let pointer = crate::engine::types::RecordPointer {
             offset,

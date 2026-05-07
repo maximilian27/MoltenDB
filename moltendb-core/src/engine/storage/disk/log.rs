@@ -96,11 +96,10 @@ where
             if let Ok(json_str) = line {
                 let length = json_str.len() as u32;
                 // Ignore lines that fail to parse (e.g. partial write on crash).
-                if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str) {
-                    if let ControlFlow::Break(_) = f(entry, length) {
+                if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str)
+                    && let ControlFlow::Break(_) = f(entry, length) {
                         return Ok(ControlFlow::Break(()));
                     }
-                }
             }
         }
     }

@@ -34,11 +34,10 @@ pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize, ma
             }
         }
         // Check collection size for auto-eviction (Hybrid Bitcask).
-        if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
-            if count > 0 {
+        if let Ok(count) = db.evict_collection(col, db.hot_threshold)
+            && count > 0 {
                 debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
             }
-        }
         (200, json!({ "status": "ok", "updated": updated_count }))
     } else {
         (400, json!({ "error": "Missing 'data' map", "statusCode": 400 }))

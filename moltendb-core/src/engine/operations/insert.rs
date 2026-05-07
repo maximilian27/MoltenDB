@@ -72,11 +72,10 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
                     existing_val = Some(v.clone());
                 }
                 crate::engine::types::DocumentState::Cold(ptr) => {
-                    if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length) {
-                        if let Ok(entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
+                    if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length)
+                        && let Ok(entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
                             existing_val = Some(entry.value);
                         }
-                    }
                 }
             }
         }
@@ -86,12 +85,11 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
             let incoming_v = value.get("_v").and_then(|v| v.as_u64());
 
-            if let Some(iv) = incoming_v {
-                if iv <= existing_v {
+            if let Some(iv) = incoming_v
+                && iv <= existing_v {
                     tracing::debug!("⚡ Conflict error: {}/{} incoming _v={} <= stored _v={}", collection, key, iv, existing_v);
                     return Err(DbError::Conflict);
                 }
-            }
 
             let orig_created = existing.get("createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string();
             let new_v = existing_v + 1;

@@ -171,16 +171,16 @@ impl Db {
     /// Partially update a document — merges `updates` into the existing document.
     /// Returns true if the document was found and updated, false if not found.
     pub fn update(&self, collection: &str, key: &str, updates: Value) -> Result<bool, DbError> {
-        let updated = operations::update(
-            &self.state,
-            &self.indexes,
-            &self.storage,
-            &self.tx,
-            #[cfg(feature = "schema")] &self.schemas,
+        let updated = operations::update(operations::UpdateParams {
+            state: &self.state,
+            indexes: &self.indexes,
+            storage: &self.storage,
+            tx: &self.tx,
+            #[cfg(feature = "schema")] schemas: &self.schemas,
             collection,
             key,
             updates,
-        )?;
+        })?;
 
         if updated {
             // Auto-evict if the collection exceeds the threshold.
@@ -272,15 +272,12 @@ impl Db {
         // Promote every Cold entry in the in-memory state to Hot so subsequent reads
         // don't try to seek to stale byte offsets in the now-truncated log file.
         for entry in &entries {
-            if entry.cmd == "INSERT" {
-                if let Some(col) = self.state.get(&entry.collection) {
-                    if let Some(mut doc) = col.get_mut(&entry.key) {
-                        if matches!(*doc, crate::engine::types::DocumentState::Cold(_)) {
+            if entry.cmd == "INSERT"
+                && let Some(col) = self.state.get(&entry.collection)
+                    && let Some(mut doc) = col.get_mut(&entry.key)
+                        && matches!(*doc, crate::engine::types::DocumentState::Cold(_)) {
                             *doc = crate::engine::types::DocumentState::Hot(entry.value.clone());
                         }
-                    }
-                }
-            }
         }
 
         Ok(())

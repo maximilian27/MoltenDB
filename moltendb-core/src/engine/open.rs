@@ -57,11 +57,10 @@ impl Db {
         let schemas = Arc::new(DashMap::new());
 
         // Ensure the parent directory exists (skipped in in-memory mode — no file is created).
-        if !in_memory {
-            if let Some(parent) = std::path::Path::new(path).parent() {
+        if !in_memory
+            && let Some(parent) = std::path::Path::new(path).parent() {
                 std::fs::create_dir_all(parent)?;
             }
-        }
 
         // Choose the base storage backend based on the configured mode.
         //

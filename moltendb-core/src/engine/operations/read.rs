@@ -28,11 +28,10 @@ pub fn get(
                         results.insert(key, v.clone());
                     }
                     crate::engine::types::DocumentState::Cold(ptr) => {
-                        if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length) {
-                            if let Ok(log_entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
+                        if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length)
+                            && let Ok(log_entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
                                 results.insert(key, log_entry.value);
                             }
-                        }
                     }
                 }
             }
@@ -59,11 +58,10 @@ pub fn get_all(
                     results.insert(key.clone(), v.clone());
                 }
                 crate::engine::types::DocumentState::Cold(ptr) => {
-                    if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length) {
-                        if let Ok(log_entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
+                    if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length)
+                        && let Ok(log_entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
                             results.insert(key.clone(), log_entry.value);
                         }
-                    }
                 }
             }
         }
