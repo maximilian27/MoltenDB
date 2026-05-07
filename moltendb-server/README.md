@@ -51,7 +51,6 @@ cargo install --path moltendb-server
 moltendb \
   --db-path my_database.log \
   --write-mode async \
-  --storage-mode tiered \
   --jwt-secret my-awesome-secret \
   --root-user admin \
   --root-password admin123 \
@@ -64,7 +63,6 @@ Or with `cargo run` from the workspace root:
 cargo run --package moltendb-server --bin moltendb -- \
   --db-path my_database.log \
   --write-mode async \
-  --storage-mode tiered \
   --jwt-secret my-awesome-secret \
   --root-user admin \
   --root-password admin123 \
@@ -97,7 +95,6 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Rate limit sliding window in seconds |
 | `--root-password` | `MOLTENDB_ROOT_PASSWORD` | — | Root password seeded at startup |
 | `--root-user` | `MOLTENDB_ROOT_USER` | — | Root username seeded at startup |
-| `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` (hot + cold log, recommended for 100k+ docs) |
 | `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
 ### Point-in-Time Recovery (PITR)

@@ -27,10 +27,6 @@ impl Db {
     /// `sync_mode`      — if true, use SyncDiskStorage (flush on every write).
     ///                    if false, use AsyncDiskStorage (flush every 50ms).
     ///                    Ignored when `tiered_mode` is true.
-    /// `tiered_mode`    — if true, use TieredStorage (hot + cold two-tier backend).
-    ///                    Hot writes go to the active log; cold data is archived and
-    ///                    read via mmap on startup. Best for large datasets (100k+ docs).
-    ///                    Enable with STORAGE_MODE=tiered environment variable.
     /// `encryption_key` — if Some, wrap the storage in EncryptedStorage.
     ///                    if None, data is stored in plaintext (not recommended).
     #[cfg(not(target_arch = "wasm32"))]

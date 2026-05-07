@@ -20,6 +20,9 @@
 * Fixed all Clippy warnings in `moltendb-server`, `moltendb-auth`, and `moltendb-wasm`: `or_insert_with`, redundant cast, collapsible `if`, unnecessary `as_ref`/deref/borrow, and doc comment indentation issues
 * Added `#![deny(warnings)]` to all four crates (`moltendb-core/src/lib.rs`, `moltendb-auth/src/lib.rs`, `moltendb-wasm/src/lib.rs`, `moltendb-server/src/main.rs`) — future warnings are now hard compile errors
 
+### Breaking Changes
+* Removed `--storage-mode` CLI flag and `MOLTENDB_STORAGE_MODE` environment variable — tiered storage (hot + cold log with mmap cold reads) is now the only storage mode for the server binary; the flag was previously defaulting to `"standard"` which was strictly worse in every dimension (throughput, startup RAM, compaction cost); WASM continues to use single-file mode as mmap is not available in the browser sandbox
+
 ### Documentation
 * Updated all README files to reflect `1.0.0-rc` release candidate status: replaced `⚠️ Beta Software` notice with `🚀 Release Candidate (v1.0.0-rc)`, added `status-1.0.0-rc` badge to all six Rust crate READMEs, corrected test count badges (`88 passing` root, `59 passing` server), and updated `## Current limitations` heading in `moltendb-auth/README.md` from `v0.10.3` to `v1.0.0-rc`
 

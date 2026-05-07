@@ -182,7 +182,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - At-rest encryption with XChaCha20-Poly1305 (on by default, key from `--encryption-key`)
 - **In-memory store:** the entire dataset lives in RAM (`DashMap`) — reads are pure hashmap lookups with no disk I/O; RAM is the hard dataset size limit
 - Two write modes: async (50 ms flush, high throughput) and sync (flush-on-write, zero data loss)
-- Two storage modes: standard (single log file) and tiered (hot + cold log, mmap cold reads)
+- Tiered storage: hot + cold log with mmap cold reads — bounded RAM, high throughput at any dataset size
 - Binary snapshots on compaction for fast startup (snapshot + delta replay, not full log replay)
 - **Point-in-Time Recovery (PITR):** Recover the database to any millisecond or log sequence number using the `recover` CLI command.
 - **Snapshot Versioning:** Historical snapshots are automatically moved to a `/backup` folder with Unix timestamps.
@@ -800,7 +800,6 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--rate-limit-requests` | `MOLTENDB_RATE_LIMIT_REQS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Window size in seconds |
 | `--in-memory` | `MOLTENDB_IN_MEMORY` | `false` | Run entirely in RAM — no WAL, no disk I/O. All data is lost on exit. Ideal for ephemeral caches and CI environments |
-| `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` |
 | `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
 ### 🔒 Security Considerations

@@ -102,10 +102,6 @@ struct Config {
     #[arg(long, default_value = "async", env = "MOLTENDB_WRITE_MODE")]
     write_mode: String,
 
-    /// Storage mode: "standard" or "tiered" (hot+cold log, recommended for 100k+ docs) [env: MOLTENDB_STORAGE_MODE]
-    #[arg(long, default_value = "standard", env = "MOLTENDB_STORAGE_MODE")]
-    storage_mode: String,
-
     /// Maximum requests per IP per rate-limit window [env: MOLTENDB_RATE_LIMIT_REQS]
     #[arg(long, default_value = "100", env = "MOLTENDB_RATE_LIMIT_REQS")]
     rate_limit_requests: u32,
@@ -355,13 +351,6 @@ async fn main() {
     //                 up to 50ms of data loss on crash, much higher throughput).
     let is_sync_mode = cfg.write_mode.to_lowercase() == "sync";
 
-    // Determine the storage mode from the --storage-mode flag (or STORAGE_MODE env var).
-    // "tiered" = TieredStorage: hot log (active writes, kept < 100 MB) + cold log
-    //            (archived data, read via memory-mapped file on startup). Recommended
-    //            for large datasets (100k+ documents) because the OS pages in only
-    //            the cold data that's actually needed, reducing startup RAM usage.
-    // anything else = single-file mode (AsyncDiskStorage or SyncDiskStorage).
-    let is_tiered_mode = cfg.storage_mode.to_lowercase() == "tiered";
     let is_in_memory = cfg.in_memory;
 
     // ── Encryption key setup ──────────────────────────────────────────────────
@@ -400,7 +389,7 @@ async fn main() {
     let db_config = engine::DbConfig {
         path: db_path.clone(),
         sync_mode: is_sync_mode,
-        tiered_mode: is_tiered_mode,
+        tiered_mode: true,
         hot_threshold: cfg.hot_threshold,
         rate_limit_requests: Some(rate_limit_requests),
         rate_limit_window: Some(rate_limit_window),
