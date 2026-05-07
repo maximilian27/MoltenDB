@@ -11,6 +11,7 @@ No knowledge of HTTP routing, TLS, or the database engine.
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![crates.io](https://img.shields.io/crates/v/moltendb-auth?style=flat-square)](https://crates.io/crates/moltendb-auth)
+[![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](../CHANGELOG.md)
 
 </div>
 
@@ -165,7 +166,7 @@ The root token never leaves your backend. Clients only ever receive a narrowly s
 
 ---
 
-## Current limitations (v0.10.3)
+## Current limitations (v1.0.0-rc)
 
 - **No token refresh** — tokens expire after the configured TTL. Re-mint via `/auth/delegate` when needed.
 - **In-memory revocation only** — the revocation store is persisted to a `.revocations.json` file alongside the WAL and reloaded on startup, but revocations are not replicated across nodes.

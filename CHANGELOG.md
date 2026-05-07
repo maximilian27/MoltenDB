@@ -1,13 +1,29 @@
-# [1.0.0-rc1] (2026-05-06)
+# [1.0.0-rc1] (May 7, 2026)
 ### Performance
 * Removed intermediate `Vec<LogEntry>` from snapshot loading path — entries are now streamed directly into the in-memory `DashMap` as they are read from disk, halving peak startup RAM usage for large snapshots (previously `~2×` snapshot file size, now `~1×`)
 * Snapshot files are now gzip-compressed using `flate2` (pure Rust, WASM-compatible); typical JSON snapshots compress 3×–8×, significantly reducing disk usage and improving startup I/O on large datasets; magic header updated to `MOLTSNG2` for forward/backward compatibility — old `MOLTSNAP` snapshots are gracefully ignored and state is rebuilt from the WAL
 
-# [0.10.3] (2026-05-06)
+### Reliability
+* Replaced `.unwrap()` on disk I/O in the async storage background flush thread (`async_storage.rs`) with `match`/`if let Err` blocks that log errors via `tracing::error!` and return early — prevents silent panics on disk-full or lost file handle conditions
+* Replaced `.lock().unwrap()` on the WASM handle mutex in `wasm.rs` (6 call sites) with `.lock().expect("db handle mutex poisoned")` — provides a clear, descriptive panic message if the mutex is ever poisoned by a prior panic
+
+### Refactor
+* Grouped the 8 parameters of `insert()` into `InsertParams<'a>` struct (`insert.rs`) to resolve Clippy's "too many arguments" warning; re-exported from `operations/mod.rs`; all call sites updated
+* Grouped the 8 parameters of `update()` into `UpdateParams<'a>` struct (`update.rs`) for the same reason; re-exported from `operations/mod.rs`; all call sites updated
+
+### Code Quality
+* Fixed all ~44 Clippy warnings in `moltendb-core`: collapsed nested `if` statements, replaced redundant closures with direct constructor references (`DbError::Serialization`), removed unnecessary `Ok(…?)` in `encrypted.rs`, replaced `or_insert_with` with `or_default`, replaced manual `% 2 == 0` checks with `.is_multiple_of()`, replaced manual suffix stripping with `.strip_suffix()`
+* Fixed all Clippy warnings in `moltendb-server`, `moltendb-auth`, and `moltendb-wasm`: `or_insert_with`, redundant cast, collapsible `if`, unnecessary `as_ref`/deref/borrow, and doc comment indentation issues
+* Added `#![deny(warnings)]` to all four crates (`moltendb-core/src/lib.rs`, `moltendb-auth/src/lib.rs`, `moltendb-wasm/src/lib.rs`, `moltendb-server/src/main.rs`) — future warnings are now hard compile errors
+
+### Documentation
+* Updated all README files to reflect `1.0.0-rc` release candidate status: replaced `⚠️ Beta Software` notice with `🚀 Release Candidate (v1.0.0-rc)`, added `status-1.0.0-rc` badge to all six Rust crate READMEs, corrected test count badges (`88 passing` root, `59 passing` server), and updated `## Current limitations` heading in `moltendb-auth/README.md` from `v0.10.3` to `v1.0.0-rc`
+
+# [0.10.3] (May 6, 2026)
 ### Bug Fixes
 * Fixed stale index entries after log replay: Cold documents are now correctly unindexed during startup replay when a `DELETE` entry is encountered; previously only Hot (in-RAM) documents were unindexed, leaving Cold (disk-pointer) documents in the index after deletion
 
-# [0.10.2] (2026-05-04)
+# [0.10.2] (May 4, 2026)
 ### Refactor
 * Extracted `Db::open()` (native) and `Db::open_wasm()` (WASM) from `engine/mod.rs` into dedicated files `engine/open.rs` and `engine/open_wasm.rs`; `engine/mod.rs` now only declares and delegates
 * Removed duplicate single-key `get` method; renamed `get_batch` to `get` — callers now pass `Vec<String>` and receive `HashMap<String, Value>`; all call sites and tests updated
@@ -15,10 +31,10 @@
 * Renamed `insert_batch` to `insert` across the entire codebase for consistency with the new `get`/`delete` naming
 * Moved `compact`, `evict_collection`, and `recover_to` implementations from `engine/mod.rs` into dedicated files `operations/compact.rs`, `operations/evict.rs`, and `operations/recover.rs`; `engine/mod.rs` is now a thin delegation layer
 
-# [0.10.1] (2026-05-04)
+# [0.10.1] (May 4, 2026)
 Yanked due to a build issue.
 
-# [0.10.0] (2026-05-01)
+# [0.10.0] (May 1, 2026)
 ### Features
 * WebSocket JWT scope filtering — each connected client only receives change events for collections their token's scopes grant `read` access to; admin tokens (`*:*:*`) receive all events
 * WebSocket revocation enforcement at connection time — revoked tokens are rejected immediately with a structured error (`{"error":"token_revoked", "detail":"..."}`) before the connection is accepted
@@ -29,7 +45,7 @@ Yanked due to a build issue.
 * In-memory mode — new `--in-memory` CLI flag and `MOLTENDB_IN_MEMORY` env var; bypasses the WAL and all disk I/O entirely, turning MoltenDB into a pure RAM cache (Redis-like); compaction and revocation-file persistence are automatically skipped; a startup warning is emitted to make the ephemeral nature explicit
 * WASM in-memory mode — `WorkerDb.create()` now accepts an `in_memory` boolean as its ninth parameter; when `true`, OPFS is never opened and all data lives only in the browser's RAM — useful for ephemeral session caches or testing without touching persistent storage
 
-# [0.9.0] (2026-04-30)
+# [0.9.0] (Apr 30, 2026)
 
 
 ### Features
@@ -40,7 +56,7 @@ Yanked due to a build issue.
 
 
 
-# [0.8.0](https://github.com/maximilian27/MoltenDB/compare/v0.7.0...v0.8.0) (2026-04-30)
+# [0.8.0](https://github.com/maximilian27/MoltenDB/compare/v0.7.0...v0.8.0) (Apr 30, 2026)
 
 
 ### Bug Fixes
@@ -55,7 +71,7 @@ Yanked due to a build issue.
 
 
 
-# [0.7.0](https://github.com/maximilian27/MoltenDB/compare/v0.6.3...v0.7.0) (2026-04-28)
+# [0.7.0](https://github.com/maximilian27/MoltenDB/compare/v0.6.3...v0.7.0) (Apr 28, 2026)
 
 
 ### Bug Fixes
@@ -69,7 +85,7 @@ Yanked due to a build issue.
 
 
 
-## [0.6.3](https://github.com/maximilian27/MoltenDB/compare/v0.6.2...v0.6.3) (2026-04-28)
+## [0.6.3](https://github.com/maximilian27/MoltenDB/compare/v0.6.2...v0.6.3) (Apr 28, 2026)
 
 
 ### Features
@@ -78,7 +94,7 @@ Yanked due to a build issue.
 
 
 
-## [0.6.2](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.6.2) (2026-04-27)
+## [0.6.2](https://github.com/maximilian27/MoltenDB/compare/v0.4.0...v0.6.2) (Apr 27, 2026)
 
 
 ### Bug Fixes
@@ -101,7 +117,7 @@ Yanked due to a build issue.
 
 
 
-# [0.4.0](https://github.com/maximilian27/MoltenDB/compare/v0.3.0-beta.4...v0.4.0) (2026-04-23)
+# [0.4.0](https://github.com/maximilian27/MoltenDB/compare/v0.3.0-beta.4...v0.4.0) (Apr 23, 2026)
 
 
 ### Bug Fixes
