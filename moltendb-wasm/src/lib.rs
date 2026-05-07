@@ -1,3 +1,4 @@
+#![deny(warnings)]
 // ─── lib.rs ───────────────────────────────────────────────────────────────────
 // This file is the WASM entry point — it exposes the database to JavaScript.
 //

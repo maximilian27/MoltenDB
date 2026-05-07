@@ -43,7 +43,7 @@
 //      Read path:   on startup, cold tier is replayed first (via mmap), then
 //                   hot tier is replayed on top. Hot entries overwrite cold ones
 //                   for the same key, so the final in-memory state is correct.
-//      Promotion:   when the hot log exceeds HOT_TIER_MAX_BYTES (default 50 MB),
+//      Promotion:   when the hot log exceeds HOT_TIER_MAX_BYTES (default 100 MB),
 //                   compact() promotes the hot log to the cold tier and starts
 //                   a fresh hot log. The cold tier accumulates over time and is
 //                   compacted separately (less frequently).
@@ -83,9 +83,9 @@ use std::sync::Arc;
 /// Maximum size of the hot log before it is promoted to the cold tier.
 /// When compact() is called and the hot log exceeds this size, the hot log
 /// is appended to the cold log and a fresh hot log is started.
-/// 50 MB is a good default: small enough for fast startup replay, large enough
+/// 100 MB is a good default: small enough for fast startup replay, large enough
 /// to avoid too-frequent promotions.
-const HOT_TIER_MAX_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
+const HOT_TIER_MAX_BYTES: u64 = 100 * 1024 * 1024; // 100 MB
 
 // ─── MmapLogReader ────────────────────────────────────────────────────────────
 

@@ -1,3 +1,4 @@
+#![deny(warnings)]
 // ─── main.rs ──────────────────────────────────────────────────────────────────
 // This is the server entry point. It starts the HTTP/WebSocket server,
 // wires up all routes, middleware, and background tasks, then listens for
@@ -355,7 +356,7 @@ async fn main() {
     let is_sync_mode = cfg.write_mode.to_lowercase() == "sync";
 
     // Determine the storage mode from the --storage-mode flag (or STORAGE_MODE env var).
-    // "tiered" = TieredStorage: hot log (active writes, kept < 50 MB) + cold log
+    // "tiered" = TieredStorage: hot log (active writes, kept < 100 MB) + cold log
     //            (archived data, read via memory-mapped file on startup). Recommended
     //            for large datasets (100k+ documents) because the OS pages in only
     //            the cold data that's actually needed, reducing startup RAM usage.
