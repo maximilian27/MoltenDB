@@ -17,6 +17,8 @@ Same query engine. Same Bitcask-inspired hybrid storage. Two environments.
 
 **🚀 Release Candidate (v1.0.0-rc)** — The API is stable. Suitable for early production use. Minor breaking changes may occur before the final 1.0.0 release.
 
+> 🌐 **Building for the browser?** The WebAssembly engine, TypeScript client, and React/Angular adapters live in the [moltendb-web](https://github.com/moltendb/moltendb-web) repository **(MIT Licensed)**.
+
 </div>
 
 ---
@@ -213,7 +215,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - **Only the root user can mint `*:*:*` (admin) tokens** — non-root admin tokens cannot escalate their own privileges.
 - **Token revocation (JTI blacklist):** every JWT carries a unique `jti` (UUID). Compromised or leaked tokens can be immediately invalidated via `DELETE /auth/tokens/:jti` (admin-only) before their TTL expires. The revocation store is persisted to `<db-path>.revocations.json` and reloaded on server restart — revocations survive restarts.
 - Credentials loaded from environment variables at startup (no hardcoded defaults in production)
-- **Single root user:** MoltenDB supports exactly one root user. Your own user table handles the rest — MoltenDB never stores your application users.
+- **Single root user:** MoltenDB supports exactly one root user. Your own user table handles the rest — MoltenDB acts as a stateless delegation gateway, not an identity provider. Note that while the in-memory user store is ephemeral, the **token revocation list is persisted** to `<db-path>.revocations.json` and reloaded on every server restart — a revoked JWT remains revoked even after a crash or restart.
 - Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch size (max 1000 keys)
 - Security headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `HSTS`, `CSP`, etc.
 - Graceful shutdown: drains in-flight requests (up to 30 s), then awaits the async writer task to fully flush all buffered log entries before exit
@@ -850,7 +852,12 @@ Recommended for large datasets (100k+ documents). The hot tier keeps the most re
 | `--hot-threshold` (default 50 000) | Max documents per collection kept in RAM | Engine (DashMap) | Yes — CLI / env var |
 | `HOT_TIER_MAX_BYTES` (100 MB, hardcoded) | Max size of the hot log file on disk | Storage (log file) | No |
 
-These are **not alternatives** — they work together. `--hot-threshold` decides *when* to evict a document from RAM; the cold log is *where* it goes. Without the cold tier, eviction has no destination and `--hot-threshold` would be a no-op.
+These are **not alternatives** — they work together, but they trigger two completely different operations:
+
+- **`--hot-threshold` triggers eviction** — when a collection exceeds 50,000 documents in RAM, the oldest documents are *moved out of the `DashMap`* and into the cold log on disk. The data is still accessible; it just requires a ~50 µs disk read instead of a sub-microsecond RAM lookup. No log rewriting occurs.
+- **`HOT_TIER_MAX_BYTES` triggers compaction** — when the hot log file on disk grows beyond 100 MB, the entire hot log is *rewritten* (dead entries removed, superseded values collapsed). This is a log maintenance operation and has nothing to do with how many documents are in RAM.
+
+In short: eviction moves data from RAM → disk; compaction rewrites the disk log to reclaim space. Both can happen independently.
 
 Because cold documents are stored in the cold log and not in the snapshot, **snapshot files stay small** regardless of total dataset size. A collection with 10 million documents on disk only contributes 50 000 entries to the snapshot.
 
