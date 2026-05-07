@@ -153,15 +153,15 @@ impl Db {
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
     pub fn insert(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
-        operations::insert(
-            &self.state,
-            &self.indexes,
-            &self.storage,
-            &self.tx,
-            #[cfg(feature = "schema")] &self.schemas,
+        operations::insert(operations::InsertParams {
+            state: &self.state,
+            indexes: &self.indexes,
+            storage: &self.storage,
+            tx: &self.tx,
+            #[cfg(feature = "schema")] schemas: &self.schemas,
             collection,
             items,
-        )?;
+        })?;
 
         // Auto-evict if the collection exceeds the threshold.
         let _ = self.evict_collection(collection, self.hot_threshold);

@@ -28,7 +28,7 @@ mod evict;
 mod recover;
 
 pub use read::{get, get_all};
-pub use insert::insert;
+pub use insert::{insert, InsertParams};
 pub use update::update;
 pub use delete::{delete, delete_collection};
 pub use compact::compact;
