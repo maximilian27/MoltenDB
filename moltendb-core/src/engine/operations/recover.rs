@@ -5,7 +5,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::ops::ControlFlow;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "schema"))]
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use dashmap::{DashMap, DashSet};

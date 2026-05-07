@@ -225,11 +225,11 @@ async fn main() {
         info!("🕒 MoltenDB Point-in-Time Recovery Tool");
         info!("📖 Reading log: {}", log);
 
-        let password = encryption_key.as_ref().map(|s| s.clone()).unwrap_or_else(|| "default_molten_password".to_string());
+        let password = encryption_key.clone().unwrap_or_else(|| "default_molten_password".to_string());
         let master_key = engine::EncryptedStorage::derive_key(&password, "moltendb_log_salt");
 
         // Open storage
-        let base_storage = Arc::new(engine::SyncDiskStorage::new(&log).expect("Failed to open log file"));
+        let base_storage = Arc::new(engine::SyncDiskStorage::new(log).expect("Failed to open log file"));
         let storage: Arc<dyn engine::StorageBackend> = Arc::new(engine::EncryptedStorage::new(base_storage, &master_key));
 
         match engine::Db::recover_to(&*storage, *to_time, *to_seq) {
@@ -266,7 +266,7 @@ async fn main() {
                 
                 // The snapshot is now at temp_log.snapshot.bin
                 let snapshot_path = format!("{}.snapshot.bin", temp_log);
-                std::fs::rename(snapshot_path, &out).expect("Failed to move snapshot to output path");
+                std::fs::rename(snapshot_path, out).expect("Failed to move snapshot to output path");
                 std::fs::remove_file(temp_log).ok();
                 
                 info!("✨ Recovery complete! You can now use {} as your database snapshot.", out);

@@ -105,14 +105,12 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
             // Unindex the OLD value before overwriting.
             indexing::unindex_doc(indexes, collection, &key, &existing);
-        } else {
-            if let Some(obj) = value.as_object_mut() {
-                if obj.get("_v").is_none() {
-                    obj.insert("_v".to_string(), serde_json::json!(1u64));
-                }
-                obj.insert("createdAt".to_string(), serde_json::json!(now.clone()));
-                obj.insert("modifiedAt".to_string(), serde_json::json!(now));
+        } else if let Some(obj) = value.as_object_mut() {
+            if obj.get("_v").is_none() {
+                obj.insert("_v".to_string(), serde_json::json!(1u64));
             }
+            obj.insert("createdAt".to_string(), serde_json::json!(now.clone()));
+            obj.insert("modifiedAt".to_string(), serde_json::json!(now));
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]

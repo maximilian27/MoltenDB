@@ -160,9 +160,9 @@ pub async fn handle_update(
 /// Scope rules:
 ///   - `read:{collection}:*` (or `read:*:*` or `admin`) → full access, all docs returned.
 ///   - Document-level scopes (`read:{collection}:key1`, `read:{collection}:key2`, …):
-///       • If `"keys"` is specified, all requested keys must be covered by the token.
-///       • If no `"keys"` is specified, the result is filtered to only the docs the
-///         token is allowed to read.
+///     - If `"keys"` is specified, all requested keys must be covered by the token.
+///     - If no `"keys"` is specified, the result is filtered to only the docs the
+///       token is allowed to read.
 pub async fn handle_get(
     State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
     Extension(claims): Extension<auth::Claims>,
@@ -307,6 +307,7 @@ pub async fn handle_rest_get(
 /// Query params:
 ///   - `limit`  (optional) — maximum number of documents to return.
 ///   - `offset` (optional) — number of documents to skip before returning.
+///
 /// Requires: read:{collection}:* scope (or admin).
 pub async fn handle_rest_get_collection(
     State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
