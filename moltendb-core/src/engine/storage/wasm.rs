@@ -145,7 +145,7 @@ impl Drop for OpfsStorage {
 /// Implement the StorageBackend trait for OPFS-based storage.
 impl StorageBackend for OpfsStorage {
     fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
-        let handle = self.handle.lock().unwrap();
+        let handle = self.handle.lock().expect("db handle mutex poisoned");
 
         // Get the file size to know how many bytes to read.
         let size = handle.get_size().map_err(|_| DbError::WriteError)? as usize;
@@ -193,7 +193,7 @@ impl StorageBackend for OpfsStorage {
         json_line.push('\n');
 
         // Acquire the Mutex to get exclusive access to the file handle.
-        let handle = self.handle.lock().unwrap();
+        let handle = self.handle.lock().expect("db handle mutex poisoned");
 
         // Get the current file size — this is where we'll write (append).
         // get_size() returns the file size in bytes as a float (JS number).
@@ -219,7 +219,7 @@ impl StorageBackend for OpfsStorage {
 
     /// Read exactly `length` bytes from the log at `offset`.
     fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
-        let handle = self.handle.lock().unwrap();
+        let handle = self.handle.lock().expect("db handle mutex poisoned");
 
         let mut buf = vec![0u8; length as usize];
         let opts = web_sys::FileSystemReadWriteOptions::new();
@@ -238,7 +238,7 @@ impl StorageBackend for OpfsStorage {
     /// and split by newlines. Each line is parsed as a JSON LogEntry.
     /// Lines that fail to parse are silently skipped.
     fn read_log(&self) -> Result<Vec<LogEntry>, DbError> {
-        let handle = self.handle.lock().unwrap();
+        let handle = self.handle.lock().expect("db handle mutex poisoned");
 
         // Get the file size to know how many bytes to read.
         let size = handle.get_size().map_err(|_| DbError::WriteError)? as usize;
@@ -274,7 +274,7 @@ impl StorageBackend for OpfsStorage {
     /// trigger size-based auto-compaction. Uses `FileSystemSyncAccessHandle.getSize()`
     /// which is a cheap metadata call — it does not read any file content.
     fn get_size(&self) -> Result<u64, DbError> {
-        let handle = self.handle.lock().unwrap();
+        let handle = self.handle.lock().expect("db handle mutex poisoned");
         // get_size() returns the file byte length as a JS number (f64).
         // We cast to u64 — OPFS files are never negative or fractional.
         let size = handle.get_size().map_err(|_| DbError::WriteError)? as u64;
@@ -287,7 +287,7 @@ impl StorageBackend for OpfsStorage {
     /// because the OPFS handle is exclusive to this worker — no other process
     /// can be reading or writing the file concurrently.
     fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
-        let handle = self.handle.lock().unwrap();
+        let handle = self.handle.lock().expect("db handle mutex poisoned");
 
         // Truncate the file to 0 bytes — this erases all existing content.
         // truncate_with_f64(0.0) sets the file size to 0.

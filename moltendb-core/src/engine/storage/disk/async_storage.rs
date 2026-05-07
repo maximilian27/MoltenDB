@@ -47,11 +47,17 @@ impl AsyncDiskStorage {
         // This task runs for the lifetime of the server.
         let writer_task = tokio::spawn(async move {
             // Open the file in append mode so existing data is preserved.
-            let file = OpenOptions::new()
+            let file = match OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&path_clone)
-                .unwrap();
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!("Failed to open log file '{}': {}", path_clone, e);
+                    return;
+                }
+            };
             let mut w = BufWriter::new(file);
 
             loop {
@@ -75,7 +81,9 @@ impl AsyncDiskStorage {
 
                             // Flush and close the current file before renaming.
                             // On Windows, a file cannot be renamed while it's open.
-                            w.flush().unwrap();
+                            if let Err(e) = w.flush() {
+                                tracing::error!("Failed to flush log before compaction swap: {}", e);
+                            }
                             drop(w); // Release the file handle / Windows lock
 
                             // Atomically replace the live log with the compacted version.
@@ -84,11 +92,17 @@ impl AsyncDiskStorage {
                             }
 
                             // Re-open the (now compacted) log file for future writes.
-                            let new_file = OpenOptions::new()
+                            let new_file = match OpenOptions::new()
                                 .create(true)
                                 .append(true)
                                 .open(&path_clone)
-                                .unwrap();
+                            {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    tracing::error!("Failed to reopen log file '{}' after compaction: {}", path_clone, e);
+                                    return;
+                                }
+                            };
                             w = BufWriter::new(new_file);
                         } else {
                             // Normal log line — append it to the BufWriter's buffer.
