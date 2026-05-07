@@ -1,9 +1,10 @@
 # MoltenDB License
+Copyright (c) 2026 Maximilian Both. All rights reserved.
 
 MoltenDB is dual-licensed:
 
 1. **Free for Startups & Personal Use:** Licensed under the Business Source License (BSL) 1.1 with an Additional Use Grant (see below).
-2. **Commercial/Enterprise Use:** For companies exceeding the revenue threshold, or companies wishing to provide MoltenDB as a managed cloud service, a commercial license is required. Contact: [maximilian.both27@outlook.com]
+2. **Commercial/Enterprise Use:** For companies exceeding the revenue threshold, or companies wishing to provide MoltenDB as a managed cloud service, a commercial license is required. Contact: [admin@moltendb.dev](mailto:admin@moltendb.dev)
 
 ---
 

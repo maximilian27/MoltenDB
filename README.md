@@ -1138,4 +1138,4 @@ MoltenDB is licensed under the [Business Source License 1.1](LICENSE.md).
 - **Not permitted** to offer MoltenDB as a hosted/managed service (Database-as-a-Service) without a commercial license.
 - **Converts to MIT** automatically 3 years after each version's release date.
 
-For commercial licensing enquiries: maximilian.both27@outlook.com
+For commercial licensing enquiries: [admin@moltendb.dev](mailto:admin@moltendb.dev)
