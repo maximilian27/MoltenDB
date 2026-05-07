@@ -31,7 +31,7 @@ impl Default for DbConfig {
     fn default() -> Self {
         Self {
             path: "molten.db".to_string(),
-            tiered_mode: false,
+            tiered_mode: true,
             sync_mode: false,
             hot_threshold: 50000,
             rate_limit_requests: Some(1000),
