@@ -4,7 +4,8 @@
 ///   cargo run --example stress_insert
 ///
 /// Environment variables (all optional):
-///   MOLTENDB_URL   — base URL, default https://localhost:1538
+///   MOLTENDB_URL   — base URL, default http://localhost:1538 (dev mode / plain HTTP)
+///                    use https://localhost:1538 when running without --dev-mode
 ///   MOLTENDB_USER  — username,  default admin
 ///   MOLTENDB_PASS  — password,  default admin123
 ///   MOLTENDB_TOKEN — skip login and use this JWT directly
@@ -19,11 +20,12 @@ fn env(key: &str, default: &str) -> String {
 }
 
 fn main() {
-    let base_url = env("MOLTENDB_URL", "https://localhost:1538");
+    let base_url = env("MOLTENDB_URL", "http://localhost:1538");
     let user = env("MOLTENDB_ROOT_USER", "admin");
     let pass = env("MOLTENDB_ROOT_PASSWORD", "admin123");
 
-    // Build a client that accepts self-signed TLS certs (dev server).
+    // Build a client that accepts self-signed TLS certs (used when connecting
+    // to a non-dev-mode server with a self-signed certificate).
     let client = reqwest::blocking::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
@@ -56,7 +58,7 @@ fn main() {
     let original_batches: Vec<Value> =
         serde_json::from_str(&raw).expect("parse stress_data.json");
 
-    let chunk_size = 500; // ⚠️ SAFE LIMIT: 500 docs per HTTP request
+    let chunk_size = 10000; // ⚠️ SAFE LIMIT: 500 docs per HTTP request
     let mut safe_batches = Vec::new();
 
     for batch in original_batches {

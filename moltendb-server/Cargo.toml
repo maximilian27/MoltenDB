@@ -53,4 +53,4 @@ sysinfo = "0.33"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-reqwest = { version = "0.12", features = ["blocking", "json", "native-tls"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
