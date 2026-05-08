@@ -432,7 +432,6 @@ fn test_join_memory() {
     seed(&db);
     let r = get(&db, json!({
         "collection": "laptops",
-        "fields": ["brand", "model"],
         "joins": [{ "ram": { "from": "memory", "on": "memory_id" } }]
     }));
     let first = &arr(&r)[0];
@@ -446,7 +445,6 @@ fn test_join_with_field_projection() {
     seed(&db);
     let r = get(&db, json!({
         "collection": "laptops",
-        "fields": ["brand", "model"],
         "joins": [{ "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz", "panel"] } }]
     }));
     let first = &arr(&r)[0];
@@ -460,7 +458,6 @@ fn test_double_join() {
     seed(&db);
     let r = get(&db, json!({
         "collection": "laptops",
-        "fields": ["brand"],
         "joins": [
             { "ram":    { "from": "memory",  "on": "memory_id",  "fields": ["capacity_gb"] } },
             { "screen": { "from": "display", "on": "display_id", "fields": ["panel"] } }
@@ -504,7 +501,6 @@ fn test_join_sort_on_joined_field() {
     seed(&db);
     let r = get(&db, json!({
         "collection": "laptops",
-        "fields": ["brand"],
         "joins": [{ "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz"] } }],
         "sort": [{ "field": "screen.refresh_hz", "order": "desc" }]
     }));
@@ -830,102 +826,6 @@ fn test_concurrent_reads_during_writes() {
     let _ = std::fs::remove_file(&path);
 }
 
-// ─── Index auto-creation ──────────────────────────────────────────────────────
-
-#[test]
-fn test_index_accelerated_query() {
-    let db = open_db();
-    seed(&db);
-    // Query brand 3 times to trigger auto-index creation
-    for _ in 0..3 {
-        get(&db, json!({
-            "collection": "laptops",
-            "where": { "brand": "Apple" }
-        }));
-    }
-    // Index should now exist
-    // Query via index still returns correct results
-    let r = get(&db, json!({
-        "collection": "laptops",
-        "where": { "brand": "Apple" }
-    }));
-    assert_eq!(arr(&r).len(), 1);
-    assert_eq!(arr(&r)[0]["brand"], "Apple");
-}
-
-// ─── Analytics ────────────────────────────────────────────────────────────────
-
-#[test]
-fn test_analytics_count() {
-    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
-    let db = open_db();
-    seed(&db);
-    let q: AnalyticsQuery = serde_json::from_value(json!({
-        "collection": "laptops",
-        "metric": { "type": "COUNT" }
-    })).unwrap();
-    let result = execute_query(&db, &q);
-    assert_eq!(result.unwrap().result, serde_json::json!(6));
-}
-
-#[test]
-fn test_analytics_sum() {
-    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
-    let db = open_db();
-    seed(&db);
-    let q: AnalyticsQuery = serde_json::from_value(json!({
-        "collection": "laptops",
-        "metric": { "type": "SUM", "field": "price" }
-    })).unwrap();
-    let result = execute_query(&db, &q);
-    // 1499+3499+1699+1899+2499+849 = 11944
-    assert_eq!(result.unwrap().result, serde_json::json!(11944.0));
-}
-
-#[test]
-fn test_analytics_avg() {
-    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
-    let db = open_db();
-    seed(&db);
-    let q: AnalyticsQuery = serde_json::from_value(json!({
-        "collection": "laptops",
-        "metric": { "type": "AVG", "field": "price" }
-    })).unwrap();
-    let result = execute_query(&db, &q);
-    let avg = result.unwrap().result.as_f64().unwrap();
-    assert!((avg - 11944.0 / 6.0).abs() < 0.01);
-}
-
-#[test]
-fn test_analytics_min_max() {
-    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
-    let db = open_db();
-    seed(&db);
-    let min_q: AnalyticsQuery = serde_json::from_value(json!({
-        "collection": "laptops",
-        "metric": { "type": "MIN", "field": "price" }
-    })).unwrap();
-    let max_q: AnalyticsQuery = serde_json::from_value(json!({
-        "collection": "laptops",
-        "metric": { "type": "MAX", "field": "price" }
-    })).unwrap();
-    assert_eq!(execute_query(&db, &min_q).unwrap().result, json!(849.0));
-    assert_eq!(execute_query(&db, &max_q).unwrap().result, json!(3499.0));
-}
-
-#[test]
-fn test_analytics_with_where() {
-    use moltendb_core::analytics::{AnalyticsQuery, execute_query};
-    let db = open_db();
-    seed(&db);
-    let q: AnalyticsQuery = serde_json::from_value(json!({
-        "collection": "laptops",
-        "metric": { "type": "COUNT" },
-        "where": { "in_stock": true }
-    })).unwrap();
-    let result = execute_query(&db, &q);
-    assert_eq!(result.unwrap().result, json!(5)); // all except lp4
-}
 
 #[test]
 fn test_pitr_recovery() {

@@ -41,9 +41,6 @@ use wasm_bindgen::prelude::*;
 // the browser (via WASM + OpfsStorage) and on the server (via DiskStorage).
 use moltendb_core::engine::Db;
 
-// analytics = the analytics query engine (COUNT, SUM, AVG, MIN, MAX).
-use moltendb_core::analytics;
-
 // handlers = the full query/insert/update/delete pipeline (same as HTTP handlers).
 use moltendb_core::handlers;
 
@@ -318,50 +315,6 @@ impl WorkerDb {
         serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Execute an analytics query and return the result as a JSON string.
-    ///
-    /// This is the method called by the dashboard's auto-refresh loop:
-    ///   `const resultStr = db.analytics(JSON.stringify(query))`
-    ///
-    /// Takes a JSON string (not a JsValue) because the analytics query format
-    /// is complex and easier to pass as a pre-serialized string from JavaScript.
-    ///
-    /// Returns a JSON string (not a JsValue) so JavaScript can parse it with
-    /// `JSON.parse(resultStr)` and access `result` and `metadata`.
-    ///
-    /// Example input:
-    ///   `'{"collection":"events","metric":{"type":"COUNT"},"where":{"event_type":"button_click"}}'`
-    ///
-    /// Example output:
-    ///   `'{"result":42,"metadata":{"execution_time_ms":0,"rows_scanned":42}}'`
-    ///
-    /// `#[wasm_bindgen(js_name = analytics)]` sets the JavaScript method name to
-    /// "analytics" (matching the call in analytics-worker.js).
-    #[wasm_bindgen(js_name = analytics)]
-    pub fn analytics(&self, query_json: &str) -> String {
-        // Parse the JSON string into an AnalyticsQuery struct.
-        // If parsing fails (malformed JSON or missing fields), return an error JSON string.
-        let query: analytics::AnalyticsQuery = match serde_json::from_str(query_json) {
-            Ok(q) => q,
-            Err(e) => return json!({ "error": format!("Invalid query: {}", e) }).to_string(),
-        };
-
-        // Execute the analytics query against the in-memory database.
-        let result = match analytics::execute_query(&self.db, &query) {
-            Ok(res) => res,
-            Err(e) => return json!({ "error": format!("Analytics failed: {}", e) }).to_string(),
-        };
-
-        // Serialize the result to a JSON string.
-        // We manually construct the output shape to match what the dashboard expects.
-        json!({
-            "result": result.result,
-            "metadata": {
-                "execution_time_ms": result.metadata.execution_time_ms,
-                "rows_scanned": result.metadata.rows_scanned
-            }
-        }).to_string()
-    }
 
     /// Check auto-compaction thresholds and compact if needed.
     ///

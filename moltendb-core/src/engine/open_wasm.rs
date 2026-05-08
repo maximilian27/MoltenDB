@@ -8,7 +8,7 @@ use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use std::sync::atomic::AtomicBool;
 #[cfg(target_arch = "wasm32")]
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 #[cfg(target_arch = "wasm32")]
 use tokio::sync::broadcast;
 
@@ -38,8 +38,6 @@ impl Db {
 
         let state = Arc::new(DashMap::new());
         let (tx, _rx) = broadcast::channel(1000);
-        let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
-            Arc::new(Default::default());
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
@@ -65,7 +63,6 @@ impl Db {
             storage::stream_into_state(
                 &*wrapped,
                 &state,
-                &indexes,
                 #[cfg(feature = "schema")] &schemas,
             )?;
 
@@ -76,7 +73,6 @@ impl Db {
             state,
             storage,
             tx,
-            indexes,
             rate_limit_requests,
             rate_limit_window,
             max_body_size,

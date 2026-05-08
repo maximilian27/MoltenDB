@@ -21,6 +21,8 @@
 ---
 
 # [1.0.0-rc0] (May 7, 2026)
+> ⚠️ **WARNING:** This version was nuked and never made it to the public release.
+
 ### Reliability
 * Implemented `AtomicBool` circuit breaker in `AsyncDiskStorage` to eliminate silent data loss on background disk I/O failure — when the background flush thread encounters a fatal `writeln!` or `flush` error it sets a shared `Arc<AtomicBool>` flag and stops accepting further writes; the core engine checks this flag at the top of every `insert`, `update`, and `delete` call and returns `DbError::StorageFault` immediately if it is set, preventing the in-memory state from diverging from what is persisted on disk
 * Mapped `DbError::StorageFault` to `HTTP 503 Service Unavailable` in `process_set.rs` — clients now receive an explicit error response instead of a false `200 OK` when the storage layer is in a faulted state
