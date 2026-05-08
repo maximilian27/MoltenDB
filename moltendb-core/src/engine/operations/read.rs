@@ -97,6 +97,110 @@ pub fn get_filtered(
     results
 }
 
+/// Lazily scan a collection and return the top-N documents according to a
+/// comparator, applying an optional predicate (e.g. a WHERE clause) along
+/// the way.
+///
+/// Documents flow directly from the DashMap into a bounded max-heap of
+/// capacity `cap` (= `offset + count`). When the heap is full, the *worst*
+/// candidate is evicted on every push, so peak memory is `O(cap)` extra
+/// allocations on top of the (unavoidable) DashMap iteration — even for
+/// collections of millions of documents this stays in the hundreds of KB.
+///
+/// Returns documents in best-first order (already sorted), capped at `cap`.
+/// The caller still needs to apply `offset` (skip first N) and `count` (take).
+///
+/// `cmp` returns `Ordering::Less` for "better" items (the user comparator
+/// pattern used elsewhere in process_get); under a max-heap that means the
+/// *worst* item bubbles to the top and is evicted first. `into_sorted_vec`
+/// then yields best-first.
+pub fn scan_top_n<P, C>(
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    storage: &Arc<dyn StorageBackend>,
+    collection: &str,
+    predicate: P,
+    cmp: C,
+    cap: usize,
+) -> Vec<(String, Value)>
+where
+    P: Fn(&Value) -> bool,
+    C: Fn(&Value, &Value) -> std::cmp::Ordering,
+{
+    use std::collections::BinaryHeap;
+    use std::cmp::Ordering;
+
+    if cap == 0 {
+        return Vec::new();
+    }
+
+    // HeapItem wraps (key, value) and uses the user comparator directly so
+    // the worst item has the greatest ordering — exactly what a max-heap
+    // needs to evict the worst on overflow.
+    struct HeapItem<'a, F: Fn(&Value, &Value) -> Ordering> {
+        key: String,
+        value: Value,
+        cmp: &'a F,
+    }
+    impl<'a, F: Fn(&Value, &Value) -> Ordering> PartialEq for HeapItem<'a, F> {
+        fn eq(&self, o: &Self) -> bool { (self.cmp)(&self.value, &o.value) == Ordering::Equal }
+    }
+    impl<'a, F: Fn(&Value, &Value) -> Ordering> Eq for HeapItem<'a, F> {}
+    impl<'a, F: Fn(&Value, &Value) -> Ordering> PartialOrd for HeapItem<'a, F> {
+        fn partial_cmp(&self, o: &Self) -> Option<Ordering> { Some(self.cmp(o)) }
+    }
+    impl<'a, F: Fn(&Value, &Value) -> Ordering> Ord for HeapItem<'a, F> {
+        fn cmp(&self, o: &Self) -> Ordering { (self.cmp)(&self.value, &o.value) }
+    }
+
+    let mut heap: BinaryHeap<HeapItem<C>> = BinaryHeap::with_capacity(cap + 1);
+
+    if let Some(col) = state.get(collection) {
+        for entry in col.iter() {
+            // Extract the document value lazily. For Hot we can borrow first
+            // and avoid cloning if predicate fails or the heap is full and
+            // the candidate would be evicted immediately.
+            match entry.value() {
+                crate::engine::types::DocumentState::Hot(v) => {
+                    if !predicate(v) { continue; }
+                    // Quick "can't beat the worst" check before cloning when
+                    // the heap is already at capacity.
+                    if heap.len() >= cap
+                        && let Some(worst) = heap.peek()
+                            && cmp(v, &worst.value) != Ordering::Less {
+                                // v is not strictly better than the current worst
+                                // — it would be evicted immediately, so skip the clone.
+                                continue;
+                            }
+                    heap.push(HeapItem { key: entry.key().clone(), value: v.clone(), cmp: &cmp });
+                    if heap.len() > cap { heap.pop(); }
+                }
+                crate::engine::types::DocumentState::Cold(ptr) => {
+                    let bytes = match storage.read_at(ptr.offset, ptr.length) {
+                        Ok(b) => b,
+                        Err(_) => continue,
+                    };
+                    let log_entry: crate::engine::types::LogEntry =
+                        match serde_json::from_slice(&bytes) {
+                            Ok(le) => le,
+                            Err(_) => continue,
+                        };
+                    if !predicate(&log_entry.value) { continue; }
+                    if heap.len() >= cap
+                        && let Some(worst) = heap.peek()
+                            && cmp(&log_entry.value, &worst.value) != Ordering::Less {
+                                continue;
+                            }
+                    heap.push(HeapItem { key: entry.key().clone(), value: log_entry.value, cmp: &cmp });
+                    if heap.len() > cap { heap.pop(); }
+                }
+            }
+        }
+    }
+
+    // Drain in sorted order (best-first thanks to our reversed cmp).
+    heap.into_sorted_vec().into_iter().map(|h| (h.key, h.value)).collect()
+}
+
 /// Retrieve all documents in a collection as a HashMap.
 ///
 /// Returns an empty HashMap if the collection doesn't exist.

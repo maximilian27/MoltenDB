@@ -503,6 +503,17 @@ Authorization: Bearer {{token}}
   "keys": ["stress_099999", "stress_099998", "stress_099997", "stress_099996"]
 }
 
+### Verify count: how many docs match price=3499 + tags contains gaming?
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["_key"],
+  "where": { "price": { "$eq": 3499 }, "tags": { "$ct": "gaming" } }
+}
+
 ### ─── §9. Compaction ──────────────────────────────────────────────────────────
 ### §9. Compact the stress collection log.
 ### After many inserts/updates/deletes the log file grows. Compaction rewrites

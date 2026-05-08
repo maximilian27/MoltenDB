@@ -167,6 +167,25 @@ impl Db {
         operations::get_filtered(&self.state, &self.storage, collection, predicate, offset, limit)
     }
 
+    /// Lazily scan a collection and return the top-`cap` documents according
+    /// to a comparator, applying an optional predicate (e.g. WHERE) along the
+    /// way.
+    ///
+    /// Documents flow directly from the DashMap into a bounded max-heap of
+    /// capacity `cap` — peak memory is `O(cap)` extra instead of `O(matching)`,
+    /// even for collections of millions of documents. The result is already
+    /// sorted best-first (per the comparator); the caller still applies
+    /// `offset` and `count` for pagination.
+    pub fn scan_top_n(
+        &self,
+        collection: &str,
+        predicate: impl Fn(&Value) -> bool,
+        cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering,
+        cap: usize,
+    ) -> Vec<(String, Value)> {
+        operations::scan_top_n(&self.state, &self.storage, collection, predicate, cmp, cap)
+    }
+
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
     pub fn insert(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
