@@ -951,12 +951,11 @@ MoltenDB/
 ├── moltendb-core/                    — pure engine crate (no HTTP, no auth)
 │   └── src/
 │       ├── lib.rs                    — crate root
-│       ├── analytics.rs              — COUNT/SUM/AVG/MIN/MAX analytics engine
 │       ├── query.rs                  — query AST evaluator ($eq, $in, $regex, $contains, $or, $and, …)
 │       ├── validation.rs             — collection name / document depth / size guards
 │       ├── engine/
 │       │   ├── mod.rs                — Db struct, thin delegation layer
-│       │   ├── open.rs               — Db::open() — native startup (disk / tiered / encrypted)
+│       │   ├── open.rs               — Db::open() — native startup (disk / encrypted)
 │       │   ├── open_wasm.rs          — Db::open_wasm() — WASM/OPFS startup
 │       │   ├── config.rs             — DbConfig (path, encryption key, storage options)
 │       │   ├── schema.rs             — JSON Schema validation per collection
@@ -989,7 +988,6 @@ MoltenDB/
 │           ├── process_delete.rs     — DELETE handler (single, batch, drop)
 │           ├── process_snapshot.rs   — SNAPSHOT handler (PITR trigger)
 │           ├── process_schema.rs     — SCHEMA handler (define / update collection schema)
-│           └── process_analytics.rs  — ANALYTICS handler (COUNT/SUM/AVG/MIN/MAX)
 │
 ├── moltendb-auth/                    — identity crate (JWT, Argon2, scoped delegation) — excluded from WASM
 │   └── src/
@@ -1003,7 +1001,7 @@ MoltenDB/
 │   │   ├── main.rs                   — server entry point, router wiring, CLI config, background tasks
 │   │   ├── lib.rs                    — library root (re-exports for integration tests)
 │   │   ├── route_handlers.rs         — all HTTP handlers (login, delegate, revoke, set, get, update,
-│   │   │                               delete, snapshot, schema, analytics, REST get/collection)
+│   │   │                               delete, snapshot, schema, REST get/collection)
 │   │   ├── ws.rs                     — WebSocket upgrade, per-connection authenticated push
 │   │   ├── server.rs                 — TLS config loader, graceful shutdown signal
 │   │   └── rate_limit.rs             — per-IP sliding window rate limiter
