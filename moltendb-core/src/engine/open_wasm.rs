@@ -41,7 +41,6 @@ impl Db {
         let (tx, _rx) = broadcast::channel(1000);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
-        let query_heatmap = Arc::new(Default::default());
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
@@ -79,7 +78,6 @@ impl Db {
             storage,
             tx,
             indexes,
-            query_heatmap,
             hot_threshold,
             rate_limit_requests,
             rate_limit_window,

@@ -28,7 +28,7 @@ Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 - **Point-in-Time Recovery (PITR)** — Rebuild the state to any millisecond or sequence number (native only).
 - **Query evaluator** — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$contains`, `$or`, `$and`, field projection (include / exclude), dot-notation for nested fields, joins, sort, count, offset.
 - **Analytics engine** — COUNT, SUM, AVG, MIN, MAX with optional WHERE filtering. ⚠️ **Under active development — not ready for production use.**
-- **Auto-indexing** — `query_heatmap` tracks hot fields and builds indexes automatically.
+- **Auto-indexing** — indexes are created automatically on the first query of any field, so subsequent queries are O(1) index lookups instead of O(n) scans.
 - **Handler pipeline** — `process_get`, `process_set`, `process_update`, `process_delete`, `process_analytics` — the single source of truth consumed by both the server and the WASM adapter.
 - **Input validation** — collection name, key, and field name rules enforced before any operation reaches the engine.
 

@@ -14,7 +14,6 @@
 //   storage      — the persistence layer (disk, encrypted, or OPFS)
 //   tx           — broadcast channel for real-time WebSocket notifications
 //   indexes      — field indexes for fast WHERE queries
-//   query_heatmap — tracks query frequency for auto-indexing
 //
 // The Db struct has two constructors:
 //   open()      — native (server) build, opens a disk file
@@ -87,11 +86,6 @@ pub struct Db {
     /// e.g. "users:role" → { "admin" → {"u1"}, "user" → {"u2", "u3"} }
     /// `pub` so handlers.rs can check for index existence directly.
     pub indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>>,
-
-    /// Query frequency counter for auto-indexing.
-    /// Key: "collection:field". Value: number of times queried.
-    /// When a field reaches 3 queries, an index is auto-created.
-    pub query_heatmap: Arc<DashMap<String, u32>>,
 
     /// The maximum number of documents per collection to keep in RAM (Hot).
     /// If a collection exceeds this, older documents are paged out to disk (Cold).
@@ -235,13 +229,11 @@ impl Db {
     }
 
     /// Track that `field` was queried in `collection` and auto-create an index
-    /// if this field has been queried 3 or more times.
-    /// Errors are silently ignored — auto-indexing is best-effort.
+    /// on first query. Errors are silently ignored — auto-indexing is best-effort.
     pub fn track_query(&self, collection: &str, field: &str) {
         // The `let _ =` discards the Result — a failed auto-index is not fatal.
         let _ = indexing::track_query(
             &self.indexes,
-            &self.query_heatmap,
             collection,
             field,
             &self.storage,
@@ -262,13 +254,12 @@ impl Db {
         )
     }
     
-    /// Wipe all in-memory state — documents, indexes, and query heatmap.
+    /// Wipe all in-memory state — documents and indexes.
     /// Used by the WASM layer when a browser tab unloads in in-memory mode,
     /// so that any tab refresh clears the shared RAM store for all tabs.
     pub fn clear_all(&self) {
         self.state.clear();
         self.indexes.clear();
-        self.query_heatmap.clear();
         #[cfg(feature = "schema")]
         self.schemas.clear();
     }

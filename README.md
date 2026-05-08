@@ -197,7 +197,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Field projection (`fields`) and field exclusion (`excludedFields`) — mutually exclusive, validated before any data is read
 - Pagination: `count` (limit) and `offset`
 - Cross-collection joins with dot-notation foreign keys
-- Auto-indexing: fields queried 3+ times get an index automatically; equality lookups become O(1)
+- Auto-indexing: fields get an index automatically on first query; all subsequent equality lookups become O(1)
 - Range query index acceleration: `$gt`/`$lt` scan the index values instead of all documents
 - **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
 - **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.
@@ -990,7 +990,7 @@ MoltenDB/
 │       │   ├── open.rs               — Db::open() — native startup (disk / tiered / encrypted)
 │       │   ├── open_wasm.rs          — Db::open_wasm() — WASM/OPFS startup
 │       │   ├── config.rs             — DbConfig (path, encryption key, storage options)
-│       │   ├── indexing.rs           — auto-indexing, query heatmap
+│       │   ├── indexing.rs           — auto-indexing (index on first query)
 │       │   ├── schema.rs             — JSON Schema validation per collection
 │       │   ├── types.rs              — LogEntry, DbError, DocumentState, RecordPointer
 │       │   ├── operations/           — all engine operations (one file per operation)

@@ -23,6 +23,9 @@
 ### Breaking Changes
 * Removed `--storage-mode` CLI flag and `MOLTENDB_STORAGE_MODE` environment variable — tiered storage (hot + cold log with mmap cold reads) is now the only storage mode for the server binary; the flag was previously defaulting to `"standard"` which was strictly worse in every dimension (throughput, startup RAM, compaction cost); WASM continues to use single-file mode as mmap is not available in the browser sandbox
 
+### Improvements
+* Simplified auto-indexing: indexes are now created on the **first query** of any field instead of after 3 queries — the `query_heatmap` counter has been removed entirely; `track_query` is now a thin wrapper around `create_index` with an early-exit guard for already-indexed fields
+
 ### Documentation
 * Updated all README files to reflect `1.0.0-rc` release candidate status: replaced `⚠️ Beta Software` notice with `🚀 Release Candidate (v1.0.0-rc)`, added `status-1.0.0-rc` badge to all six Rust crate READMEs, corrected test count badges (`88 passing` root, `59 passing` server), and updated `## Current limitations` heading in `moltendb-auth/README.md` from `v0.10.3` to `v1.0.0-rc`
 
