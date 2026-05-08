@@ -1,4 +1,26 @@
-# [1.0.0-rc1] (May 7, 2026)
+# [1.0.0-rc1] (May 9, 2026)
+
+### Breaking Changes
+* **Removed cold log / tiered storage** — `my_database.cold.log`, `TieredStorage` hot/cold promotion, `MmapLogReader`, and `HOT_TIER_MAX_BYTES` are gone. The `--storage-mode tiered` CLI flag is removed. All data now lives in a single log file + snapshot. `TieredStorage` is kept as a thin newtype over `AsyncDiskStorage` for compatibility but does no tiering.
+* **Removed `--hot-threshold` / `MOLTENDB_HOT_THRESHOLD`** — the hot/cold eviction threshold no longer exists. All documents are loaded into RAM on startup. `evict_collection` and the `evict.rs` module are removed.
+* **Removed auto-indexing** — `indexing.rs`, the `indexes` field on `Db`, `track_query`, and all INDEX log entries are removed. Queries always use full-collection scans. Indexes will be rebuilt from scratch in a future release.
+
+### Performance
+* Rewrote `process_get.rs` — simplified from ~500 lines to ~230 lines; removed incorrect pre-sort fast path, extracted `shape_doc` helper, unified sort/truncate/skip pipeline.
+* Added bounded heap fast path for `sort + count` queries with no joins or key filters — only `offset + count` documents ever live in RAM regardless of collection size, eliminating the memory-doubling spike previously observed on large collections (e.g. top-10 cheapest from 1M docs).
+* Fixed snapshot `count` inflation (e.g. 979 000 instead of 100 000) caused by a race where `stream_log_into` replayed the old pre-truncation log on top of the already-loaded snapshot. Compaction now synchronously waits for the background file swap to complete before returning via a typed `WriterMsg::Compact` enum + condvar.
+
+### Bug Fixes
+* Fixed duplicate lines in the cold collection log — `promote_hot_to_cold` was called with the full database state (cold + hot combined) instead of only hot-tier entries. Moot after cold log removal but documented for history.
+
+### Refactor
+* Removed `write_compacted_log` from `disk/log.rs` — only used by the old cold-log promotion path.
+* Removed re-exports of `write_compacted_log` and `write_snapshot` from `disk/mod.rs`.
+* Deleted stale `my_database.cold.log` from project root.
+
+---
+
+# [1.0.0-rc0] (May 7, 2026)
 ### Reliability
 * Implemented `AtomicBool` circuit breaker in `AsyncDiskStorage` to eliminate silent data loss on background disk I/O failure — when the background flush thread encounters a fatal `writeln!` or `flush` error it sets a shared `Arc<AtomicBool>` flag and stops accepting further writes; the core engine checks this flag at the top of every `insert`, `update`, and `delete` call and returns `DbError::StorageFault` immediately if it is set, preventing the in-memory state from diverging from what is persisted on disk
 * Mapped `DbError::StorageFault` to `HTTP 503 Service Unavailable` in `process_set.rs` — clients now receive an explicit error response instead of a false `200 OK` when the storage layer is in a faulted state
@@ -6,10 +28,8 @@
 ### Performance
 * Removed intermediate `Vec<LogEntry>` from snapshot loading path — entries are now streamed directly into the in-memory `DashMap` as they are read from disk, halving peak startup RAM usage for large snapshots (previously `~2×` snapshot file size, now `~1×`)
 * Snapshot files are now gzip-compressed using `flate2` (pure Rust, WASM-compatible); typical JSON snapshots compress 3×–8×, significantly reducing disk usage and improving startup I/O on large datasets; magic header updated to `MOLTSNG2` for forward/backward compatibility — old `MOLTSNAP` snapshots are gracefully ignored and state is rebuilt from the WAL
-* Fixed `--hot-threshold` being ignored during log replay — INSERT entries replayed from the WAL/snapshot at startup were unconditionally stored as `DocumentState::Cold` (disk pointer), causing every WHERE scan to issue one `read_at` per document (~25–30s for 1M docs). The `hot_threshold` is now propagated through `stream_into_state` → `apply_entry`, and documents are stored `Hot` (in RAM) while the collection size is below the threshold, falling back to `Cold` afterwards — restoring the intended tiering behaviour
 * Added lazy `Db::get_filtered()` operation that filters documents *while* iterating the collection `DashMap`, only cloning matches; replaces the prior `get_all` → filter pattern in `process_get` for queries with WHERE but no joins. Reduces peak memory and time on sparse WHERE queries from O(total) to O(matches) — e.g. a query returning 84 matches from 1M docs no longer clones the other 999 916 documents
 * Added bounded top-N streaming via `Db::scan_top_n()` — for `sort + count` (and optional `offset`) queries with no joins, documents are streamed directly into a max-heap of capacity `offset + count` with a peek-before-clone guard so docs that cannot beat the current worst candidate are never cloned. Peak memory is now O(offset + count) instead of O(matching_docs); eliminates the memory-doubling spike previously observed on §6 stress queries and brings response times under 1s on 1M-doc collections
-* Replaced the post-fetch flat `collect-then-sort` in `process_get` with a three-way dispatch: bounded heap for `sort + count`, full sort for `sort` alone, arbitrary-order collect when neither is set — eliminates redundant allocations on the hot read path
 
 ### Reliability
 * Replaced `.unwrap()` on disk I/O in the async storage background flush thread (`async_storage.rs`) with `match`/`if let Err` blocks that log errors via `tracing::error!` and return early — prevents silent panics on disk-full or lost file handle conditions
@@ -24,18 +44,12 @@
 * Fixed all Clippy warnings in `moltendb-server`, `moltendb-auth`, and `moltendb-wasm`: `or_insert_with`, redundant cast, collapsible `if`, unnecessary `as_ref`/deref/borrow, and doc comment indentation issues
 * Added `#![deny(warnings)]` to all four crates (`moltendb-core/src/lib.rs`, `moltendb-auth/src/lib.rs`, `moltendb-wasm/src/lib.rs`, `moltendb-server/src/main.rs`) — future warnings are now hard compile errors
 
-### Breaking Changes
-* Removed `--storage-mode` CLI flag and `MOLTENDB_STORAGE_MODE` environment variable — tiered storage (hot + cold log with mmap cold reads) is now the only storage mode for the server binary; the flag was previously defaulting to `"standard"` which was strictly worse in every dimension (throughput, startup RAM, compaction cost); WASM continues to use single-file mode as mmap is not available in the browser sandbox
-
-### Improvements
-* Simplified auto-indexing: indexes are now created on the **first query** of any field instead of after 3 queries — the `query_heatmap` counter has been removed entirely; `track_query` is now a thin wrapper around `create_index` with an early-exit guard for already-indexed fields
-
 ### Documentation
 * Updated all README files to reflect `1.0.0-rc` release candidate status: replaced `⚠️ Beta Software` notice with `🚀 Release Candidate (v1.0.0-rc)`, added `status-1.0.0-rc` badge to all six Rust crate READMEs, corrected test count badges (`88 passing` root, `59 passing` server), and updated `## Current limitations` heading in `moltendb-auth/README.md` from `v0.10.3` to `v1.0.0-rc`
 
 # [0.10.3] (May 6, 2026)
 ### Bug Fixes
-* Fixed stale index entries after log replay: Cold documents are now correctly unindexed during startup replay when a `DELETE` entry is encountered; previously only Hot (in-RAM) documents were unindexed, leaving Cold (disk-pointer) documents in the index after deletion
+* Fixed stale document state after log replay: documents were not correctly removed from in-memory state during startup replay when a `DELETE` entry was encountered for a previously cold (disk-pointer) document
 
 # [0.10.2] (May 4, 2026)
 ### Refactor
