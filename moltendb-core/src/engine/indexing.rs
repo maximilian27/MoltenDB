@@ -129,17 +129,12 @@ pub fn unindex_doc(
     }
 }
 
-/// Track query patterns and auto-create indexes for frequently queried fields.
+/// Auto-create an index on first query of a field.
 ///
-/// Every time a field is used in a WHERE clause, this function increments its
-/// count in the query heatmap. When the count reaches 3, an index is
-/// automatically created on that field.
-///
-/// This is called from handlers::process_get() for every field in the WHERE clause.
+/// Called from handlers::process_get() for every field in the WHERE clause.
+/// If an index already exists for this field, this is a no-op.
 pub fn track_query(
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-    // The heatmap tracks how many times each "collection:field" has been queried.
-    query_heatmap: &DashMap<String, u32>,
     collection: &str,
     field: &str,
     // The storage backend — needed to persist the INDEX entry if we create one.
@@ -147,25 +142,8 @@ pub fn track_query(
     // The full in-memory state — needed to build the index from existing documents.
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
 ) -> Result<(), DbError> {
-    let index_key = format!("{}:{}", collection, field);
-
-    // If an index already exists for this field, nothing to do.
-    if indexes.contains_key(&index_key) {
-        return Ok(());
-    }
-
-    // Increment the query count for this field.
-    // entry().or_insert(0) atomically initialises the counter to 0 if missing.
-    let mut count = query_heatmap.entry(index_key.clone()).or_insert(0);
-    *count += 1;
-
-    // Auto-index threshold: create an index after 3 queries on the same field.
-    if *count >= 3 {
-        debug!("🔥 Hot field detected! Auto-indexing {}.{}", collection, field);
-        create_index(indexes, storage, state, collection, field)?;
-    }
-
-    Ok(())
+    debug!("🔥 Auto-indexing {}.{}", collection, field);
+    create_index(indexes, storage, state, collection, field)
 }
 
 /// Create a new index on `collection.field` and persist it to the log.

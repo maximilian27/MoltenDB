@@ -96,28 +96,14 @@ where
             if let Ok(json_str) = line {
                 let length = json_str.len() as u32;
                 // Ignore lines that fail to parse (e.g. partial write on crash).
-                if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str) {
-                    if let ControlFlow::Break(_) = f(entry, length) {
+                if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str)
+                    && let ControlFlow::Break(_) = f(entry, length) {
                         return Ok(ControlFlow::Break(()));
                     }
-                }
             }
         }
     }
     Ok(ControlFlow::Continue(()))
-}
-
-/// Count the total number of lines in the log file.
-/// This is used when writing a snapshot to record the current sequence number
-/// (i.e. "the snapshot covers the first N lines of the log").
-pub fn count_log_lines(path: &str) -> u64 {
-    if let Ok(file) = File::open(path) {
-        // .lines() is lazy — it reads one line at a time, so this doesn't
-        // load the whole file into memory.
-        BufReader::new(file).lines().count() as u64
-    } else {
-        0 // File doesn't exist yet
-    }
 }
 
 // ─── read_log (still needed by EncryptedStorage wrapper) ─────────────────────

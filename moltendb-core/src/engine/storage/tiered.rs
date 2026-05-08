@@ -43,7 +43,7 @@
 //      Read path:   on startup, cold tier is replayed first (via mmap), then
 //                   hot tier is replayed on top. Hot entries overwrite cold ones
 //                   for the same key, so the final in-memory state is correct.
-//      Promotion:   when the hot log exceeds HOT_TIER_MAX_BYTES (default 50 MB),
+//      Promotion:   when the hot log exceeds HOT_TIER_MAX_BYTES (default 100 MB),
 //                   compact() promotes the hot log to the cold tier and starts
 //                   a fresh hot log. The cold tier accumulates over time and is
 //                   compacted separately (less frequently).
@@ -62,10 +62,9 @@
 // The StorageBackend trait that TieredStorage implements.
 use super::StorageBackend;
 // AsyncDiskStorage is the hot-tier writer — all new writes go through it.
-// count_log_lines: counts lines in the hot log to record the snapshot sequence number.
 // write_snapshot: writes a binary snapshot of the hot tier for fast next startup.
 // write_compacted_log: writes a minimal compacted log to a temp file before swapping.
-use super::disk::{AsyncDiskStorage, count_log_lines, write_snapshot, write_compacted_log};
+use super::disk::{AsyncDiskStorage, write_snapshot, write_compacted_log};
 // Our internal data types.
 use crate::engine::types::{DbError, LogEntry};
 // memmap2 provides safe(r) memory-mapped file access.
@@ -84,9 +83,9 @@ use std::sync::Arc;
 /// Maximum size of the hot log before it is promoted to the cold tier.
 /// When compact() is called and the hot log exceeds this size, the hot log
 /// is appended to the cold log and a fresh hot log is started.
-/// 50 MB is a good default: small enough for fast startup replay, large enough
+/// 100 MB is a good default: small enough for fast startup replay, large enough
 /// to avoid too-frequent promotions.
-const HOT_TIER_MAX_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
+const HOT_TIER_MAX_BYTES: u64 = 100 * 1024 * 1024; // 100 MB
 
 // ─── MmapLogReader ────────────────────────────────────────────────────────────
 
@@ -158,11 +157,10 @@ impl MmapLogReader {
             if let Ok(json_str) = line {
                 let length = json_str.len() as u32;
                 // Ignore lines that fail to parse (partial writes on crash).
-                if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str) {
-                    if let ControlFlow::Break(_) = f(entry, length) {
+                if let Ok(entry) = serde_json::from_str::<LogEntry>(&json_str)
+                    && let ControlFlow::Break(_) = f(entry, length) {
                         return ControlFlow::Break(());
                     }
-                }
             }
         }
         ControlFlow::Continue(())
@@ -215,12 +213,10 @@ impl TieredStorage {
         // Derive the cold path from the hot path.
         // If hot_path ends in ".log", replace it with ".cold.log".
         // Otherwise, just append ".cold.log".
-        let cold_path = if hot_path.ends_with(".log") {
-            // "my_database.log" → "my_database.cold.log"
-            format!("{}.cold.log", &hot_path[..hot_path.len() - 4])
-        } else {
-            format!("{}.cold.log", hot_path)
-        };
+        let cold_path = format!(
+            "{}.cold.log",
+            hot_path.strip_suffix(".log").unwrap_or(hot_path)
+        );
 
         // Open the hot-tier writer. AsyncDiskStorage creates the file if it
         // doesn't exist and starts the background flush task.

@@ -82,14 +82,14 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             match db.insert(col, items) {
                 Ok(_) => {
                     // Check collection size for auto-eviction (Hybrid Bitcask).
-                    if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
-                        if count > 0 {
+                    if let Ok(count) = db.evict_collection(col, db.hot_threshold)
+                        && count > 0 {
                             debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
                         }
-                    }
                     (200, json!({ "status": "ok", "count": data_map.len() }))
                 },
                 Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
+                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable — storage fault", "details": msg, "statusCode": 503 })),
                 #[cfg(feature = "schema")]
                 Err(engine::DbError::SchemaValidationError(msg)) => (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))
@@ -117,11 +117,10 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             match db.insert(col, items) {
                 Ok(_) => {
                     // Check collection size for auto-eviction (Hybrid Bitcask).
-                    if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
-                        if count > 0 {
+                    if let Ok(count) = db.evict_collection(col, db.hot_threshold)
+                        && count > 0 {
                             debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
                         }
-                    }
                     (200, json!({
                         "status": "ok",
                         "count": data_arr.len(),
@@ -129,6 +128,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                     }))
                 },
                 Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
+                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable — storage fault", "details": msg, "statusCode": 503 })),
                 #[cfg(feature = "schema")]
                 Err(engine::DbError::SchemaValidationError(msg)) => (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))

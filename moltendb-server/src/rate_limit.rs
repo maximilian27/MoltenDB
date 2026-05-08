@@ -114,7 +114,7 @@ impl RateLimiter {
         // `entry(ip).or_insert_with(Vec::new)` gets the existing Vec for this IP,
         // or creates an empty one if this IP hasn't been seen before.
         // The returned `entry` is a mutable reference to the Vec.
-        let mut entry = self.requests.entry(ip).or_insert_with(Vec::new);
+        let mut entry = self.requests.entry(ip).or_default();
 
         // Remove timestamps that are outside the current window.
         // `retain` keeps only elements where the closure returns true.
@@ -128,7 +128,7 @@ impl RateLimiter {
             let oldest = entry.first().unwrap();
             // `saturating_sub` prevents underflow (returns 0 instead of wrapping).
             // `.max(1)` ensures we never tell the client to retry in 0 seconds.
-            let retry_after = (oldest.elapsed().as_secs() as u64)
+            let retry_after = oldest.elapsed().as_secs()
                 .saturating_sub(self.window.as_secs())
                 .max(1);
 
@@ -269,13 +269,11 @@ fn extract_ip(request: &Request) -> IpAddr {
     }
 
     // Try X-Real-IP — a simpler single-IP header commonly set by nginx.
-    if let Some(real_ip) = request.headers().get("x-real-ip") {
-        if let Ok(ip_str) = real_ip.to_str() {
-            if let Ok(ip) = ip_str.parse() {
+    if let Some(real_ip) = request.headers().get("x-real-ip")
+        && let Ok(ip_str) = real_ip.to_str()
+            && let Ok(ip) = ip_str.parse() {
                 return ip;
             }
-        }
-    }
 
     // Fallback: no proxy headers found.
     // In development (no proxy), all requests come from localhost.

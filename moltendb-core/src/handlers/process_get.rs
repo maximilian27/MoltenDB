@@ -1,7 +1,8 @@
 use serde_json::{Value, json};
 use crate::validation;
 use crate::{engine, query};
-use std::collections::HashMap;
+use std::collections::{HashMap, BinaryHeap};
+use std::cmp::Ordering;
 use tracing::debug;
 
 
@@ -111,8 +112,8 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 // For $gt/$gte/$lt/$lte, we can't do a single hash lookup, but we
                 // can scan the index values (which are much fewer than all documents)
                 // to find matching keys. This is faster than a full collection scan.
-                if !used_index {
-                    if let Some(cond_obj) = condition.as_object() {
+                if !used_index
+                    && let Some(cond_obj) = condition.as_object() {
                         // Check if any range operator is present in the condition.
                         let has_range = cond_obj.keys().any(|op| {
                             matches!(op.as_str(), "$gt" | "$greaterThan" | "$gte" | "$lt" | "$lessThan" | "$lte")
@@ -159,10 +160,65 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                             }
                         }
                     }
-                }
             }
         }
     }
+
+    // ── Read post-fetch query parameters early ───────────────────────────────
+    // We need sort/count/offset before fetching so we can pick the right path:
+    // for a sort+count query without joins or keys we stream documents directly
+    // into a bounded heap (O(cap) extra memory) instead of materialising the
+    // full collection in a HashMap first (which would double peak memory on
+    // large collections).
+    let fields_req = payload.get("fields").and_then(|f| f.as_array());
+    let excluded_fields_req = payload.get("excludedFields").and_then(|f| f.as_array());
+
+    if fields_req.is_some() && excluded_fields_req.is_some() {
+        return (400, json!({ "error": "'fields' and 'excludedFields' cannot be used together — use one or the other", "statusCode": 400 }));
+    }
+
+    let joins_req = payload.get("joins").and_then(|j| j.as_array());
+    let count_limit: Option<usize> = payload.get("count").and_then(|c| c.as_u64()).map(|n| n as usize);
+    let offset: usize = payload.get("offset").and_then(|c| c.as_u64()).map(|n| n as usize).unwrap_or(0);
+    let sort_specs = payload.get("sort").and_then(|s| s.as_array()).cloned();
+
+    // Helper: build a sort comparator from sort specs. Used both by the
+    // streaming `scan_top_n` path and by the post-processing sort step below.
+    // Returns `Less` for the "better" item (so a max-heap evicts the worst).
+    let make_cmp = |specs: &Vec<Value>| {
+        let specs = specs.clone();
+        move |doc_a: &Value, doc_b: &Value| -> Ordering {
+            for spec in &specs {
+                let (field, descending) = if let Some(field_str) = spec.as_str() {
+                    (field_str.to_string(), false)
+                } else if let Some(obj) = spec.as_object() {
+                    let field = obj.get("field").and_then(|f| f.as_str()).unwrap_or("").to_string();
+                    let desc  = obj.get("order").and_then(|o| o.as_str())
+                        .map(|o| o.eq_ignore_ascii_case("desc")).unwrap_or(false);
+                    (field, desc)
+                } else {
+                    continue;
+                };
+                if field.is_empty() { continue; }
+                let parts: Vec<&str> = field.split('.').collect();
+                let val_a = query::get_nested_value(doc_a, &parts);
+                let val_b = query::get_nested_value(doc_b, &parts);
+                let ord = compare_values(val_a.as_ref(), val_b.as_ref());
+                if ord != Ordering::Equal {
+                    return if descending { ord.reverse() } else { ord };
+                }
+            }
+            Ordering::Equal
+        }
+    };
+
+    let joins_present = joins_req.map(|a| !a.is_empty()).unwrap_or(false);
+    let has_keys = matches!(payload.get("keys"), Some(Value::String(_)) | Some(Value::Array(_)));
+
+    // Track whether the streaming top-N path was taken — if so the result is
+    // already sorted best-first and capped at (offset + count), so the later
+    // sort/heap step is skipped and only the offset+count slicing remains.
+    let mut presorted_capped: Option<Vec<(String, Value)>> = None;
 
     // ── Fetch documents ───────────────────────────────────────────────────────
     // If we found candidate keys via an index, fetch only those documents.
@@ -179,33 +235,52 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 let ks = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
                 db.get(col_name, ks)
             }
-            // No keys specified — return all documents in the collection.
-            _ => db.get_all(col_name),
+            // No keys specified.
+            _ => {
+                // ── Streaming top-N (sort + count, no joins) ──────────────────
+                // The big win: documents flow from DashMap → bounded heap of
+                // size (offset+count) → result. No intermediate HashMap of all
+                // matching docs. Peak memory: O(cap) instead of O(matches).
+                if !joins_present
+                    && let (Some(specs), Some(limit)) = (sort_specs.as_ref(), count_limit) {
+                        let cap = offset + limit;
+                        let cmp = make_cmp(specs);
+                        let where_clone = where_clause.cloned();
+                        let predicate = move |doc: &Value| -> bool {
+                            match &where_clone {
+                                Some(clause) => query::evaluate_where(doc, clause).unwrap_or(false),
+                                None => true,
+                            }
+                        };
+                        presorted_capped = Some(db.scan_top_n(col_name, predicate, cmp, cap));
+                        // We still feed the (already-sorted, capped) results
+                        // through the join/projection loop below. Use a tiny
+                        // HashMap built only from what survived the heap.
+                        presorted_capped.as_ref()
+                            .map(|v| v.iter().cloned().collect::<HashMap<_, _>>())
+                            .unwrap_or_default()
+                    } else if let Some(clause) = where_clause
+                        && !joins_present {
+                            // ── Lazy WHERE scan (no sort+count) ──────────────
+                            // Filter while iterating — only matching docs are
+                            // cloned. Saves O(n) clone vs. get_all.
+                            let clause = clause.clone();
+                            db.get_filtered(
+                                col_name,
+                                move |doc| query::evaluate_where(doc, &clause).unwrap_or(false),
+                                0,
+                                None,
+                            )
+                        } else {
+                            db.get_all(col_name)
+                        }
+            }
         }
     };
 
-    // ── Post-fetch processing ─────────────────────────────────────────────────
-    // Read optional query parameters.
-    let fields_req = payload.get("fields").and_then(|f| f.as_array());
-    let excluded_fields_req = payload.get("excludedFields").and_then(|f| f.as_array());
-
-    // Validation: fields and excludedFields cannot be used together.
-    // The client must choose one or the other.
-    if fields_req.is_some() && excluded_fields_req.is_some() {
-        return (400, json!({ "error": "'fields' and 'excludedFields' cannot be used together — use one or the other", "statusCode": 400 }));
-    }
-
-    let joins_req = payload.get("joins").and_then(|j| j.as_array());
-    // count: maximum number of results to return (applied after all filtering).
-    let count_limit: Option<usize> = payload.get("count").and_then(|c| c.as_u64()).map(|n| n as usize);
-    // offset: number of results to skip before returning (for pagination).
-    let offset: usize = payload.get("offset").and_then(|c| c.as_u64()).map(|n| n as usize).unwrap_or(0);
-    // sort: array of sort specs applied after filtering and projection.
-    // Each spec is either a field name string (ascending) or an object:
-    //   { "field": "age", "order": "asc" }   — ascending (default)
-    //   { "field": "age", "order": "desc" }  — descending
-    // Multiple specs are applied in priority order (first spec is primary sort).
-    let sort_specs = payload.get("sort").and_then(|s| s.as_array()).cloned();
+    // Suppress the unused-variable warning when neither the streaming path
+    // nor the keys path applies.
+    let _ = has_keys;
 
     let mut final_results = HashMap::new();
 
@@ -265,8 +340,8 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 };
 
                 // If the foreign key exists, look up the related document.
-                if let Some(fk_val) = fk_val_opt {
-                    if let Some(related_doc) = db.get(target_col, vec![fk_val.clone()]).remove(&fk_val) {
+                if let Some(fk_val) = fk_val_opt
+                    && let Some(related_doc) = db.get(target_col, vec![fk_val.clone()]).remove(&fk_val) {
                         // Optionally project the joined document to specific fields.
                         let final_related = if let Some(j_fields) = join_fields {
                             query::project(&related_doc, j_fields)
@@ -278,7 +353,6 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                             doc_obj.insert(alias.clone(), final_related);
                         }
                     }
-                }
             }
         }
 
@@ -286,14 +360,13 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         // Fast key.starts_with() check injected by handle_get for prefix-scoped tokens
         // (e.g. "read:laptops:store_A_*"). Runs before the expensive AST evaluator so
         // unauthorised keys are skipped without ever entering evaluate_where.
-        if let Some(prefixes) = payload.get("_allowed_prefixes").and_then(|p| p.as_array()) {
-            if !prefixes.is_empty() {
+        if let Some(prefixes) = payload.get("_allowed_prefixes").and_then(|p| p.as_array())
+            && !prefixes.is_empty() {
                 let allowed = prefixes.iter()
                     .filter_map(|p| p.as_str())
                     .any(|prefix| key.starts_with(prefix));
                 if !allowed { continue; }
             }
-        }
 
         // ── WHERE filtering ───────────────────────────────────────────────────
         // Even if we used an index, we still apply the full WHERE clause here.
@@ -313,17 +386,15 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             let mut projected = query::project(&doc, fields);
 
             // Also include any joined fields that were embedded above.
-            if !join_aliases.is_empty() {
-                if let Some(doc_obj) = doc.as_object() {
-                    if let Some(proj_obj) = projected.as_object_mut() {
+            if !join_aliases.is_empty()
+                && let Some(doc_obj) = doc.as_object()
+                    && let Some(proj_obj) = projected.as_object_mut() {
                         for alias in &join_aliases {
                             if let Some(joined_val) = doc_obj.get(alias) {
                                 proj_obj.insert(alias.clone(), joined_val.clone());
                             }
                         }
                     }
-                }
-            }
             projected
         } else if let Some(excluded) = excluded_fields_req {
             // Exclude: remove the specified fields, keep everything else.
@@ -335,11 +406,10 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
 
         // ALWAYS include _v, regardless of projection or exclusion.
         // It's essential for concurrency control.
-        if let Some(v_val) = doc.get("_v") {
-            if let Some(obj) = processed_doc.as_object_mut() {
+        if let Some(v_val) = doc.get("_v")
+            && let Some(obj) = processed_doc.as_object_mut() {
                 obj.insert("_v".to_string(), v_val.clone());
             }
-        }
 
         final_results.insert(key, processed_doc);
     }
@@ -350,89 +420,83 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     // For single-key lookups ({ "keys": "u1" }), return just the document value
     // directly — no array wrapper, no _key injection. The caller already knows
     // which key they asked for.
-    if let Some(Value::String(_)) = payload.get("keys") {
-        if let Some(first_val) = final_results.values().next().cloned() {
+    if let Some(Value::String(_)) = payload.get("keys")
+        && let Some(first_val) = final_results.values().next().cloned() {
             return (200, first_val);
         }
-    }
 
-    // ── Apply sort ────────────────────────────────────────────────────────────
-    // Convert the HashMap into a Vec so we can sort it.
-    // Sort specs are applied in priority order: the first spec is the primary
-    // sort key, subsequent specs break ties.
-    //
-    // Each spec can be:
-    //   "age"                          — sort by "age" ascending (shorthand)
-    //   { "field": "age" }             — sort by "age" ascending
-    //   { "field": "age", "order": "desc" } — sort by "age" descending
-    //
-    // Comparison rules:
-    //   Numbers are compared numerically (f64).
-    //   Strings are compared lexicographically.
-    //   Mixed types or missing fields sort to the end (treated as null).
-    let mut entries: Vec<(String, Value)> = final_results.into_iter().collect();
+    // ── Apply sort + pagination ───────────────────────────────────────────────
+    // If the streaming top-N path was used, the result is already sorted
+    // best-first and capped at (offset + count) — we just need to replace
+    // each entry's value with the (possibly projected/joined) version from
+    // `final_results`, then apply offset slicing.
+    let entries: Vec<(String, Value)> = if let Some(presorted) = presorted_capped {
+        presorted.into_iter()
+            .filter_map(|(k, _v)| final_results.remove(&k).map(|nv| (k, nv)))
+            .collect()
+    } else { match (sort_specs, count_limit) {
+        // ── Bounded top-N heap (sort + count) ────────────────────────────────
+        // Keeps only (offset + count) items in the heap at any time.
+        // This avoids materialising all matching documents for sorting when
+        // only a small slice of the result set is needed.
+        (Some(specs), Some(limit)) => {
+            let cap = offset + limit;
+            let cmp = make_cmp(&specs);
 
-    if let Some(specs) = sort_specs {
-        entries.sort_by(|(_, doc_a), (_, doc_b)| {
-            // Walk through each sort spec in priority order.
-            // The first spec that produces a non-equal comparison wins.
-            for spec in &specs {
-                // Extract the field name and direction from the spec.
-                // Spec can be a plain string (field name, asc) or an object.
-                let (field, descending) = if let Some(field_str) = spec.as_str() {
-                    // Shorthand: just a field name string → ascending
-                    (field_str.to_string(), false)
-                } else if let Some(obj) = spec.as_object() {
-                    let field = obj.get("field")
-                        .and_then(|f| f.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    // "order": "desc" → descending; anything else → ascending
-                    let desc = obj.get("order")
-                        .and_then(|o| o.as_str())
-                        .map(|o| o.eq_ignore_ascii_case("desc"))
-                        .unwrap_or(false);
-                    (field, desc)
-                } else {
-                    continue; // Skip malformed spec
-                };
-
-                if field.is_empty() { continue; }
-
-                // Read the field value from each document using dot-notation.
-                let parts: Vec<&str> = field.split('.').collect();
-                let val_a = query::get_nested_value(doc_a, &parts);
-                let val_b = query::get_nested_value(doc_b, &parts);
-
-                // Compare the two values.
-                // Numbers → numeric comparison; strings → lexicographic;
-                // null/missing → sort to the end regardless of direction.
-                let ord = compare_values(val_a.as_ref(), val_b.as_ref());
-
-                if ord != std::cmp::Ordering::Equal {
-                    // Apply direction: flip the ordering for descending.
-                    return if descending { ord.reverse() } else { ord };
-                }
-                // Equal on this spec → fall through to the next spec.
+            // Wrapper that reverses the comparison so BinaryHeap (a max-heap)
+            // evicts the *worst* candidate when the heap is full — leaving the
+            // best `cap` items inside.
+            struct HeapItem(String, Value, std::sync::Arc<dyn Fn(&Value, &Value) -> Ordering + Send + Sync>);
+            impl PartialEq for HeapItem { fn eq(&self, o: &Self) -> bool { (self.2)(&self.1, &o.1) == Ordering::Equal } }
+            impl Eq for HeapItem {}
+            impl PartialOrd for HeapItem {
+                fn partial_cmp(&self, o: &Self) -> Option<Ordering> { Some(self.cmp(o)) }
             }
-            // All specs were equal — preserve original (insertion) order.
-            std::cmp::Ordering::Equal
-        });
-    }
+            impl Ord for HeapItem {
+                // Max-heap: we want the *worst* candidate (per the sort comparator)
+                // to bubble to the top so it gets evicted first when we push beyond
+                // capacity. The user comparator returns `Less` for "better" items
+                // (e.g. higher price under desc), so the worst item has the greatest
+                // ordering — exactly what we want for a max-heap top.
+                fn cmp(&self, o: &Self) -> Ordering { (self.2)(&self.1, &o.1) }
+            }
+
+            let cmp_arc: std::sync::Arc<dyn Fn(&Value, &Value) -> Ordering + Send + Sync> =
+                std::sync::Arc::new(cmp);
+
+            let mut heap: BinaryHeap<HeapItem> = BinaryHeap::with_capacity(cap + 1);
+            for (k, v) in final_results {
+                heap.push(HeapItem(k, v, cmp_arc.clone()));
+                if heap.len() > cap {
+                    heap.pop(); // evict the worst item
+                }
+            }
+
+            // Drain the heap — items come out in worst-first order, so reverse.
+            let mut sorted: Vec<(String, Value)> = heap.into_sorted_vec()
+                .into_iter()
+                .map(|item| (item.0, item.1))
+                .collect();
+            // into_sorted_vec gives ascending order (best first for our reversed heap),
+            // which is exactly the order we want.
+            sorted.truncate(cap);
+            sorted
+        }
+
+        // ── Full sort, no count limit ─────────────────────────────────────────
+        (Some(specs), None) => {
+            let cmp = make_cmp(&specs);
+            let mut v: Vec<(String, Value)> = final_results.into_iter().collect();
+            v.sort_by(|(_, a), (_, b)| cmp(a, b));
+            v
+        }
+
+        // ── No sort — collect in arbitrary order ──────────────────────────────
+        _ => final_results.into_iter().collect(),
+    } };
 
     // ── Apply offset and count (pagination) ───────────────────────────────────
-    // offset: skip the first N results.
-    // count:  return at most N results after skipping.
-    // Both are applied AFTER sorting so pagination is stable.
     let iter = entries.into_iter().skip(offset);
-
-    // All multi-document responses are returned as a JSON array of objects,
-    // each with a "_key" field injected so the caller knows which document
-    // each element corresponds to. This is consistent regardless of whether
-    // a sort was requested — JSON objects have no guaranteed key order, so
-    // returning an object for unsorted results and an array for sorted results
-    // was inconsistent. The only exception is single-key lookups (handled above)
-    // which return the document directly without a wrapper.
     let mut iter: Box<dyn Iterator<Item = (String, Value)>> = Box::new(iter);
     if let Some(limit) = count_limit {
         iter = Box::new(iter.take(limit));

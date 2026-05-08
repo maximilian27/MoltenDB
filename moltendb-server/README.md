@@ -10,7 +10,8 @@ The runnable binary. Delegates all database logic to `moltendb-core`.
 
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-59%20passing-brightgreen?style=flat-square)](#testing)
+[![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](../CHANGELOG.md)
 
 </div>
 
@@ -50,7 +51,6 @@ cargo install --path moltendb-server
 moltendb \
   --db-path my_database.log \
   --write-mode async \
-  --storage-mode tiered \
   --jwt-secret my-awesome-secret \
   --root-user admin \
   --root-password admin123 \
@@ -63,7 +63,6 @@ Or with `cargo run` from the workspace root:
 cargo run --package moltendb-server --bin moltendb -- \
   --db-path my_database.log \
   --write-mode async \
-  --storage-mode tiered \
   --jwt-secret my-awesome-secret \
   --root-user admin \
   --root-password admin123 \
@@ -96,7 +95,6 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Rate limit sliding window in seconds |
 | `--root-password` | `MOLTENDB_ROOT_PASSWORD` | — | Root password seeded at startup |
 | `--root-user` | `MOLTENDB_ROOT_USER` | — | Root username seeded at startup |
-| `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` (hot + cold log, recommended for 100k+ docs) |
 | `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
 ### Point-in-Time Recovery (PITR)

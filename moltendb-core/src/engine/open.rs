@@ -6,6 +6,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::AtomicBool;
+#[cfg(not(target_arch = "wasm32"))]
 use dashmap::{DashMap, DashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::broadcast;
@@ -25,10 +27,6 @@ impl Db {
     /// `sync_mode`      — if true, use SyncDiskStorage (flush on every write).
     ///                    if false, use AsyncDiskStorage (flush every 50ms).
     ///                    Ignored when `tiered_mode` is true.
-    /// `tiered_mode`    — if true, use TieredStorage (hot + cold two-tier backend).
-    ///                    Hot writes go to the active log; cold data is archived and
-    ///                    read via mmap on startup. Best for large datasets (100k+ docs).
-    ///                    Enable with STORAGE_MODE=tiered environment variable.
     /// `encryption_key` — if Some, wrap the storage in EncryptedStorage.
     ///                    if None, data is stored in plaintext (not recommended).
     #[cfg(not(target_arch = "wasm32"))]
@@ -52,16 +50,14 @@ impl Db {
         let (tx, _rx) = broadcast::channel(1000);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
-        let query_heatmap = Arc::new(Default::default());
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
         // Ensure the parent directory exists (skipped in in-memory mode — no file is created).
-        if !in_memory {
-            if let Some(parent) = std::path::Path::new(path).parent() {
+        if !in_memory
+            && let Some(parent) = std::path::Path::new(path).parent() {
                 std::fs::create_dir_all(parent)?;
             }
-        }
 
         // Choose the base storage backend based on the configured mode.
         //
@@ -78,6 +74,8 @@ impl Db {
         //
         //   default             → AsyncDiskStorage: writes buffered in memory, flushed
         //                         every 50ms. Highest throughput, up to 50ms data loss.
+        // For AsyncDiskStorage, capture the io_fault flag before wrapping in Arc.
+        let mut io_fault_arc: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let base_storage: Arc<dyn crate::engine::storage::StorageBackend> = if in_memory {
             Arc::new(storage::InMemoryStorage)
         } else if tiered_mode {
@@ -85,7 +83,9 @@ impl Db {
         } else if sync_mode {
             Arc::new(storage::SyncDiskStorage::new(path)?)
         } else {
-            Arc::new(storage::AsyncDiskStorage::new(path)?)
+            let async_storage = storage::AsyncDiskStorage::new(path)?;
+            io_fault_arc = Arc::clone(&async_storage.io_fault);
+            Arc::new(async_storage)
         };
 
         // Optionally wrap the base storage in EncryptedStorage.
@@ -109,6 +109,7 @@ impl Db {
             &state,
             &indexes,
             #[cfg(feature = "schema")] &schemas,
+            hot_threshold,
         )?;
 
         Ok(Self {
@@ -116,7 +117,6 @@ impl Db {
             storage,
             tx,
             indexes,
-            query_heatmap,
             hot_threshold,
             rate_limit_requests,
             rate_limit_window,
@@ -126,6 +126,7 @@ impl Db {
             schemas,
             post_backup_script,
             tiered_mode,
+            io_fault: io_fault_arc,
             #[cfg(not(target_arch = "wasm32"))]
             started_at: std::time::Instant::now(),
         })

@@ -327,14 +327,13 @@ pub fn validate_request(payload: &Value, max_body_size: usize, max_keys_per_requ
     }
 
     // Check 4b: Data map keys in insert/update operations.
-    if let Some(data) = payload.get("data") {
-        if let Value::Object(map) = data {
+    if let Some(data) = payload.get("data")
+        && let Value::Object(map) = data {
             validate_key_count(map.len(), max_keys_per_request)?;
             for key in map.keys() {
                 validate_key_name(key)?;
             }
         }
-    }
 
     // Check 5a: Field names in projection (fields: ["name", "meta.logins"]).
     if let Some(fields) = payload.get("fields").and_then(|v| v.as_array()) {

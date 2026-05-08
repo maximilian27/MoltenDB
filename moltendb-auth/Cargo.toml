@@ -1,8 +1,8 @@
 [package]
 name = "moltendb-auth"
-version = "0.10.3"
+version = "1.0.0-rc1"
 edition = "2024"
-authors = ["Maximilian Both <maximilian.both27@outlook.com>"]
+authors = ["Maximilian Both <admin@moltendb.dev>"]
 description = "MoltenDB authentication — JWT, bcrypt password hashing, Axum auth middleware, UserStore."
 license-file = "LICENSE.md"
 repository = "https://github.com/maximilian27/MoltenDB"

@@ -211,7 +211,7 @@ impl EncryptedStorage {
         let plain_json = String::from_utf8(plain_bytes).map_err(|_| DbError::WriteError)?;
 
         // Deserialize the JSON string back into a LogEntry.
-        serde_json::from_str::<LogEntry>(&plain_json).map_err(|e| DbError::Serialization(e))
+        serde_json::from_str::<LogEntry>(&plain_json).map_err(DbError::Serialization)
     }
 }
 
@@ -329,6 +329,6 @@ impl StorageBackend for EncryptedStorage {
 
         // 4. Return the original plaintext LogEntry serialized as JSON.
         // This matches the format expected by the engine (e.g. operations::get).
-        Ok(serde_json::to_vec(&decrypted).map_err(DbError::Serialization)?)
+        serde_json::to_vec(&decrypted).map_err(DbError::Serialization)
     }
 }

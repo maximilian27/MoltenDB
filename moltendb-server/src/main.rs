@@ -1,3 +1,4 @@
+#![deny(warnings)]
 // ─── main.rs ──────────────────────────────────────────────────────────────────
 // This is the server entry point. It starts the HTTP/WebSocket server,
 // wires up all routes, middleware, and background tasks, then listens for
@@ -100,10 +101,6 @@ struct Config {
     /// Write mode: "async" (high throughput) or "sync" (zero data loss) [env: MOLTENDB_WRITE_MODE]
     #[arg(long, default_value = "async", env = "MOLTENDB_WRITE_MODE")]
     write_mode: String,
-
-    /// Storage mode: "standard" or "tiered" (hot+cold log, recommended for 100k+ docs) [env: MOLTENDB_STORAGE_MODE]
-    #[arg(long, default_value = "standard", env = "MOLTENDB_STORAGE_MODE")]
-    storage_mode: String,
 
     /// Maximum requests per IP per rate-limit window [env: MOLTENDB_RATE_LIMIT_REQS]
     #[arg(long, default_value = "100", env = "MOLTENDB_RATE_LIMIT_REQS")]
@@ -225,11 +222,11 @@ async fn main() {
         info!("🕒 MoltenDB Point-in-Time Recovery Tool");
         info!("📖 Reading log: {}", log);
 
-        let password = encryption_key.as_ref().map(|s| s.clone()).unwrap_or_else(|| "default_molten_password".to_string());
+        let password = encryption_key.clone().unwrap_or_else(|| "default_molten_password".to_string());
         let master_key = engine::EncryptedStorage::derive_key(&password, "moltendb_log_salt");
 
         // Open storage
-        let base_storage = Arc::new(engine::SyncDiskStorage::new(&log).expect("Failed to open log file"));
+        let base_storage = Arc::new(engine::SyncDiskStorage::new(log).expect("Failed to open log file"));
         let storage: Arc<dyn engine::StorageBackend> = Arc::new(engine::EncryptedStorage::new(base_storage, &master_key));
 
         match engine::Db::recover_to(&*storage, *to_time, *to_seq) {
@@ -266,7 +263,7 @@ async fn main() {
                 
                 // The snapshot is now at temp_log.snapshot.bin
                 let snapshot_path = format!("{}.snapshot.bin", temp_log);
-                std::fs::rename(snapshot_path, &out).expect("Failed to move snapshot to output path");
+                std::fs::rename(snapshot_path, out).expect("Failed to move snapshot to output path");
                 std::fs::remove_file(temp_log).ok();
                 
                 info!("✨ Recovery complete! You can now use {} as your database snapshot.", out);
@@ -354,13 +351,6 @@ async fn main() {
     //                 up to 50ms of data loss on crash, much higher throughput).
     let is_sync_mode = cfg.write_mode.to_lowercase() == "sync";
 
-    // Determine the storage mode from the --storage-mode flag (or STORAGE_MODE env var).
-    // "tiered" = TieredStorage: hot log (active writes, kept < 50 MB) + cold log
-    //            (archived data, read via memory-mapped file on startup). Recommended
-    //            for large datasets (100k+ documents) because the OS pages in only
-    //            the cold data that's actually needed, reducing startup RAM usage.
-    // anything else = single-file mode (AsyncDiskStorage or SyncDiskStorage).
-    let is_tiered_mode = cfg.storage_mode.to_lowercase() == "tiered";
     let is_in_memory = cfg.in_memory;
 
     // ── Encryption key setup ──────────────────────────────────────────────────
@@ -399,7 +389,7 @@ async fn main() {
     let db_config = engine::DbConfig {
         path: db_path.clone(),
         sync_mode: is_sync_mode,
-        tiered_mode: is_tiered_mode,
+        tiered_mode: true,
         hot_threshold: cfg.hot_threshold,
         rate_limit_requests: Some(rate_limit_requests),
         rate_limit_window: Some(rate_limit_window),

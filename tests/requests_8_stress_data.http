@@ -1,0 +1,525 @@
+### ─── STRESS DATA QUERIES ────────────────────────────────────────────────────
+### Query examples against the 100 000-document `stress` collection.
+###
+### WORKFLOW:
+###   1. Start the MoltenDB server (dev mode: --dev-mode, or TLS without it).
+###   2. Run §0 (Login) and paste the token into @token below.
+###   3. Generate + insert the stress dataset if not already present:
+###        cargo run --example generate_stress_data
+###        cargo run --example stress_insert
+###   4. Run any section below individually.
+###
+### ─── §0. Login ───────────────────────────────────────────────────────────────
+POST http://localhost:1538/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin123"
+}
+### Paste the token from the response here:
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODM0MDA5NCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjUxNTEzNGUxLWJiM2YtNDc4OC1hNmQ1LWNlZDZmNWIyMDEwNiJ9.ewSP-afLCpaEhjSsPf4vrbhErPtNOMU056o-4cVQmF8
+
+### ─── §1. Point lookups ───────────────────────────────────────────────────────
+### §1a. Fetch the very first document
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": "stress_000000"
+}
+
+### §1b. Fetch a mid-range document
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": "stress_049999"
+}
+
+### §1c. Fetch the last document
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": "stress_099999"
+}
+
+### §1d. Batch fetch — three specific keys at once
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": ["stress_000000", "stress_025000", "stress_075000"]
+}
+
+### ─── §2. Field projection ────────────────────────────────────────────────────
+### §2a. Select only brand, model, price
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": ["stress_000000", "stress_000001", "stress_000002"],
+  "fields": ["brand", "model", "price"]
+}
+
+### §2b. Select nested CPU specs
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": ["stress_000000", "stress_000001", "stress_000002"],
+  "fields": ["brand", "model", "specs.cpu.brand", "specs.cpu.cores", "specs.cpu.ghz"]
+}
+
+### §2c. Exclude price and tags
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": ["stress_000000", "stress_000001"],
+  "excluded_fields": ["price", "tags"]
+}
+
+### ─── §3. WHERE — simple filters ─────────────────────────────────────────────
+### §3a. All Apple laptops (brand cycles over 10 brands — ~10 000 results)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "where": { "brand": { "$eq": "Apple" } }
+}
+
+### §3b. In-stock items under $1 000
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price", "in_stock"],
+  "where": {
+    "in_stock": true,
+    "price": { "$lt": 1000 }
+  }
+}
+
+### §3c. Items priced between $1 500 and $2 500 (inclusive)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "where": {
+    "price": { "$gte": 1500, "$lte": 2500 }
+  }
+}
+
+### §3d. Items NOT made by Intel (CPU brand $ne)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "specs.cpu.brand"],
+  "where": { "specs.cpu.brand": { "$ne": "Intel" } }
+}
+
+### §3e. Items with 8+ CPU cores
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "specs.cpu.cores", "specs.cpu.ghz"],
+  "where": { "specs.cpu.cores": { "$gte": 8 } }
+}
+
+### §3f. Items tagged "gaming"
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "tags", "price"],
+  "where": { "tags": { "$ct": "gaming" } }
+}
+
+### §3g. OLED display items
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "display.panel", "price"],
+  "where": { "display.panel": { "$eq": "OLED" } }
+}
+
+### §3h. Items with model name containing "Model-0001" ($contains on string)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "where": { "model": { "$ct": "Model-0001" } }
+}
+
+### §3i. Items from Apple, Dell, or Razer ($in)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "where": { "brand": { "$in": ["Apple", "Dell", "Razer"] } }
+}
+
+### §3j. Exclude Framework and Lenovo ($nin)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "where": { "brand": { "$nin": ["Framework", "Lenovo"] } }
+}
+
+### ─── §4. WHERE — logical operators ──────────────────────────────────────────
+### §4a. $or — Apple brand OR gaming tag
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "tags"],
+  "where": {
+    "$or": [
+      { "brand": { "$eq": "Apple" } },
+      { "tags": { "$ct": "gaming" } }
+    ]
+  }
+}
+
+### §4b. $and — in-stock AND price under $1 500 AND 8+ cores
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price", "specs.cpu.cores"],
+  "where": {
+    "$and": [
+      { "in_stock": true },
+      { "price": { "$lt": 1500 } },
+      { "specs.cpu.cores": { "$gte": 8 } }
+    ]
+  }
+}
+
+### §4c. $or + top-level — in-stock AND (Apple OR Dell)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "where": {
+    "in_stock": true,
+    "$or": [
+      { "brand": { "$eq": "Apple" } },
+      { "brand": { "$eq": "Dell" } }
+    ]
+  }
+}
+
+### §4d. $or on nested field — Mini-LED or OLED display
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "display.panel", "price"],
+  "where": {
+    "$or": [
+      { "display.panel": { "$eq": "Mini-LED" } },
+      { "display.panel": { "$eq": "OLED" } }
+    ]
+  }
+}
+
+### ─── §5. Sort ────────────────────────────────────────────────────────────────
+### §5a. All Apple items sorted by price ascending
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "where": { "brand": { "$eq": "Apple" } },
+  "sort": [{ "field": "price", "order": "asc" }]
+}
+
+### §5b. In-stock gaming items sorted by price descending
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price", "tags"],
+  "where": {
+    "in_stock": true,
+    "tags": { "$ct": "gaming" }
+  },
+  "sort": [{ "field": "price", "order": "desc" }]
+}
+
+### §5c. Multi-field sort — brand asc, then price asc
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "sort": [
+    { "field": "brand", "order": "asc" },
+    { "field": "price", "order": "asc" }
+  ]
+}
+
+### §5d. Sort by CPU cores descending
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "specs.cpu.cores", "specs.cpu.ghz"],
+  "sort": [{ "field": "specs.cpu.cores", "order": "desc" }]
+}
+
+### §5e. Sort by weight ascending (lightest first)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "specs.weight_kg", "price"],
+  "sort": [{ "field": "specs.weight_kg", "order": "asc" }]
+}
+
+### ─── §6. Pagination ──────────────────────────────────────────────────────────
+### §6a. Top 10 cheapest items
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "sort": [{ "field": "price", "order": "asc" }],
+  "count": 10
+}
+
+### §6b. Page 2 of cheapest items (skip 10, take 10)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "sort": [{ "field": "price", "order": "asc" }],
+  "offset": 10,
+  "count": 10
+}
+
+### §6c. Page 3 of in-stock Apple items sorted by price desc (skip 20, take 10)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price"],
+  "where": {
+    "brand": { "$eq": "Apple" },
+    "in_stock": true
+  },
+  "sort": [{ "field": "price", "order": "desc" }],
+  "offset": 20,
+  "count": 10
+}
+
+### §6d. Top 5 most expensive gaming items
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price", "tags"],
+  "where": { "tags": { "$ct": "gaming" } },
+  "sort": [{ "field": "price", "order": "desc" }],
+  "count": 5
+}
+
+### ─── §7. Combined — WHERE + sort + pagination ───────────────────────────────
+### §7a. In-stock OLED items, sorted by price asc, page 1 (10 items)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price", "display.panel", "display.refresh_hz"],
+  "where": {
+    "in_stock": true,
+    "display.panel": { "$eq": "OLED" }
+  },
+  "sort": [{ "field": "price", "order": "asc" }],
+  "count": 10
+}
+
+### §7b. Non-Apple, non-Lenovo items with 120 Hz+ display, sorted by refresh rate desc
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "display.refresh_hz", "display.panel", "price"],
+  "where": {
+    "brand": { "$nin": ["Apple", "Lenovo"] },
+    "display.refresh_hz": { "$gte": 120 }
+  },
+  "sort": [{ "field": "display.refresh_hz", "order": "desc" }],
+  "count": 20
+}
+
+### §7c. Lightweight in-stock items (under 1.5 kg) sorted by weight asc, top 10
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "specs.weight_kg", "price"],
+  "where": {
+    "in_stock": true,
+    "specs.weight_kg": { "$lt": 1.5 }
+  },
+  "sort": [{ "field": "specs.weight_kg", "order": "asc" }],
+  "count": 10
+}
+
+### ─── §8. Mutations on stress data ───────────────────────────────────────────
+### §8a. Update a single document — mark stress_000000 as in-stock, new price
+POST http://localhost:1538/update
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "data": {
+    "stress_000000": { "in_stock": true, "price": 999 }
+  }
+}
+
+### §8b. Update multiple documents at once
+POST http://localhost:1538/update
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "data": {
+    "stress_000001": { "price": 1099 },
+    "stress_000002": { "price": 1199, "in_stock": false }
+  }
+}
+
+### §8c. Delete a single document
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": "stress_099999"
+}
+
+### §8d. Delete multiple documents
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": ["stress_099998", "stress_099997", "stress_099996"]
+}
+
+### §8e. Verify deletions — these should return empty results
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": ["stress_099999", "stress_099998", "stress_099997", "stress_099996"]
+}
+
+### Verify count: how many docs match price=3499 + tags contains gaming?
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": ["_key"],
+  "where": { "price": { "$eq": 3499 }, "tags": { "$ct": "gaming" } }
+}
+
+### ─── §9. Compaction ──────────────────────────────────────────────────────────
+### §9. Compact the stress collection log.
+### After many inserts/updates/deletes the log file grows. Compaction rewrites
+### it to contain only the current live state, speeding up future restarts.
+POST http://localhost:1538/compact
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{}

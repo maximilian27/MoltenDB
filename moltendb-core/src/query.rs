@@ -294,7 +294,7 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
                             }
                         }
                         // Array case: check if any element in the array equals the target value.
-                        Value::Array(arr) => arr.contains(&op_val),
+                        Value::Array(arr) => arr.contains(op_val),
                         // Any other type (number, object, null) — condition fails.
                         _ => false,
                     }

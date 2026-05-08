@@ -15,7 +15,7 @@ fn open_db_with_path() -> (engine::Db, String) {
     (engine::Db::open(engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        ..Default::default()
+        tiered_mode: false,        ..Default::default()
     }).expect("open db"), path)
 }
 
@@ -712,7 +712,7 @@ fn test_persistence_survives_reopen() {
         let db = engine::Db::open(engine::DbConfig {
             path: path.clone(),
             sync_mode: true,
-            ..Default::default()
+            tiered_mode: false,            ..Default::default()
         }).unwrap();
         set(&db, json!({
             "collection": "items",
@@ -723,7 +723,7 @@ fn test_persistence_survives_reopen() {
     let db2 = engine::Db::open(engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        ..Default::default()
+        tiered_mode: false,        ..Default::default()
     }).unwrap();
     let r = get(&db2, json!({ "collection": "items", "keys": "k1" }));
     assert_eq!(r["value"], 42);
@@ -740,7 +740,7 @@ fn test_compaction_preserves_data() {
     let db = engine::Db::open(engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        ..Default::default()
+        tiered_mode: false,        ..Default::default()
     }).unwrap();
     seed(&db);
     delete(&db, json!({ "collection": "laptops", "keys": "lp6" }));
@@ -749,7 +749,7 @@ fn test_compaction_preserves_data() {
     let db2 = engine::Db::open(engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        ..Default::default()
+        tiered_mode: false,        ..Default::default()
     }).unwrap();
     let all = get(&db2, json!({ "collection": "laptops" }));
     assert_eq!(arr(&all).len(), 5); // lp6 deleted
@@ -769,7 +769,7 @@ fn test_concurrent_writes() {
     let db = Arc::new(engine::Db::open(engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        ..Default::default()
+        tiered_mode: false,        ..Default::default()
     }).unwrap());
     let n_threads = 8;
     let n_docs = 100;
@@ -801,7 +801,7 @@ fn test_concurrent_reads_during_writes() {
     let db = Arc::new(engine::Db::open(engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        ..Default::default()
+        tiered_mode: false,        ..Default::default()
     }).unwrap());
     // Pre-seed
     for i in 0..50 {
@@ -934,7 +934,7 @@ fn test_pitr_recovery() {
     let db = engine::Db::open(engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        ..Default::default()
+        tiered_mode: false,        ..Default::default()
     }).unwrap();
     
     // 1. Insert some data
@@ -989,7 +989,7 @@ fn test_one_million_keys_write() {
         hot_threshold: 2_000_000,
         max_body_size: 512 * 1024 * 1024, // 512 MB
         max_keys_per_request: 1_000_000,
-        ..Default::default()
+        tiered_mode: false,        ..Default::default()
     }).expect("open db");
 
     // Build a map of 1 000 000 key-value pairs programmatically.

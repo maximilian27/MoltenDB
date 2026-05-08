@@ -30,21 +30,17 @@ pub fn evict_collection(
     // To evict properly, we need the pointers. Since we don't store them for
     // Hot documents, we re-scan the log to find them.
     storage.stream_log_into(&mut |entry, length| {
-        if entry.collection == collection {
-            if evicted_count < to_evict {
-                if let Some(col) = state.get(collection) {
-                    if let Some(mut doc_state) = col.get_mut(&entry.key) {
-                        if let crate::engine::types::DocumentState::Hot(_) = *doc_state {
+        if entry.collection == collection
+            && evicted_count < to_evict
+                && let Some(col) = state.get(collection)
+                    && let Some(mut doc_state) = col.get_mut(&entry.key)
+                        && let crate::engine::types::DocumentState::Hot(_) = *doc_state {
                             *doc_state = crate::engine::types::DocumentState::Cold(crate::engine::types::RecordPointer {
                                 offset,
                                 length,
                             });
                             evicted_count += 1;
                         }
-                    }
-                }
-            }
-        }
         offset += (length + 1) as u64;
         ControlFlow::Continue(())
     })?;

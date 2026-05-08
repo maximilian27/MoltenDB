@@ -5,7 +5,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::ops::ControlFlow;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "schema"))]
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use dashmap::{DashMap, DashSet};
@@ -32,18 +32,16 @@ pub fn recover_to(
 
     storage.stream_log_into(&mut |entry, length| {
         // Condition 1: Check Timestamp
-        if let Some(t) = to_time {
-            if entry._t > t {
+        if let Some(t) = to_time
+            && entry._t > t {
                 return ControlFlow::Break(());
             }
-        }
 
         // Condition 2: Check Sequence
-        if let Some(s) = to_seq {
-            if count >= s {
+        if let Some(s) = to_seq
+            && count >= s {
                 return ControlFlow::Break(());
             }
-        }
 
         let pointer = crate::engine::types::RecordPointer {
             offset,
@@ -65,6 +63,7 @@ pub fn recover_to(
                             #[cfg(feature = "schema")] &schemas,
                             Some(p),
                             storage,
+                            0, // PITR: keep all docs as Cold (disk pointers)
                         );
                     }
                     current_tx_id = None;
@@ -81,6 +80,7 @@ pub fn recover_to(
                         #[cfg(feature = "schema")] &schemas,
                         Some(pointer),
                         storage,
+                        0, // PITR: keep all docs as Cold (disk pointers)
                     );
                 }
             }

@@ -12,9 +12,12 @@ Same query engine. Same Bitcask-inspired hybrid storage. Two environments.
 
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-80%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen?style=flat-square)](#testing)
+[![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](CHANGELOG.md)
 
-**⚠️ Beta Software** — APIs may change. Not recommended for production use yet.
+**🚀 Release Candidate (v1.0.0-rc)** — The API is stable. Suitable for early production use. Minor breaking changes may occur before the final 1.0.0 release.
+
+> 🌐 **Building for the browser?** The WebAssembly engine, TypeScript client, and React/Angular adapters live in the [moltendb-web](https://github.com/moltendb/moltendb-web) repository **(MIT Licensed)**.
 
 </div>
 
@@ -179,7 +182,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - At-rest encryption with XChaCha20-Poly1305 (on by default, key from `--encryption-key`)
 - **In-memory store:** the entire dataset lives in RAM (`DashMap`) — reads are pure hashmap lookups with no disk I/O; RAM is the hard dataset size limit
 - Two write modes: async (50 ms flush, high throughput) and sync (flush-on-write, zero data loss)
-- Two storage modes: standard (single log file) and tiered (hot + cold log, mmap cold reads)
+- Tiered storage: hot + cold log with mmap cold reads — bounded RAM, high throughput at any dataset size
 - Binary snapshots on compaction for fast startup (snapshot + delta replay, not full log replay)
 - **Point-in-Time Recovery (PITR):** Recover the database to any millisecond or log sequence number using the `recover` CLI command.
 - **Snapshot Versioning:** Historical snapshots are automatically moved to a `/backup` folder with Unix timestamps.
@@ -194,7 +197,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - Field projection (`fields`) and field exclusion (`excludedFields`) — mutually exclusive, validated before any data is read
 - Pagination: `count` (limit) and `offset`
 - Cross-collection joins with dot-notation foreign keys
-- Auto-indexing: fields queried 3+ times get an index automatically; equality lookups become O(1)
+- Auto-indexing: fields get an index automatically on first query; all subsequent equality lookups become O(1)
 - Range query index acceleration: `$gt`/`$lt` scan the index values instead of all documents
 - **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
 - **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.
@@ -212,7 +215,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - **Only the root user can mint `*:*:*` (admin) tokens** — non-root admin tokens cannot escalate their own privileges.
 - **Token revocation (JTI blacklist):** every JWT carries a unique `jti` (UUID). Compromised or leaked tokens can be immediately invalidated via `DELETE /auth/tokens/:jti` (admin-only) before their TTL expires. The revocation store is persisted to `<db-path>.revocations.json` and reloaded on server restart — revocations survive restarts.
 - Credentials loaded from environment variables at startup (no hardcoded defaults in production)
-- **Single root user:** MoltenDB supports exactly one root user. Your own user table handles the rest — MoltenDB never stores your application users.
+- **Single root user:** MoltenDB supports exactly one root user. Your own user table handles the rest — MoltenDB acts as a stateless delegation gateway, not an identity provider. Note that while the in-memory user store is ephemeral, the **token revocation list is persisted** to `<db-path>.revocations.json` and reloaded on every server restart — a revoked JWT remains revoked even after a crash or restart.
 - Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch size (max 1000 keys)
 - Security headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `HSTS`, `CSP`, etc.
 - Graceful shutdown: drains in-flight requests (up to 30 s), then awaits the async writer task to fully flush all buffered log entries before exit
@@ -797,7 +800,6 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--rate-limit-requests` | `MOLTENDB_RATE_LIMIT_REQS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Window size in seconds |
 | `--in-memory` | `MOLTENDB_IN_MEMORY` | `false` | Run entirely in RAM — no WAL, no disk I/O. All data is lost on exit. Ideal for ephemeral caches and CI environments |
-| `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` |
 | `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
 ### 🔒 Security Considerations
@@ -821,20 +823,90 @@ Executing external scripts carries inherent risks. MoltenDB mitigates some of th
 
 ## Storage Modes
 
-### Standard (default)
-Single append-only log file. All writes go to `my_database.log`. Compaction rewrites the file to contain only current state (triggered when file > 100 MB or every hour). A binary snapshot is written on each compaction so the next startup only replays the delta, not the full log.
+MoltenDB has four storage modes. Choose based on your dataset size and durability requirements:
+
+| Mode | Flag | Best for |
+|---|---|---|
+| `async` (default) | `--write-mode async` | Small–medium datasets, max throughput |
+| `sync` | `--write-mode sync` | Small–medium datasets, zero data loss per write |
+| `tiered` | `--storage-mode tiered` | Large datasets (100k+ docs), bounded RAM |
+| `in-memory` | `--in-memory` | Ephemeral caches, CI, session stores |
+
+### Standard / Async (default)
+
+Single append-only log file (`my_database.log`). Writes are buffered in memory and flushed to disk every **50 ms** — up to 50 ms of data can be lost on a hard crash. Highest write throughput. Compaction is triggered when the log exceeds 100 MB or every hour; a binary snapshot is written so the next startup only replays the delta, not the full log.
+
+### Standard / Sync (`--write-mode sync`)
+
+Same single-file layout as async, but every write blocks until the OS confirms the data is on disk. **Zero data loss on crash.** Lower throughput than async. Use this when losing even 50 ms of writes is unacceptable (financial records, audit logs).
 
 ### Tiered (`--storage-mode tiered`)
-Recommended for large datasets (100k+ documents). Active writes go to a hot log (kept < 50 MB). When the hot log exceeds the threshold, all current entries are promoted to a cold log (`my_database.cold.log`) which is read via memory-mapped file on startup — the OS pages in only the data actually needed.
+
+Recommended for large datasets (100k+ documents). The hot tier keeps the most recently active documents in RAM (`DashMap`). When a collection exceeds `--hot-threshold` documents, the oldest are evicted to a cold log (`my_database.cold.log`) which is read via memory-mapped file — the OS pages in only the data actually needed, so reads of cold documents cost ~50 µs rather than a full disk seek.
+
+**How the two thresholds interact:**
+
+| Setting | Controls | Layer | Configurable? |
+|---|---|---|---|
+| `--hot-threshold` (default 50 000) | Max documents per collection kept in RAM | Engine (DashMap) | Yes — CLI / env var |
+| `HOT_TIER_MAX_BYTES` (100 MB, hardcoded) | Max size of the hot log file on disk | Storage (log file) | No |
+
+These are **not alternatives** — they work together, but they trigger two completely different operations:
+
+- **`--hot-threshold` triggers eviction** — when a collection exceeds 50,000 documents in RAM, the oldest documents are *moved out of the `DashMap`* and into the cold log on disk. The data is still accessible; it just requires a ~50 µs disk read instead of a sub-microsecond RAM lookup. No log rewriting occurs.
+- **`HOT_TIER_MAX_BYTES` triggers compaction** — when the hot log file on disk grows beyond 100 MB, the entire hot log is *rewritten* (dead entries removed, superseded values collapsed). This is a log maintenance operation and has nothing to do with how many documents are in RAM.
+
+In short: eviction moves data from RAM → disk; compaction rewrites the disk log to reclaim space. Both can happen independently.
+
+Because cold documents are stored in the cold log and not in the snapshot, **snapshot files stay small** regardless of total dataset size. A collection with 10 million documents on disk only contributes 50 000 entries to the snapshot.
 
 ### In-Memory (`--in-memory`)
+
 Bypasses the WAL and all disk I/O entirely. All data lives exclusively in the RAM `DashMap` — no log file is created or written. This turns MoltenDB into a pure in-process cache with the full query engine (filters, joins, indexes, pub/sub) on top. Compaction and revocation-file persistence are automatically skipped. A startup warning is printed to make the ephemeral nature explicit.
 
 > ⚠️ **All data is lost when the server exits.** Use this mode for ephemeral caches, session stores, CI test environments, or any scenario where durability is not required.
 
-### Write modes
+### Write modes summary
 - **async** (default): writes are buffered in memory and flushed every 50 ms. Up to 50 ms of data loss on a hard crash. Highest throughput.
-- **sync**: every write blocks until the OS confirms the data. Zero data loss on crash. Lower throughput.
+- **sync**: every write blocks until the OS confirms the data. Zero data loss on crash. Lower throughput. Note: there is no sync equivalent for tiered mode — tiered always uses async writes to the hot log.
+
+---
+
+## Snapshots, Compaction & Data Safety
+
+### What happens during compaction
+
+Compaction is triggered automatically when the log file exceeds 100 MB or every hour. It:
+
+1. Writes the complete current in-memory state to a **temp snapshot file** — the live snapshot is untouched at this point.
+2. **Moves the existing snapshot** to `backup/<name>.snapshot.bin.<unix_timestamp>.bak` — the old snapshot is never deleted.
+3. **Atomically renames** the temp file to the live snapshot — a single OS rename, so there is no window where neither file exists.
+4. **Resets the live log to empty** — but all data is already captured in the new snapshot before this happens.
+
+### Is any data lost during compaction?
+
+**No.** The new snapshot is a full state dump — it contains every document that existed at compaction time, including documents first inserted many compactions ago. There is no snapshot chain to traverse; each snapshot is self-contained.
+
+```
+Compaction 1:  snapshot_1 = { doc_A, doc_B }
+Compaction 2:  snapshot_2 = { doc_A, doc_B, doc_C }   ← doc_A still here
+Compaction 3:  snapshot_3 = { doc_A, doc_B, doc_C, doc_D }  ← doc_A still here
+```
+
+Data is only gone if it was explicitly deleted or overwritten before the compaction ran.
+
+### What the `backup/` folder contains
+
+Every compaction moves the previous snapshot to `backup/` as a `.bak` file. These are point-in-time copies of the full database state. They are:
+- **Not loaded at startup** — only the current snapshot is used.
+- **Not pruned automatically** — they accumulate indefinitely. Clean them up manually or add a retention policy.
+- Useful for **manual point-in-time recovery** via the `recover` CLI command.
+
+### How large snapshots are loaded at startup
+
+At startup, `stream_into_state` reads the snapshot file and applies each entry **directly into the `DashMap`** as it is read — there is no intermediate buffer. Peak RAM usage at startup is approximately **1× the snapshot file size** (just the DashMap being built).
+
+For tiered mode, cold documents are stored in the cold log and are **not included in the snapshot**, so snapshot files stay small even for very large datasets. The snapshot only captures the hot tier.
 
 ---
 
@@ -914,28 +986,34 @@ MoltenDB/
 │       ├── query.rs                  — query AST evaluator ($eq, $in, $regex, $contains, $or, $and, …)
 │       ├── validation.rs             — collection name / document depth / size guards
 │       ├── engine/
-│       │   ├── mod.rs                — Db struct, open() / open_wasm()
+│       │   ├── mod.rs                — Db struct, thin delegation layer
+│       │   ├── open.rs               — Db::open() — native startup (disk / tiered / encrypted)
+│       │   ├── open_wasm.rs          — Db::open_wasm() — WASM/OPFS startup
 │       │   ├── config.rs             — DbConfig (path, encryption key, storage options)
-│       │   ├── indexing.rs           — auto-indexing, query heatmap
+│       │   ├── indexing.rs           — auto-indexing (index on first query)
 │       │   ├── schema.rs             — JSON Schema validation per collection
-│       │   ├── types.rs              — LogEntry, DbError
-│       │   ├── operations/           — CRUD operations (split module)
-│       │   │   ├── mod.rs            — re-exports: get, insert_batch, update, delete, …
+│       │   ├── types.rs              — LogEntry, DbError, DocumentState, RecordPointer
+│       │   ├── operations/           — all engine operations (one file per operation)
+│       │   │   ├── mod.rs            — re-exports: get, get_all, insert, update, delete, …
 │       │   │   ├── common.rs         — shared helpers (now_iso())
-│       │   │   ├── read.rs           — get, get_all, get_batch
-│       │   │   ├── insert.rs         — insert_batch (versioning, schema validation, WAL)
+│       │   │   ├── read.rs           — get (batch, Vec<String> → HashMap), get_all
+│       │   │   ├── insert.rs         — insert (batch, versioning, schema validation, WAL)
 │       │   │   ├── update.rs         — update (partial patch, _v optimistic lock, WAL)
-│       │   │   └── delete.rs         — delete, delete_batch, delete_collection
+│       │   │   ├── delete.rs         — delete (batch, Vec<String>), delete_collection
+│       │   │   ├── compact.rs        — compact (build log entries, call compact_with_hook)
+│       │   │   ├── evict.rs          — evict_collection (Hot→Cold, bounded RAM)
+│       │   │   └── recover.rs        — recover_to (PITR restore from backup snapshot)
 │       │   └── storage/
-│       │       ├── mod.rs            — StorageBackend trait, startup WAL replay
+│       │       ├── mod.rs            — StorageBackend trait, apply_entry, startup WAL replay
 │       │       ├── disk/             — disk storage (split module)
 │       │       │   ├── mod.rs        — re-exports: AsyncDiskStorage, SyncDiskStorage, helpers
 │       │       │   ├── async_storage.rs — MPSC channel + background Tokio flush task
 │       │       │   ├── sync_storage.rs  — Mutex-guarded BufWriter, immediate flush
-│       │       │   ├── log.rs        — stream_log_entries, write_compacted_log, count_log_lines
+│       │       │   ├── log.rs        — stream_log_entries, read_log_from_disk, write_compacted_log
 │       │       │   └── snapshot.rs   — write_snapshot, load_snapshot, atomic rename, backup rotation
+│       │       ├── memory.rs         — InMemoryStorage (ephemeral, no disk)
 │       │       ├── encrypted.rs      — XChaCha20-Poly1305 + Argon2id encryption wrapper
-│       │       ├── tiered.rs         — TieredStorage, MmapLogReader
+│       │       ├── tiered.rs         — TieredStorage, MmapLogReader (hot log + cold mmap)
 │       │       └── wasm.rs           — OpfsStorage (browser OPFS backend)
 │       └── handlers/
 │           ├── mod.rs
@@ -975,11 +1053,55 @@ MoltenDB/
 │       └── lib.rs                    — wasm-bindgen entry point, OPFS-backed Db
 │
 ├── tests/
-│   └── requests.http                 — documented example requests for every endpoint
+│   ├── requests_1_reads.http         — GET / query / field-selection examples
+│   ├── requests_2_joins.http         — join query examples
+│   ├── requests_3_mutations.http     — SET / UPDATE / DELETE examples
+│   ├── requests_4_security.http      — auth / JWT / rate-limit examples
+│   ├── requests_5_schemas.http       — schema definition examples
+│   ├── requests_6_auth_telemetry.http — delegation / revocation / telemetry examples
+│   ├── requests_7_in_memory.http     — in-memory mode examples
+│   └── stress_fetch.http             — stress-test request file
 ├── pkg/                              — generated WASM package (wasm-pack output)
 └── assets/
     └── logo.png
 ```
+
+---
+
+## Horizontal Scaling
+
+MoltenDB is currently a **single-node, embedded database**. Its state lives in `DashMap` in memory, backed by an append-only log on disk. There is no built-in concept of nodes, replication, or sharding.
+
+### Single-node throughput
+
+| Operation | Throughput | Bottleneck |
+|---|---|---|
+| Reads (`get`, `get_all`) | 100k–500k+ req/s | None — pure lock-free `DashMap` lookups |
+| Writes (`insert`, `delete`, `update`) | 10k–50k req/s | Sequential log writer (one `Mutex`-guarded append) |
+
+Reads are fully parallel and scale with CPU cores. Writes are bounded by disk I/O on the log writer.
+
+### Scaling options
+
+#### Option 1 — Read replicas (easiest, read-heavy workloads)
+
+One **primary** node accepts all writes. One or more **replica** nodes tail the primary's log and replay entries via the same `apply_entry` path used at startup. Reads are distributed across replicas; writes always go to the primary.
+
+MoltenDB already has most of the building blocks: the append-only log is the source of truth, `stream_into_state` / `apply_entry` already replay log entries into RAM state, and the WebSocket broadcast could be repurposed to stream log entries to replicas.
+
+**What needs to be added:** a replication protocol (push log entries from primary → replicas), a `read_only` flag on replicas, and a load balancer to route reads to replicas and writes to the primary.
+
+#### Option 2 — Sharding (write-heavy workloads)
+
+Split collections across nodes — each node owns a subset of the data. Requires a shard map and a coordinator or client-side routing layer. Most complex option but gives true write scalability.
+
+#### Option 3 — Active-active (high availability)
+
+Multiple nodes accept writes independently and sync with each other. Requires conflict resolution. MoltenDB already has conflict detection logic (`_v` optimistic locking), but full multi-master is a significant undertaking.
+
+### Recommended path
+
+**Read replicas** are the most natural first step given the existing architecture. A single node with read replicas will scale very far before sharding becomes necessary — the single node already handles hundreds of thousands of reads per second.
 
 ---
 
@@ -1022,4 +1144,4 @@ MoltenDB is licensed under the [Business Source License 1.1](LICENSE.md).
 - **Not permitted** to offer MoltenDB as a hosted/managed service (Database-as-a-Service) without a commercial license.
 - **Converts to MIT** automatically 3 years after each version's release date.
 
-For commercial licensing enquiries: maximilian.both27@outlook.com
+For commercial licensing enquiries: [admin@moltendb.dev](mailto:admin@moltendb.dev)

@@ -9,6 +9,21 @@ use super::common::now_iso;
 use super::super::{indexing, StorageBackend};
 use super::super::types::{DbError, LogEntry};
 
+/// Parameters for the [`insert`] operation.
+///
+/// Grouping these into a struct keeps the function signature within Clippy's
+/// argument-count limit and makes call sites more readable.
+pub struct InsertParams<'a> {
+    pub state: &'a DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    pub indexes: &'a DashMap<String, DashMap<String, DashSet<String>>>,
+    pub storage: &'a Arc<dyn StorageBackend>,
+    pub tx: &'a tokio::sync::broadcast::Sender<String>,
+    #[cfg(feature = "schema")]
+    pub schemas: &'a DashMap<String, Arc<(Value, jsonschema::Validator)>>,
+    pub collection: &'a str,
+    pub items: Vec<(String, Value)>,
+}
+
 /// Insert or overwrite multiple documents in a single batch operation.
 ///
 /// For each item:
@@ -21,15 +36,17 @@ use super::super::types::{DbError, LogEntry};
 /// The in-memory state may be partially updated at that point — this is
 /// acceptable because the log is the source of truth and the in-memory state
 /// is rebuilt from it on the next startup.
-pub fn insert(
-    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
-    indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-    storage: &Arc<dyn StorageBackend>,
-    tx: &tokio::sync::broadcast::Sender<String>,
-    #[cfg(feature = "schema")] schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
-    collection: &str,
-    items: Vec<(String, Value)>,
-) -> Result<(), DbError> {
+pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
+    let InsertParams {
+        state,
+        indexes,
+        storage,
+        tx,
+        #[cfg(feature = "schema")]
+        schemas,
+        collection,
+        items,
+    } = params;
     let col = state
         .entry(collection.to_string())
         .or_insert_with(DashMap::new);
@@ -55,11 +72,10 @@ pub fn insert(
                     existing_val = Some(v.clone());
                 }
                 crate::engine::types::DocumentState::Cold(ptr) => {
-                    if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length) {
-                        if let Ok(entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
+                    if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length)
+                        && let Ok(entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
                             existing_val = Some(entry.value);
                         }
-                    }
                 }
             }
         }
@@ -69,12 +85,11 @@ pub fn insert(
             let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
             let incoming_v = value.get("_v").and_then(|v| v.as_u64());
 
-            if let Some(iv) = incoming_v {
-                if iv <= existing_v {
+            if let Some(iv) = incoming_v
+                && iv <= existing_v {
                     tracing::debug!("⚡ Conflict error: {}/{} incoming _v={} <= stored _v={}", collection, key, iv, existing_v);
                     return Err(DbError::Conflict);
                 }
-            }
 
             let orig_created = existing.get("createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string();
             let new_v = existing_v + 1;
@@ -90,14 +105,12 @@ pub fn insert(
 
             // Unindex the OLD value before overwriting.
             indexing::unindex_doc(indexes, collection, &key, &existing);
-        } else {
-            if let Some(obj) = value.as_object_mut() {
-                if obj.get("_v").is_none() {
-                    obj.insert("_v".to_string(), serde_json::json!(1u64));
-                }
-                obj.insert("createdAt".to_string(), serde_json::json!(now.clone()));
-                obj.insert("modifiedAt".to_string(), serde_json::json!(now));
+        } else if let Some(obj) = value.as_object_mut() {
+            if obj.get("_v").is_none() {
+                obj.insert("_v".to_string(), serde_json::json!(1u64));
             }
+            obj.insert("createdAt".to_string(), serde_json::json!(now.clone()));
+            obj.insert("modifiedAt".to_string(), serde_json::json!(now));
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]

@@ -6,6 +6,8 @@
 #[cfg(target_arch = "wasm32")]
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
+use std::sync::atomic::AtomicBool;
+#[cfg(target_arch = "wasm32")]
 use dashmap::{DashMap, DashSet};
 #[cfg(target_arch = "wasm32")]
 use tokio::sync::broadcast;
@@ -39,7 +41,6 @@ impl Db {
         let (tx, _rx) = broadcast::channel(1000);
         let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
             Arc::new(Default::default());
-        let query_heatmap = Arc::new(Default::default());
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
@@ -67,6 +68,7 @@ impl Db {
                 &state,
                 &indexes,
                 #[cfg(feature = "schema")] &schemas,
+                hot_threshold,
             )?;
 
             wrapped
@@ -77,7 +79,6 @@ impl Db {
             storage,
             tx,
             indexes,
-            query_heatmap,
             hot_threshold,
             rate_limit_requests,
             rate_limit_window,
@@ -87,6 +88,7 @@ impl Db {
             schemas,
             post_backup_script,
             tiered_mode: config.tiered_mode,
+            io_fault: Arc::new(AtomicBool::new(false)),
         })
     }
 }

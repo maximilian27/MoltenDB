@@ -128,6 +128,16 @@ pub trait StorageBackend: Send + Sync {
         Ok(0)
     }
 
+    /// Truncate the persistent store to 0 bytes and release any exclusive file
+    /// handles so the caller can delete the underlying file/directory.
+    ///
+    /// Only meaningful for OPFS-backed storage — all other backends return Ok(())
+    /// without doing anything. After this call the storage instance must not be
+    /// used for further reads or writes.
+    fn clear_opfs(&self) -> Result<(), DbError> {
+        Ok(())
+    }
+
     /// Stream log entries into state one at a time, without loading the full
     /// log into RAM. Implementations may load a binary snapshot first and only
     /// replay the delta lines written after the snapshot.
@@ -180,6 +190,7 @@ pub fn stream_into_state(
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    hot_threshold: usize,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
     let mut offset = 0u64;
@@ -212,6 +223,7 @@ pub fn stream_into_state(
                             #[cfg(feature = "schema")] schemas,
                             pointer,
                             storage,
+                            hot_threshold,
                         );
                     }
                     active_tx = None;
@@ -234,6 +246,7 @@ pub fn stream_into_state(
                         #[cfg(feature = "schema")] schemas,
                         p,
                         storage,
+                        hot_threshold,
                     );
                 }
             }
@@ -265,16 +278,23 @@ pub fn apply_entry(
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     pointer: Option<crate::engine::types::RecordPointer>,
     storage: &dyn StorageBackend,
+    hot_threshold: usize,
 ) {
     match entry.cmd.as_str() {
         "INSERT" => {
             let col = state
                 .entry(entry.collection.clone())
-                .or_insert_with(DashMap::new);
+                .or_default();
 
-            // During replay, we use the pointer (Cold). For live writes, we store the Value (Hot).
+            // During replay, store Hot if the collection is within hot_threshold,
+            // otherwise store Cold (disk pointer) to save RAM.
+            // For live writes (pointer=None), always store Hot.
             let doc_state = if let Some(p) = pointer {
-                crate::engine::types::DocumentState::Cold(p)
+                if col.len() < hot_threshold {
+                    crate::engine::types::DocumentState::Hot(entry.value.clone())
+                } else {
+                    crate::engine::types::DocumentState::Cold(p)
+                }
             } else {
                 crate::engine::types::DocumentState::Hot(entry.value.clone())
             };
