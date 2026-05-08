@@ -31,8 +31,8 @@
 mod disk;
 mod encrypted;
 mod memory;
-// tiered.rs provides MmapLogReader (memory-mapped cold log reads) and
-// TieredStorage (hot + cold two-tier backend for large-scale deployments).
+// tiered.rs provides MmapLogReader (memory-mapped log reads) and
+// TieredStorage (single log + snapshot backend with mmap-based startup replay).
 #[cfg(not(target_arch = "wasm32"))]
 mod tiered;
 // Re-export the concrete types so callers can write `storage::AsyncDiskStorage`

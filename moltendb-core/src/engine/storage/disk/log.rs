@@ -32,44 +32,6 @@ pub fn write_compacted_log_no_tx(path: &str, entries: &[LogEntry]) -> Result<(),
     Ok(())
 }
 
-pub fn write_compacted_log(path: &str, entries: &[LogEntry]) -> Result<(), DbError> {
-    let temp_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true) // start fresh — we're rewriting the whole log
-        .open(path)?;
-    let mut temp_writer = BufWriter::new(temp_file);
-
-    // Write each entry as a JSON line, same format as the live log.
-    for entry in entries {
-        // We write each entry in its own transaction in the compacted log.
-        // This ensures they are replayed correctly even if followed by other log entries.
-        let tx_id = format!("compact-{}", entry.key);
-        
-        let begin = LogEntry {
-            cmd: "TX_BEGIN".to_string(),
-            collection: entry.collection.clone(),
-            key: tx_id.clone(),
-            value: serde_json::Value::Null,
-            _t: entry._t,
-        };
-        writeln!(temp_writer, "{}", serde_json::to_string(&begin)?)?;
-        
-        writeln!(temp_writer, "{}", serde_json::to_string(&entry)?)?;
-        
-        let commit = LogEntry {
-            cmd: "TX_COMMIT".to_string(),
-            collection: entry.collection.clone(),
-            key: tx_id,
-            value: serde_json::Value::Null,
-            _t: entry._t,
-        };
-        writeln!(temp_writer, "{}", serde_json::to_string(&commit)?)?;
-    }
-
-    temp_writer.flush()?;
-    Ok(())
-}
 
 /// Open the log file at `path` and call `f` for each successfully parsed
 /// `LogEntry`, skipping the first `skip_lines` lines (those are already

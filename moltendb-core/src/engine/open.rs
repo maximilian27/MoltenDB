@@ -65,9 +65,9 @@ impl Db {
         //                         No disk I/O at all. Data is lost on exit.
         //                         Ideal for ephemeral caches and CI environments.
         //
-        //   tiered_mode = true  → TieredStorage: hot log (async writes) + cold log
-        //                         (mmap reads). Best for large datasets. The cold log
-        //                         accumulates promoted hot data and is paged by the OS.
+        //   tiered_mode = true  → TieredStorage: single log + snapshot, mmap-based
+        //                         startup replay. Best for large datasets. The snapshot
+        //                         covers bulk data; only the delta is replayed on start.
         //
         //   sync_mode = true    → SyncDiskStorage: every write is flushed to disk
         //                         immediately. Zero data loss, lower throughput.
