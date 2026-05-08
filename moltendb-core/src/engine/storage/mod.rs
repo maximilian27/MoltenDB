@@ -31,19 +31,12 @@
 mod disk;
 mod encrypted;
 mod memory;
-// tiered.rs provides MmapLogReader (memory-mapped log reads) and
-// TieredStorage (single log + snapshot backend with mmap-based startup replay).
-#[cfg(not(target_arch = "wasm32"))]
-mod tiered;
 // Re-export the concrete types so callers can write `storage::AsyncDiskStorage`
 // instead of `storage::disk::AsyncDiskStorage`.
 #[cfg(not(target_arch = "wasm32"))]
 pub use disk::{AsyncDiskStorage, SyncDiskStorage};
 pub use encrypted::EncryptedStorage;
 pub use memory::InMemoryStorage;
-// Re-export TieredStorage so engine/mod.rs and main.rs can use it directly.
-#[cfg(not(target_arch = "wasm32"))]
-pub use tiered::TieredStorage;
 
 // On WASM builds, expose the browser-side OPFS storage.
 #[cfg(target_arch = "wasm32")]

@@ -17,7 +17,6 @@ fn open_db() -> engine::Db {
     let db_config = engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        tiered_mode: false,
         rate_limit_requests: 100,
         rate_limit_window: 60,
         max_body_size: 10485760,
@@ -699,7 +698,6 @@ fn test_persistence_survives_reopen() {
         let db_config = engine::DbConfig {
             path: path.clone(),
             sync_mode: true,
-            tiered_mode: false,
             hot_threshold: 50000,
             rate_limit_requests: Some(100),
             rate_limit_window: Some(60),
@@ -717,7 +715,6 @@ fn test_persistence_survives_reopen() {
     let db_config2 = engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        tiered_mode: false,
         hot_threshold: 50000,
         rate_limit_requests: 100,
         rate_limit_window: 60,
@@ -742,7 +739,6 @@ fn test_compaction_preserves_data() {
     let db_config = engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        tiered_mode: false,
         hot_threshold: 50000,
         rate_limit_requests: 100,
         rate_limit_window: 60,
@@ -759,7 +755,6 @@ fn test_compaction_preserves_data() {
     let db_config2 = engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        tiered_mode: false,
         hot_threshold: 50000,
         rate_limit_requests: 100,
         rate_limit_window: 60,
@@ -787,7 +782,6 @@ fn test_concurrent_writes() {
     let db_config = engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        tiered_mode: false,
         hot_threshold: 50000,
         rate_limit_requests: 100,
         rate_limit_window: 60,
@@ -827,7 +821,6 @@ fn test_concurrent_reads_during_writes() {
     let db_config = engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        tiered_mode: false,
         hot_threshold: 50000,
         rate_limit_requests: 100,
         rate_limit_window: 60,

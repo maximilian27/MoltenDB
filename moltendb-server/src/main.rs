@@ -383,7 +383,6 @@ async fn main() {
     let db_config = engine::DbConfig {
         path: db_path.clone(),
         sync_mode: is_sync_mode,
-        tiered_mode: true,
         rate_limit_requests: Some(rate_limit_requests),
         rate_limit_window: Some(rate_limit_window),
         max_body_size: cfg.max_body_size,

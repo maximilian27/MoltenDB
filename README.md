@@ -980,7 +980,6 @@ MoltenDB/
 │       │       │   └── snapshot.rs   — write_snapshot, load_snapshot, atomic rename, backup rotation
 │       │       ├── memory.rs         — InMemoryStorage (ephemeral, no disk)
 │       │       ├── encrypted.rs      — XChaCha20-Poly1305 + Argon2id encryption wrapper
-│       │       ├── tiered.rs         — TieredStorage (thin wrapper over AsyncDiskStorage)
 │       │       └── wasm.rs           — OpfsStorage (browser OPFS backend)
 │       └── handlers/
 │           ├── mod.rs
