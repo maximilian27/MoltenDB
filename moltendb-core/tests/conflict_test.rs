@@ -8,7 +8,6 @@ async fn test_insert_batch_conflict() {
     let path = dir.path().join("test.log");
     let db = Db::open(DbConfig {
         path: path.to_str().unwrap().to_string(),
-        hot_threshold: 1000,
         max_body_size: 1024 * 1024,
         ..Default::default()
     }).unwrap();
@@ -36,7 +35,6 @@ async fn test_update_conflict_guard() {
     let path = dir.path().join("test.log");
     let db = Db::open(DbConfig {
         path: path.to_str().unwrap().to_string(),
-        hot_threshold: 1000,
         max_body_size: 1024 * 1024,
         ..Default::default()
     }).unwrap();

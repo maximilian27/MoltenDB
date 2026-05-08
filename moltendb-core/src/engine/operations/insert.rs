@@ -14,7 +14,7 @@ use super::super::types::{DbError, LogEntry};
 /// Grouping these into a struct keeps the function signature within Clippy's
 /// argument-count limit and makes call sites more readable.
 pub struct InsertParams<'a> {
-    pub state: &'a DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    pub state: &'a DashMap<String, DashMap<String, serde_json::Value>>,
     pub indexes: &'a DashMap<String, DashMap<String, DashSet<String>>>,
     pub storage: &'a Arc<dyn StorageBackend>,
     pub tx: &'a tokio::sync::broadcast::Sender<String>,
@@ -65,20 +65,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         
         // We need to check the existing document for versioning.
         // If it's Cold, we MUST fetch it to check _v and createdAt.
-        let mut existing_val = None;
-        if let Some(doc_state) = col.get(&key) {
-            match doc_state.value() {
-                crate::engine::types::DocumentState::Hot(v) => {
-                    existing_val = Some(v.clone());
-                }
-                crate::engine::types::DocumentState::Cold(ptr) => {
-                    if let Ok(bytes) = storage.read_at(ptr.offset, ptr.length)
-                        && let Ok(entry) = serde_json::from_slice::<crate::engine::types::LogEntry>(&bytes) {
-                            existing_val = Some(entry.value);
-                        }
-                }
-            }
-        }
+        let existing_val = col.get(&key).map(|v| v.clone());
 
         if let Some(existing) = existing_val {
             // ... (existing logic) ...
@@ -117,8 +104,8 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             crate::engine::schema::validate_document(schemas, collection, &value)?;
         }
 
-        // Step 1: Insert/overwrite in memory (always Hot for new writes).
-        col.insert(key.clone(), crate::engine::types::DocumentState::Hot(value.clone()));
+        // Step 1: Insert/overwrite in memory.
+        col.insert(key.clone(), value.clone());
 
         // Step 2: Update indexes.
         indexing::index_doc(indexes, collection, &key, &value);

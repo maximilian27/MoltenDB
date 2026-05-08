@@ -42,19 +42,11 @@ pub use storage::{StorageBackend, EncryptedStorage};
 #[cfg(not(target_arch = "wasm32"))]
 pub use storage::{AsyncDiskStorage, SyncDiskStorage};
 
-// DashMap = concurrent hash map. DashSet = concurrent hash set.
 use dashmap::{DashMap, DashSet};
-// Value = dynamically-typed JSON value.
 use serde_json::Value;
-// Standard HashMap — used for return values from get operations.
 use std::collections::HashMap;
-// Arc = thread-safe reference-counted pointer.
-// Wrapping fields in Arc allows Db to be cheaply cloned — all clones share
-// the same underlying data.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-// Tokio's broadcast channel: one sender, many receivers.
-// Used to push real-time change notifications to WebSocket subscribers.
 use tokio::sync::broadcast;
 
 /// The central database handle. Cheap to clone — all clones share the same state.
@@ -65,9 +57,9 @@ use tokio::sync::broadcast;
 pub struct Db {
     /// The main document store.
     /// Outer map: collection name (e.g. "users") → inner map.
-    /// Inner map: document key (e.g. "u1") → Hybrid Hot/Cold document state.
+    /// Inner map: document key (e.g. "u1") → document value (always in RAM).
     /// DashMap allows concurrent reads and writes from multiple threads.
-    state: Arc<DashMap<String, DashMap<String, crate::engine::types::DocumentState>>>,
+    state: Arc<DashMap<String, DashMap<String, serde_json::Value>>>,
 
     /// The storage backend — handles persistence to disk or OPFS.
     /// `pub` so handlers can access it directly if needed (e.g. for compaction).
@@ -86,11 +78,6 @@ pub struct Db {
     /// e.g. "users:role" → { "admin" → {"u1"}, "user" → {"u2", "u3"} }
     /// `pub` so handlers.rs can check for index existence directly.
     pub indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>>,
-
-    /// The maximum number of documents per collection to keep in RAM (Hot).
-    /// If a collection exceeds this, older documents are paged out to disk (Cold).
-    /// Default is 50,000.
-    pub hot_threshold: usize,
 
     /// Max requests per window.
     pub rate_limit_requests: u32,
@@ -113,9 +100,6 @@ pub struct Db {
     /// Supports the {SNAPSHOT_PATH} placeholder.
     pub post_backup_script: Option<String>,
 
-    /// Whether tiered (hot+cold) storage mode is active.
-    pub tiered_mode: bool,
-
     /// Circuit-breaker flag shared with `AsyncDiskStorage`.
     /// When the background writer encounters a fatal I/O error it sets this to
     /// `true`. All subsequent write operations return `DbError::StorageFault`
@@ -130,7 +114,7 @@ pub struct Db {
 impl Db {
     /// Returns the total number of hot (in-memory) keys across all collections.
     pub fn hot_keys_count(&self) -> usize {
-        self.state.iter().map(|c| c.value().len()).sum()
+        self.state.iter().map(|c: dashmap::mapref::multiple::RefMulti<_, _>| c.value().len()).sum::<usize>()
     }
 
     /// Create a new broadcast receiver for real-time change notifications.
@@ -203,9 +187,6 @@ impl Db {
             collection,
             items,
         })?;
-
-        // Auto-evict if the collection exceeds the threshold.
-        let _ = self.evict_collection(collection, self.hot_threshold);
         Ok(())
     }
 
@@ -228,10 +209,6 @@ impl Db {
             updates,
         })?;
 
-        if updated {
-            // Auto-evict if the collection exceeds the threshold.
-            let _ = self.evict_collection(collection, self.hot_threshold);
-        }
         Ok(updated)
     }
 
@@ -303,40 +280,15 @@ impl Db {
     ///
     /// This removes all dead entries (superseded INSERTs, DELETE tombstones)
     /// and writes a binary snapshot for fast next startup.
-    ///
-    /// The compacted log contains:
-    ///   - One INSERT entry per live document (current value only).
-    ///   - One INDEX entry per registered index (index data is rebuilt on replay).
     pub fn compact(&self) -> Result<(), DbError> {
-        let entries = operations::compact(
+        operations::compact(
             &self.state,
             #[cfg(feature = "schema")] &self.schemas,
             &self.indexes,
             &*self.storage,
             self.post_backup_script.clone(),
         )?;
-
-        // After compaction the log is rewritten and all old RecordPointers are invalid.
-        // Promote every Cold entry in the in-memory state to Hot so subsequent reads
-        // don't try to seek to stale byte offsets in the now-truncated log file.
-        for entry in &entries {
-            if entry.cmd == "INSERT"
-                && let Some(col) = self.state.get(&entry.collection)
-                    && let Some(mut doc) = col.get_mut(&entry.key)
-                        && matches!(*doc, crate::engine::types::DocumentState::Cold(_)) {
-                            *doc = crate::engine::types::DocumentState::Hot(entry.value.clone());
-                        }
-        }
-
         Ok(())
-    }
-
-    /// Evict documents from RAM to disk for a collection if it exceeds the threshold.
-    ///
-    /// This converts `Hot(Value)` entries into `Cold(RecordPointer)` entries.
-    /// In this v1, it re-scans the log to find the exact byte offsets for the documents.
-    pub fn evict_collection(&self, collection: &str, limit: usize) -> Result<usize, DbError> {
-        operations::evict_collection(&self.state, &*self.storage, collection, limit)
     }
 
     /// Recover the database state to a specific point in time or sequence number.

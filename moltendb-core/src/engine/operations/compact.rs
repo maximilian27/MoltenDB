@@ -8,7 +8,7 @@ use crate::engine::types::{DbError, LogEntry};
 use crate::engine::storage::StorageBackend;
 
 pub fn compact(
-    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    state: &DashMap<String, DashMap<String, serde_json::Value>>,
     #[cfg(feature = "schema")]
     schemas: &DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
     indexes: &DashMap<String, DashMap<String, dashmap::DashSet<String>>>,
@@ -23,20 +23,12 @@ pub fn compact(
     for col_ref in state.iter() {
         let col_name = col_ref.key();
         for item_ref in col_ref.value().iter() {
-            let entry = match item_ref.value() {
-                crate::engine::types::DocumentState::Hot(v) => {
-                    LogEntry::new(
-                        "INSERT".to_string(),
-                        col_name.clone(),
-                        item_ref.key().clone(),
-                        v.clone(),
-                    )
-                }
-                crate::engine::types::DocumentState::Cold(ptr) => {
-                    let bytes = storage.read_at(ptr.offset, ptr.length)?;
-                    serde_json::from_slice(&bytes)?
-                }
-            };
+            let entry = LogEntry::new(
+                "INSERT".to_string(),
+                col_name.clone(),
+                item_ref.key().clone(),
+                item_ref.value().clone(),
+            );
             entries.push(entry);
         }
     }

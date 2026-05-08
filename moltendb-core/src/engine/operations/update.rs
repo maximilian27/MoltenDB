@@ -15,7 +15,7 @@ use super::super::types::{DbError, LogEntry};
 /// Grouping these into a struct keeps the function signature within Clippy's
 /// argument-count limit and makes call sites more readable.
 pub struct UpdateParams<'a> {
-    pub state: &'a DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    pub state: &'a DashMap<String, DashMap<String, serde_json::Value>>,
     pub indexes: &'a DashMap<String, DashMap<String, DashSet<String>>>,
     pub storage: &'a Arc<dyn StorageBackend>,
     pub tx: &'a tokio::sync::broadcast::Sender<String>,
@@ -58,21 +58,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
     ))?;
 
     if let Some(col) = state.get(collection)
-        && let Some(doc) = {
-            if let Some(doc_state) = col.get(key) {
-                // Fetch the full document value first.
-                Some(match doc_state.value() {
-                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
-                    crate::engine::types::DocumentState::Cold(ptr) => {
-                        let bytes = storage.read_at(ptr.offset, ptr.length)?;
-                        let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
-                        entry.value
-                    }
-                })
-            } else {
-                None
-            }
-        } {
+        && let Some(doc) = col.get(key).map(|v| v.clone()) {
             let mut doc = doc;
 
             // Step 1: Remove the document from indexes BEFORE modifying it,
@@ -115,8 +101,8 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
             // Step 4: Re-add the document to indexes with its new field values.
             indexing::index_doc(indexes, collection, key, &new_value);
 
-            // Step 5: Update state (now Hot).
-            col.insert(key.to_string(), crate::engine::types::DocumentState::Hot(new_value.clone()));
+            // Step 5: Update state.
+            col.insert(key.to_string(), new_value.clone());
 
             // Step 6: Write the full updated document as an INSERT entry.
             let entry = LogEntry::new(

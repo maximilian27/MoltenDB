@@ -28,7 +28,6 @@ impl Db {
     #[cfg(target_arch = "wasm32")]
     pub async fn open_wasm(config: DbConfig) -> Result<Self, DbError> {
         let db_name = &config.path;
-        let hot_threshold = config.hot_threshold;
         let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
         let rate_limit_window = config.rate_limit_window.unwrap_or(60);
         let max_body_size = config.max_body_size;
@@ -68,7 +67,6 @@ impl Db {
                 &state,
                 &indexes,
                 #[cfg(feature = "schema")] &schemas,
-                hot_threshold,
             )?;
 
             wrapped
@@ -79,7 +77,6 @@ impl Db {
             storage,
             tx,
             indexes,
-            hot_threshold,
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
@@ -87,7 +84,6 @@ impl Db {
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,
-            tiered_mode: config.tiered_mode,
             io_fault: Arc::new(AtomicBool::new(false)),
         })
     }

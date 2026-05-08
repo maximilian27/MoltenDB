@@ -1,10 +1,13 @@
+// Previously tested hot/cold eviction — now all documents are always in RAM.
+// This file keeps basic insert/get coverage to ensure the storage path works.
+
 use moltendb_core::engine::{Db, DbConfig};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-fn open_db(threshold: usize) -> Db {
+fn open_db() -> Db {
     let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!("moltendb_hybrid_test_{}.log", id));
     if path.exists() {
@@ -13,43 +16,25 @@ fn open_db(threshold: usize) -> Db {
     Db::open(DbConfig {
         path: path.to_str().unwrap().to_string(),
         sync_mode: true,
-        hot_threshold: threshold,
         ..Default::default()
     }).expect("Failed to open db")
 }
 
-#[test]
-fn test_hot_cold_transition() {
-    // Set a very low threshold to trigger eviction early
-    let db = open_db(2);
-    
-    // Insert 3 documents into "items" collection
+#[tokio::test(flavor = "multi_thread")]
+async fn test_all_docs_in_memory() {
+    let db = open_db();
+
     db.insert("items", vec![
         ("k1".to_string(), json!({"v": 1})),
         ("k2".to_string(), json!({"v": 2})),
         ("k3".to_string(), json!({"v": 3})),
     ]).unwrap();
-    
-    // Explicitly trigger eviction (threshold 2)
-    let evicted = db.evict_collection("items", 2).expect("Eviction failed");
-    // Depending on implementation, it should evict at least 1 document if count is 3 and limit is 2.
-    assert!(evicted > 0, "Should have evicted some documents");
-    
-    // Verify we can still get all documents (transparent fetch)
+
     let v1 = db.get("items", vec!["k1".to_string()]).remove("k1").unwrap();
     let v2 = db.get("items", vec!["k2".to_string()]).remove("k2").unwrap();
     let v3 = db.get("items", vec!["k3".to_string()]).remove("k3").unwrap();
-    
+
     assert_eq!(v1["v"], 1);
     assert_eq!(v2["v"], 2);
     assert_eq!(v3["v"], 3);
-}
-
-#[test]
-fn test_configurable_threshold() {
-    let db_small = open_db(10);
-    assert_eq!(db_small.hot_threshold, 10);
-    
-    let db_large = open_db(100000);
-    assert_eq!(db_large.hot_threshold, 100000);
 }

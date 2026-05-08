@@ -390,7 +390,6 @@ async fn main() {
         path: db_path.clone(),
         sync_mode: is_sync_mode,
         tiered_mode: true,
-        hot_threshold: cfg.hot_threshold,
         rate_limit_requests: Some(rate_limit_requests),
         rate_limit_window: Some(rate_limit_window),
         max_body_size: cfg.max_body_size,

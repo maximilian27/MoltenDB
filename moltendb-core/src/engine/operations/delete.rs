@@ -14,7 +14,7 @@ use super::super::types::{DbError, LogEntry};
 /// separate DELETE LogEntry is written for each key. If the collection
 /// doesn't exist, this is a no-op. Pass a single key to delete one document.
 pub fn delete(
-    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    state: &DashMap<String, DashMap<String, Value>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
@@ -32,22 +32,8 @@ pub fn delete(
 
     if let Some(col) = state.get(collection) {
         for key in keys {
-            // Remove from indexes before removing from state.
-            if let Some(val) = {
-                if let Some(doc_state) = col.get(&key) {
-                    Some(match doc_state.value() {
-                        crate::engine::types::DocumentState::Hot(v) => v.clone(),
-                        crate::engine::types::DocumentState::Cold(ptr) => {
-                            let bytes = storage.read_at(ptr.offset, ptr.length)?;
-                            let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
-                            entry.value
-                        }
-                    })
-                } else {
-                    None
-                }
-            } {
-                indexing::unindex_doc(indexes, collection, &key, &val);
+            if let Some(val) = col.get(&key) {
+                indexing::unindex_doc(indexes, collection, &key, val.value());
             }
 
             // Remove the document from the in-memory collection.
@@ -95,7 +81,7 @@ pub fn delete(
 ///   - All indexes for this collection are removed.
 ///   - The DROP entry in the log ensures the collection stays gone on restart.
 pub fn delete_collection(
-    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    state: &DashMap<String, DashMap<String, Value>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,

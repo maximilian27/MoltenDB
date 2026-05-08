@@ -23,7 +23,6 @@ mod insert;
 mod update;
 mod delete;
 mod compact;
-mod evict;
 #[cfg(not(target_arch = "wasm32"))]
 mod recover;
 
@@ -32,6 +31,5 @@ pub use insert::{insert, InsertParams};
 pub use update::{update, UpdateParams};
 pub use delete::{delete, delete_collection};
 pub use compact::compact;
-pub use evict::evict_collection;
 #[cfg(not(target_arch = "wasm32"))]
 pub use recover::recover_to;

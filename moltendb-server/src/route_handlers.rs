@@ -457,7 +457,6 @@ pub async fn handle_metrics(
         },
         "database": {
             "hot_keys_count":    hot_keys_count,
-            "hot_tier_threshold": db.hot_threshold,
             "wal_size_bytes":    wal_size_bytes,
             "storage_mode":      storage_mode,
         },

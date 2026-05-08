@@ -187,24 +187,15 @@ pub trait StorageBackend: Send + Sync {
 /// Returns the total number of log entries processed.
 pub fn stream_into_state(
     storage: &dyn StorageBackend,
-    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    state: &DashMap<String, DashMap<String, Value>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
-    hot_threshold: usize,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
-    let mut offset = 0u64;
-    let mut tx_buffer: Vec<(LogEntry, crate::engine::types::RecordPointer)> = Vec::new();
+    let mut tx_buffer: Vec<LogEntry> = Vec::new();
     let mut active_tx: Option<String> = None;
 
-    // stream_log_into calls our closure once per LogEntry, providing the 
-    // LogEntry and its raw byte length in the log file.
-    storage.stream_log_into(&mut |entry, length| {
-        let pointer = crate::engine::types::RecordPointer {
-            offset,
-            length,
-        };
-
+    storage.stream_log_into(&mut |entry, _length| {
         match entry.cmd.as_str() {
             "TX_BEGIN" => {
                 active_tx = Some(entry.key.clone());
@@ -212,19 +203,8 @@ pub fn stream_into_state(
             }
             "TX_COMMIT" => {
                 if active_tx.as_ref() == Some(&entry.key) {
-                    // Flush buffer to DashMap
-                    for (e, p) in tx_buffer.drain(..) {
-                        // If length was 0, p.length will be 0 (from the snapshot replay)
-                        let pointer = if p.length == 0 { None } else { Some(p) };
-                        apply_entry(
-                            &e,
-                            state,
-                            indexes,
-                            #[cfg(feature = "schema")] schemas,
-                            pointer,
-                            storage,
-                            hot_threshold,
-                        );
+                    for e in tx_buffer.drain(..) {
+                        apply_entry(&e, state, indexes, #[cfg(feature = "schema")] schemas);
                     }
                     active_tx = None;
                 } else {
@@ -233,96 +213,45 @@ pub fn stream_into_state(
             }
             _ => {
                 if active_tx.is_some() {
-                    // Hold in RAM until commit
-                    tx_buffer.push((entry, pointer));
+                    tx_buffer.push(entry);
                 } else {
-                    // Standard non-transactional entry
-                    // If length is 0, it means it's from a snapshot, so we want it Hot (pointer=None).
-                    let p = if length == 0 { None } else { Some(pointer) };
-                    apply_entry(
-                        &entry,
-                        state,
-                        indexes,
-                        #[cfg(feature = "schema")] schemas,
-                        p,
-                        storage,
-                        hot_threshold,
-                    );
+                    apply_entry(&entry, state, indexes, #[cfg(feature = "schema")] schemas);
                 }
             }
         }
 
         count += 1;
-        // +1 for the newline character appended to each JSON line in the log.
-        // length=0 means this entry came from the snapshot (not the log file),
-        // so we must NOT advance the file offset for it.
-        if length > 0 {
-            offset += (length + 1) as u64;
-        }
         ControlFlow::Continue(())
     })?;
 
-    // If active_tx is still Some, the file ended prematurely (crash).
-    // In this case, we DISCARD the buffer to ensure atomicity of the last operation.
+    // If active_tx is still Some, the file ended prematurely (crash) — discard buffer.
     Ok(count)
 }
 
 /// Apply a single log entry to the in-memory state and indexes.
-///
-/// If `pointer` is provided (during log replay), INSERT entries are stored
-/// as `DocumentState::Cold(pointer)` to save memory. Live writes stay `Hot`.
 pub fn apply_entry(
     entry: &LogEntry,
-    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    state: &DashMap<String, DashMap<String, Value>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
-    pointer: Option<crate::engine::types::RecordPointer>,
-    storage: &dyn StorageBackend,
-    hot_threshold: usize,
 ) {
     match entry.cmd.as_str() {
         "INSERT" => {
             let col = state
                 .entry(entry.collection.clone())
                 .or_default();
-
-            // During replay, store Hot if the collection is within hot_threshold,
-            // otherwise store Cold (disk pointer) to save RAM.
-            // For live writes (pointer=None), always store Hot.
-            let doc_state = if let Some(p) = pointer {
-                if col.len() < hot_threshold {
-                    crate::engine::types::DocumentState::Hot(entry.value.clone())
-                } else {
-                    crate::engine::types::DocumentState::Cold(p)
-                }
-            } else {
-                crate::engine::types::DocumentState::Hot(entry.value.clone())
-            };
-
-            col.insert(entry.key.clone(), doc_state);
-
-            // Indexes ALWAYS store values in RAM to keep searches O(1).
+            col.insert(entry.key.clone(), entry.value.clone());
             crate::engine::indexing::index_doc(indexes, &entry.collection, &entry.key, &entry.value);
         }
         "DELETE" => {
             if let Some(col) = state.get(&entry.collection) {
-                if let Some(old_state) = col.get(&entry.key) {
-                    let old_val: Option<Value> = match old_state.value() {
-                        crate::engine::types::DocumentState::Hot(v) => Some(v.clone()),
-                        crate::engine::types::DocumentState::Cold(ptr) => {
-                            storage.read_at(ptr.offset, ptr.length).ok()
-                                .and_then(|bytes| serde_json::from_slice::<LogEntry>(&bytes).ok())
-                                .map(|e| e.value)
-                        }
-                    };
-                    if let Some(val) = old_val {
-                        crate::engine::indexing::unindex_doc(
-                            indexes,
-                            &entry.collection,
-                            &entry.key,
-                            &val,
-                        );
-                    }
+                if let Some(old_val) = col.get(&entry.key) {
+                    crate::engine::indexing::unindex_doc(
+                        indexes,
+                        &entry.collection,
+                        &entry.key,
+                        old_val.value(),
+                    );
                 }
                 col.remove(&entry.key);
             }

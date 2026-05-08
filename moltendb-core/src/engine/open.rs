@@ -34,7 +34,6 @@ impl Db {
         let path = &config.path;
         let sync_mode = config.sync_mode;
         let tiered_mode = config.tiered_mode;
-        let hot_threshold = config.hot_threshold;
         let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
         let rate_limit_window = config.rate_limit_window.unwrap_or(60);
         let max_body_size = config.max_body_size;
@@ -109,7 +108,6 @@ impl Db {
             &state,
             &indexes,
             #[cfg(feature = "schema")] &schemas,
-            hot_threshold,
         )?;
 
         Ok(Self {
@@ -117,7 +115,6 @@ impl Db {
             storage,
             tx,
             indexes,
-            hot_threshold,
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
@@ -125,7 +122,6 @@ impl Db {
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,
-            tiered_mode,
             io_fault: io_fault_arc,
             #[cfg(not(target_arch = "wasm32"))]
             started_at: std::time::Instant::now(),
