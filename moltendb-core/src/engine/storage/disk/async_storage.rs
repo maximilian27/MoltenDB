@@ -19,9 +19,20 @@ use std::fs::OpenOptions;
 use std::ops::ControlFlow;
 use std::io::{BufWriter, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+
+/// Message sent over the writer channel.
+/// Normal log lines are `Write(json)`; compaction sends `Compact` with a
+/// shared condvar so `compact_with_hook` can block until the file swap is done.
+enum WriterMsg {
+    Write(String),
+    Compact {
+        temp_path: String,
+        done: Arc<(Mutex<bool>, Condvar)>,
+    },
+}
 
 /// High-performance async disk writer.
 ///
@@ -34,7 +45,7 @@ use tokio::task::JoinHandle;
 pub struct AsyncDiskStorage {
     /// The sending half of the MPSC channel. Cloning this is cheap — all
     /// clones share the same underlying channel.
-    sender: Option<mpsc::UnboundedSender<String>>,
+    sender: Option<mpsc::UnboundedSender<WriterMsg>>,
     /// Path to the log file on disk. Stored so we can read/compact it later.
     path: String,
     /// Handle to the background writer task. Stored so Drop can await it.
@@ -49,7 +60,7 @@ impl AsyncDiskStorage {
     pub fn new(path: &str) -> Result<Self, DbError> {
         // Create an unbounded MPSC channel.
         // `log_tx` (sender) is kept in the struct; `log_rx` (receiver) goes to the task.
-        let (log_tx, mut log_rx) = mpsc::unbounded_channel::<String>();
+        let (log_tx, mut log_rx) = mpsc::unbounded_channel::<WriterMsg>();
         let path_clone = path.to_string();
         let io_fault = Arc::new(AtomicBool::new(false));
         let fault_flag = Arc::clone(&io_fault);
@@ -82,14 +93,8 @@ impl AsyncDiskStorage {
                 .await
                 {
                     // A message arrived within the timeout window.
-                    Ok(Some(log_line)) => {
-                        // Special sentinel: the compact() method sends this to
-                        // tell us to swap the log file atomically.
-                        if log_line.starts_with("__RELOAD_FILE__") {
-                            // Extract the temp file path from the sentinel string.
-                            let temp_path = log_line.replace("__RELOAD_FILE__", "");
-                            // println!("🔥 Worker: Reloading file from {}", temp_path);
-
+                    Ok(Some(msg)) => match msg {
+                        WriterMsg::Compact { temp_path, done } => {
                             // Flush and close the current file before renaming.
                             // On Windows, a file cannot be renamed while it's open.
                             if let Err(e) = w.flush() {
@@ -115,7 +120,14 @@ impl AsyncDiskStorage {
                                 }
                             };
                             w = BufWriter::new(new_file);
-                        } else {
+
+                            // Signal compact_with_hook that the swap is complete.
+                            let (lock, cvar) = &*done;
+                            let mut finished = lock.lock().unwrap();
+                            *finished = true;
+                            cvar.notify_one();
+                        }
+                        WriterMsg::Write(log_line) => {
                             // Normal log line — append it to the BufWriter's buffer.
                             if let Err(e) = writeln!(w, "{}", log_line) {
                                 tracing::error!("Fatal disk write error — entering read-only mode: {}", e);
@@ -123,7 +135,7 @@ impl AsyncDiskStorage {
                                 break;
                             }
                         }
-                    }
+                    },
                     // The channel was closed (sender dropped) — the server is shutting down.
                     // The BufWriter will be dropped here, which flushes its buffer to the OS.
                     Ok(None) => break,
@@ -177,7 +189,7 @@ impl StorageBackend for AsyncDiskStorage {
         // send() only fails if the receiver (background task) has been dropped,
         // which means the server is shutting down.
         if let Some(ref sender) = self.sender {
-            sender.send(json_line).map_err(|_| DbError::WriteError)?;
+            sender.send(WriterMsg::Write(json_line)).map_err(|_| DbError::WriteError)?;
         }
         Ok(())
     }
@@ -197,8 +209,11 @@ impl StorageBackend for AsyncDiskStorage {
     /// Internal compact implementation that can take a post-backup script.
     fn compact_with_hook(&self, entries: Vec<LogEntry>, hook: Option<String>) -> Result<(), DbError> {
         // Step 1: Write a binary snapshot.
-        // After compaction the log is reset to empty, so seq=0: all future log
-        // lines written after this snapshot must be replayed from the start.
+        // The log is reset to empty after compaction, so seq=0: all log lines
+        // written after this snapshot must be replayed from the start.
+        // This is safe because we synchronously wait for the file swap below
+        // before returning, eliminating the race window where stream_log_into
+        // could read the old (pre-truncation) log and double-apply its entries.
         let seq = 0u64;
         if let Err(e) = write_snapshot(&self.path, &entries, seq) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
@@ -249,12 +264,29 @@ impl StorageBackend for AsyncDiskStorage {
         let temp_path = format!("{}.tmp", self.path);
         write_compacted_log_no_tx(&temp_path, &[])?;
 
-        // Step 3: Send the sentinel to the background task so it flushes,
-        // closes the current file, renames the temp file over it, and reopens.
+        // Step 3: Send the Compact message to the background task and wait for
+        // it to confirm the file swap is done. This makes compaction synchronous:
+        // by the time compact_with_hook returns, the old log is gone and any
+        // subsequent stream_log_into call will see the fresh empty log.
         if let Some(ref sender) = self.sender {
+            let done = Arc::new((Mutex::new(false), Condvar::new()));
             sender
-                .send(format!("__RELOAD_FILE__{}", temp_path))
+                .send(WriterMsg::Compact {
+                    temp_path,
+                    done: Arc::clone(&done),
+                })
                 .map_err(|_| DbError::WriteError)?;
+
+            // Block until the background task signals completion.
+            // Use block_in_place so we don't starve the Tokio thread pool
+            // while waiting for the background writer to finish the swap.
+            tokio::task::block_in_place(|| {
+                let (lock, cvar) = &*done;
+                let mut finished = lock.lock().unwrap();
+                while !*finished {
+                    finished = cvar.wait(finished).unwrap();
+                }
+            });
         }
         Ok(())
     }

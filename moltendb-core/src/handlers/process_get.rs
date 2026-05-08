@@ -167,6 +167,61 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     };
 
     let joins_present = joins_req.map(|a| !a.is_empty()).unwrap_or(false);
+    let has_prefix_filter = payload.get("_allowed_prefixes")
+        .and_then(|p| p.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+
+    // ── Fast path: sort + count with no keys/joins/prefix filter ─────────────
+    // Use scan_top_n to keep only offset+count items in a bounded heap,
+    // avoiding materialising the entire collection into RAM.
+    let no_keys = !matches!(payload.get("keys"), Some(Value::String(_)) | Some(Value::Array(_)));
+    if no_keys && !used_index && !joins_present && !has_prefix_filter
+        && let Some(ref specs) = sort_specs
+        && let Some(limit) = count_limit
+    {
+        let cap = offset + limit;
+        let cmp_specs = specs.clone();
+        let cmp = make_cmp(&cmp_specs);
+        let predicate_clause = where_clause.cloned();
+        let predicate = move |doc: &Value| -> bool {
+            match &predicate_clause {
+                Some(clause) => query::evaluate_where(doc, clause).unwrap_or(false),
+                None => true,
+            }
+        };
+        let top_items = db.scan_top_n(col_name, predicate, cmp, cap);
+
+        // Apply projection/exclusion and build the response array.
+        let array: Vec<Value> = top_items.into_iter().skip(offset).map(|(k, mut doc)| {
+            let mut processed = if let Some(fields) = fields_req {
+                let mut projected = query::project(&doc, fields);
+                if let Some(v_val) = doc.get("_v")
+                    && let Some(obj) = projected.as_object_mut() {
+                        obj.insert("_v".to_string(), v_val.clone());
+                    }
+                projected
+            } else if let Some(excluded) = excluded_fields_req {
+                query::exclude(&doc, excluded)
+            } else {
+                let v_val = doc.get("_v").cloned();
+                if let Some(v_val) = v_val
+                    && let Some(obj) = doc.as_object_mut() {
+                        obj.insert("_v".to_string(), v_val);
+                    }
+                doc
+            };
+            if let Some(obj) = processed.as_object_mut() {
+                obj.insert("_key".to_string(), Value::String(k));
+            }
+            processed
+        }).collect();
+
+        if array.is_empty() {
+            return (404, json!({ "error": "No documents found", "statusCode": 404 }));
+        }
+        return (200, Value::Array(array));
+    }
 
     // ── Fetch documents ───────────────────────────────────────────────────────
     let results: HashMap<String, Value> = if used_index {

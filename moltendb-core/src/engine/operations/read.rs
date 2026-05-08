@@ -5,8 +5,50 @@
 use dashmap::DashMap;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use super::super::{StorageBackend};
+
+/// Promote all Cold documents in a collection back to Hot by streaming the
+/// log sequentially in one pass.
+///
+/// Cold documents require one `read_at` call each (= one file open + seek).
+/// For large collections this is catastrophically slow. A single sequential
+/// `stream_log_into` pass is orders of magnitude faster and promotes every
+/// Cold doc it encounters back to Hot, so subsequent scans are pure RAM.
+///
+/// Returns the number of documents promoted.
+pub fn warm_up_collection(
+    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
+    storage: &Arc<dyn StorageBackend>,
+    collection: &str,
+) -> usize {
+    // Fast check: does the collection have any Cold docs at all?
+    let has_cold = state.get(collection).map(|col| {
+        col.iter().any(|e| matches!(e.value(), crate::engine::types::DocumentState::Cold(_)))
+    }).unwrap_or(false);
+
+    if !has_cold {
+        return 0;
+    }
+
+    let mut promoted = 0usize;
+    let _ = storage.stream_log_into(&mut |entry, _length| {
+        if entry.collection != collection {
+            return ControlFlow::Continue(());
+        }
+        if let Some(col) = state.get(collection) {
+            if let Some(mut doc_state) = col.get_mut(&entry.key) {
+                if matches!(*doc_state, crate::engine::types::DocumentState::Cold(_)) {
+                    *doc_state = crate::engine::types::DocumentState::Hot(entry.value);
+                    promoted += 1;
+                }
+            }
+        }
+        ControlFlow::Continue(())
+    });
+    promoted
+}
 
 /// Retrieve a specific set of documents by their keys.
 ///
@@ -63,6 +105,7 @@ pub fn get_filtered(
 ) -> HashMap<String, Value> {
     let mut results = HashMap::new();
     let mut skipped = 0usize;
+    warm_up_collection(state, storage, collection);
     if let Some(col) = state.get(collection) {
         for entry in col.iter() {
             // Materialise the document value (Hot = clone-on-match,
@@ -154,6 +197,8 @@ where
 
     let mut heap: BinaryHeap<HeapItem<C>> = BinaryHeap::with_capacity(cap + 1);
 
+    warm_up_collection(state, storage, collection);
+
     if let Some(col) = state.get(collection) {
         for entry in col.iter() {
             // Extract the document value lazily. For Hot we can borrow first
@@ -211,6 +256,7 @@ pub fn get_all(
     collection: &str,
 ) -> HashMap<String, Value> {
     let mut results = HashMap::new();
+    warm_up_collection(state, storage, collection);
     if let Some(col) = state.get(collection) {
         for entry in col.iter() {
             let key = entry.key();
