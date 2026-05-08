@@ -151,6 +151,22 @@ impl Db {
         operations::get_all(&self.state, &self.storage, collection)
     }
 
+    /// Lazily scan a collection, returning only documents that match `predicate`.
+    ///
+    /// Avoids the full O(n) clone that `get_all` does — only matching documents
+    /// are cloned. `offset` and `limit` are applied during iteration so the
+    /// scan can stop early. Used for WHERE queries on large collections when
+    /// no index applies.
+    pub fn get_filtered(
+        &self,
+        collection: &str,
+        predicate: impl Fn(&Value) -> bool,
+        offset: usize,
+        limit: Option<usize>,
+    ) -> HashMap<String, Value> {
+        operations::get_filtered(&self.state, &self.storage, collection, predicate, offset, limit)
+    }
+
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
     pub fn insert(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {

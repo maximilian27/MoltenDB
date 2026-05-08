@@ -27,7 +27,7 @@ mod evict;
 #[cfg(not(target_arch = "wasm32"))]
 mod recover;
 
-pub use read::{get, get_all};
+pub use read::{get, get_all, get_filtered};
 pub use insert::{insert, InsertParams};
 pub use update::{update, UpdateParams};
 pub use delete::{delete, delete_collection};

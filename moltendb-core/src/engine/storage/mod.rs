@@ -190,6 +190,7 @@ pub fn stream_into_state(
     state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    hot_threshold: usize,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
     let mut offset = 0u64;
@@ -222,6 +223,7 @@ pub fn stream_into_state(
                             #[cfg(feature = "schema")] schemas,
                             pointer,
                             storage,
+                            hot_threshold,
                         );
                     }
                     active_tx = None;
@@ -244,6 +246,7 @@ pub fn stream_into_state(
                         #[cfg(feature = "schema")] schemas,
                         p,
                         storage,
+                        hot_threshold,
                     );
                 }
             }
@@ -275,6 +278,7 @@ pub fn apply_entry(
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     pointer: Option<crate::engine::types::RecordPointer>,
     storage: &dyn StorageBackend,
+    hot_threshold: usize,
 ) {
     match entry.cmd.as_str() {
         "INSERT" => {
@@ -282,9 +286,15 @@ pub fn apply_entry(
                 .entry(entry.collection.clone())
                 .or_default();
 
-            // During replay, we use the pointer (Cold). For live writes, we store the Value (Hot).
+            // During replay, store Hot if the collection is within hot_threshold,
+            // otherwise store Cold (disk pointer) to save RAM.
+            // For live writes (pointer=None), always store Hot.
             let doc_state = if let Some(p) = pointer {
-                crate::engine::types::DocumentState::Cold(p)
+                if col.len() < hot_threshold {
+                    crate::engine::types::DocumentState::Hot(entry.value.clone())
+                } else {
+                    crate::engine::types::DocumentState::Cold(p)
+                }
             } else {
                 crate::engine::types::DocumentState::Hot(entry.value.clone())
             };

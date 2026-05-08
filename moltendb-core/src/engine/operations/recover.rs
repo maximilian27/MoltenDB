@@ -63,6 +63,7 @@ pub fn recover_to(
                             #[cfg(feature = "schema")] &schemas,
                             Some(p),
                             storage,
+                            0, // PITR: keep all docs as Cold (disk pointers)
                         );
                     }
                     current_tx_id = None;
@@ -79,6 +80,7 @@ pub fn recover_to(
                         #[cfg(feature = "schema")] &schemas,
                         Some(pointer),
                         storage,
+                        0, // PITR: keep all docs as Cold (disk pointers)
                     );
                 }
             }

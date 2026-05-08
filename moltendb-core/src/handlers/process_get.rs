@@ -1,7 +1,8 @@
 use serde_json::{Value, json};
 use crate::validation;
 use crate::{engine, query};
-use std::collections::HashMap;
+use std::collections::{HashMap, BinaryHeap};
+use std::cmp::Ordering;
 use tracing::debug;
 
 
@@ -178,8 +179,32 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 let ks = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
                 db.get(col_name, ks)
             }
-            // No keys specified — return all documents in the collection.
-            _ => db.get_all(col_name),
+            // No keys specified.
+            _ => {
+                // ── Lazy WHERE scan ───────────────────────────────────────────
+                // When a WHERE clause is present and we don't need cross-collection
+                // joins, filter documents *while* iterating the collection — only
+                // matching documents are cloned. This avoids a full O(n) clone of
+                // a large collection (e.g. 1M docs) just to discard most of them
+                // moments later. For sort+count queries we still need every match
+                // (sort happens on the result set), so no in-scan limit is applied.
+                let joins_present = payload.get("joins")
+                    .and_then(|j| j.as_array())
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false);
+                if let Some(clause) = where_clause
+                    && !joins_present {
+                        let clause = clause.clone();
+                        db.get_filtered(
+                            col_name,
+                            move |doc| query::evaluate_where(doc, &clause).unwrap_or(false),
+                            0,
+                            None,
+                        )
+                    } else {
+                        db.get_all(col_name)
+                    }
+            }
         }
     };
 
@@ -349,83 +374,104 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             return (200, first_val);
         }
 
-    // ── Apply sort ────────────────────────────────────────────────────────────
-    // Convert the HashMap into a Vec so we can sort it.
-    // Sort specs are applied in priority order: the first spec is the primary
-    // sort key, subsequent specs break ties.
-    //
-    // Each spec can be:
-    //   "age"                          — sort by "age" ascending (shorthand)
-    //   { "field": "age" }             — sort by "age" ascending
-    //   { "field": "age", "order": "desc" } — sort by "age" descending
-    //
-    // Comparison rules:
-    //   Numbers are compared numerically (f64).
-    //   Strings are compared lexicographically.
-    //   Mixed types or missing fields sort to the end (treated as null).
-    let mut entries: Vec<(String, Value)> = final_results.into_iter().collect();
+    // ── Apply sort + pagination ───────────────────────────────────────────────
+    // When sort + count are both present we use a bounded max-heap that keeps
+    // only (offset + count) items in memory at any time — O(n log k) time and
+    // O(k) extra memory instead of O(n) for a full sort of all matching docs.
+    // When there is no sort, or no count limit, we fall back to the simple
+    // collect-then-sort path.
 
-    if let Some(specs) = sort_specs {
-        entries.sort_by(|(_, doc_a), (_, doc_b)| {
-            // Walk through each sort spec in priority order.
-            // The first spec that produces a non-equal comparison wins.
+    // Helper: compare two documents according to the sort specs.
+    let make_cmp = |specs: &Vec<Value>| {
+        let specs = specs.clone();
+        move |doc_a: &Value, doc_b: &Value| -> Ordering {
             for spec in &specs {
-                // Extract the field name and direction from the spec.
-                // Spec can be a plain string (field name, asc) or an object.
                 let (field, descending) = if let Some(field_str) = spec.as_str() {
-                    // Shorthand: just a field name string → ascending
                     (field_str.to_string(), false)
                 } else if let Some(obj) = spec.as_object() {
-                    let field = obj.get("field")
-                        .and_then(|f| f.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    // "order": "desc" → descending; anything else → ascending
-                    let desc = obj.get("order")
-                        .and_then(|o| o.as_str())
-                        .map(|o| o.eq_ignore_ascii_case("desc"))
-                        .unwrap_or(false);
+                    let field = obj.get("field").and_then(|f| f.as_str()).unwrap_or("").to_string();
+                    let desc  = obj.get("order").and_then(|o| o.as_str())
+                        .map(|o| o.eq_ignore_ascii_case("desc")).unwrap_or(false);
                     (field, desc)
                 } else {
-                    continue; // Skip malformed spec
+                    continue;
                 };
-
                 if field.is_empty() { continue; }
-
-                // Read the field value from each document using dot-notation.
                 let parts: Vec<&str> = field.split('.').collect();
                 let val_a = query::get_nested_value(doc_a, &parts);
                 let val_b = query::get_nested_value(doc_b, &parts);
-
-                // Compare the two values.
-                // Numbers → numeric comparison; strings → lexicographic;
-                // null/missing → sort to the end regardless of direction.
                 let ord = compare_values(val_a.as_ref(), val_b.as_ref());
-
-                if ord != std::cmp::Ordering::Equal {
-                    // Apply direction: flip the ordering for descending.
+                if ord != Ordering::Equal {
                     return if descending { ord.reverse() } else { ord };
                 }
-                // Equal on this spec → fall through to the next spec.
             }
-            // All specs were equal — preserve original (insertion) order.
-            std::cmp::Ordering::Equal
-        });
-    }
+            Ordering::Equal
+        }
+    };
+
+    let entries: Vec<(String, Value)> = match (sort_specs, count_limit) {
+        // ── Bounded top-N heap (sort + count) ────────────────────────────────
+        // Keeps only (offset + count) items in the heap at any time.
+        // This avoids materialising all matching documents for sorting when
+        // only a small slice of the result set is needed.
+        (Some(specs), Some(limit)) => {
+            let cap = offset + limit;
+            let cmp = make_cmp(&specs);
+
+            // Wrapper that reverses the comparison so BinaryHeap (a max-heap)
+            // evicts the *worst* candidate when the heap is full — leaving the
+            // best `cap` items inside.
+            struct HeapItem(String, Value, std::sync::Arc<dyn Fn(&Value, &Value) -> Ordering + Send + Sync>);
+            impl PartialEq for HeapItem { fn eq(&self, o: &Self) -> bool { (self.2)(&self.1, &o.1) == Ordering::Equal } }
+            impl Eq for HeapItem {}
+            impl PartialOrd for HeapItem {
+                fn partial_cmp(&self, o: &Self) -> Option<Ordering> { Some(self.cmp(o)) }
+            }
+            impl Ord for HeapItem {
+                // Max-heap: we want the *worst* candidate (per the sort comparator)
+                // to bubble to the top so it gets evicted first when we push beyond
+                // capacity. The user comparator returns `Less` for "better" items
+                // (e.g. higher price under desc), so the worst item has the greatest
+                // ordering — exactly what we want for a max-heap top.
+                fn cmp(&self, o: &Self) -> Ordering { (self.2)(&self.1, &o.1) }
+            }
+
+            let cmp_arc: std::sync::Arc<dyn Fn(&Value, &Value) -> Ordering + Send + Sync> =
+                std::sync::Arc::new(cmp);
+
+            let mut heap: BinaryHeap<HeapItem> = BinaryHeap::with_capacity(cap + 1);
+            for (k, v) in final_results {
+                heap.push(HeapItem(k, v, cmp_arc.clone()));
+                if heap.len() > cap {
+                    heap.pop(); // evict the worst item
+                }
+            }
+
+            // Drain the heap — items come out in worst-first order, so reverse.
+            let mut sorted: Vec<(String, Value)> = heap.into_sorted_vec()
+                .into_iter()
+                .map(|item| (item.0, item.1))
+                .collect();
+            // into_sorted_vec gives ascending order (best first for our reversed heap),
+            // which is exactly the order we want.
+            sorted.truncate(cap);
+            sorted
+        }
+
+        // ── Full sort, no count limit ─────────────────────────────────────────
+        (Some(specs), None) => {
+            let cmp = make_cmp(&specs);
+            let mut v: Vec<(String, Value)> = final_results.into_iter().collect();
+            v.sort_by(|(_, a), (_, b)| cmp(a, b));
+            v
+        }
+
+        // ── No sort — collect in arbitrary order ──────────────────────────────
+        _ => final_results.into_iter().collect(),
+    };
 
     // ── Apply offset and count (pagination) ───────────────────────────────────
-    // offset: skip the first N results.
-    // count:  return at most N results after skipping.
-    // Both are applied AFTER sorting so pagination is stable.
     let iter = entries.into_iter().skip(offset);
-
-    // All multi-document responses are returned as a JSON array of objects,
-    // each with a "_key" field injected so the caller knows which document
-    // each element corresponds to. This is consistent regardless of whether
-    // a sort was requested — JSON objects have no guaranteed key order, so
-    // returning an object for unsorted results and an array for sorted results
-    // was inconsistent. The only exception is single-key lookups (handled above)
-    // which return the document directly without a wrapper.
     let mut iter: Box<dyn Iterator<Item = (String, Value)>> = Box::new(iter);
     if let Some(limit) = count_limit {
         iter = Box::new(iter.take(limit));

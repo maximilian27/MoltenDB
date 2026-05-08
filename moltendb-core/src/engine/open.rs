@@ -109,6 +109,7 @@ impl Db {
             &state,
             &indexes,
             #[cfg(feature = "schema")] &schemas,
+            hot_threshold,
         )?;
 
         Ok(Self {
