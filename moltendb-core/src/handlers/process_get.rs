@@ -4,17 +4,13 @@ use crate::{engine, query};
 use std::collections::HashMap;
 use std::cmp::Ordering;
 
-
-/// Compare two optional JSON values for sorting purposes.
-/// - Both numbers  → numeric (f64) comparison.
-/// - Both strings  → lexicographic comparison.
-/// - Missing/null  → sorts to the end.
-/// - Mixed types   → fall back to string representation.
+/// Compare two optional JSON values for sorting.
+/// Numbers → numeric, strings → lexicographic, missing/null → sorts last.
 fn compare_values(a: Option<&Value>, b: Option<&Value>) -> Ordering {
     match (a, b) {
-        (None, None) => Ordering::Equal,
-        (None, Some(_)) => Ordering::Greater,
-        (Some(_), None) => Ordering::Less,
+        (None, None)       => Ordering::Equal,
+        (None, Some(_))    => Ordering::Greater,
+        (Some(_), None)    => Ordering::Less,
         (Some(va), Some(vb)) => {
             if let (Some(na), Some(nb)) = (va.as_f64(), vb.as_f64()) {
                 return na.partial_cmp(&nb).unwrap_or(Ordering::Equal);
@@ -27,284 +23,237 @@ fn compare_values(a: Option<&Value>, b: Option<&Value>) -> Ordering {
     }
 }
 
+/// Build a sort comparator from a `sort` spec array.
+/// Each spec is either a plain string field name or `{ "field": "...", "order": "asc"|"desc" }`.
+fn make_comparator(specs: Vec<Value>) -> impl Fn(&Value, &Value) -> Ordering {
+    move |a: &Value, b: &Value| {
+        for spec in &specs {
+            let (field, descending) = if let Some(s) = spec.as_str() {
+                (s.to_string(), false)
+            } else if let Some(obj) = spec.as_object() {
+                let f = obj.get("field").and_then(|f| f.as_str()).unwrap_or("").to_string();
+                let d = obj.get("order").and_then(|o| o.as_str())
+                    .map(|o| o.eq_ignore_ascii_case("desc"))
+                    .unwrap_or(false);
+                (f, d)
+            } else {
+                continue;
+            };
+            if field.is_empty() { continue; }
+            let parts: Vec<&str> = field.split('.').collect();
+            let ord = compare_values(
+                query::get_nested_value(a, &parts).as_ref(),
+                query::get_nested_value(b, &parts).as_ref(),
+            );
+            if ord != Ordering::Equal {
+                return if descending { ord.reverse() } else { ord };
+            }
+        }
+        Ordering::Equal
+    }
+}
+
+/// Apply field projection or exclusion to a document, preserving `_v` and inserting `_key`.
+fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Option<&Vec<Value>>, join_aliases: &[String]) -> Value {
+    let v_val = doc.get("_v").cloned();
+
+    let mut out = if let Some(f) = fields {
+        let mut projected = query::project(&doc, f);
+        // Re-attach any joined sub-documents that were embedded before projection.
+        if let (Some(src), Some(dst)) = (doc.as_object(), projected.as_object_mut()) {
+            for alias in join_aliases {
+                if let Some(v) = src.get(alias) {
+                    dst.insert(alias.clone(), v.clone());
+                }
+            }
+        }
+        projected
+    } else if let Some(ex) = excluded {
+        query::exclude(&doc, ex)
+    } else {
+        doc
+    };
+
+    if let Some(obj) = out.as_object_mut() {
+        if let Some(v) = v_val { obj.insert("_v".to_string(), v); }
+        obj.insert("_key".to_string(), Value::String(key.to_string()));
+    }
+    out
+}
+
 /// Handle a GET (query) request.
 ///
-/// Supports:
-///   - Single key lookup:  { "collection": "users", "keys": "u1" }
-///   - Batch key lookup:   { "collection": "users", "keys": ["u1", "u2"] }
-///   - Full collection:    { "collection": "users" }
-///   - WHERE filtering:    { "collection": "users", "where": { "role": "admin" } }
-///   - Field projection:   { "collection": "users", "fields": ["name", "age"] }
-///   - Field exclusion:    { "collection": "users", "excludedFields": ["role"] }
-///   - Cross-collection joins: { "joins": [{ "order_details": { "from": "orders", "on": "active_order", "fields": [...] } }] }
-///   - Pagination:         { "count": 10, "offset": 0 }
-///   - Sorting:            { "sort": ["age"] }  or  { "sort": [{ "field": "age", "order": "desc" }] }
+/// Supported parameters:
+///   - `collection`       — target collection (default: "default")
+///   - `keys`             — single key (string) or batch (string[])
+///   - `where`            — filter object; operators: $eq $ne $gt $gte $lt $lte $contains $in $nin $or $and
+///   - `fields`           — GraphQL-style inclusion list (dot-notation supported)
+///   - `excludedFields`   — exclusion list (mutually exclusive with `fields`)
+///   - `joins`            — cross-collection joins: [{ "<alias>": { "from": "<col>", "on": "<fk_field>", "fields": [...] } }]
+///   - `sort`             — sort specs: [{ "field": "price", "order": "asc"|"desc" }]
+///   - `count`            — max results after sort (pagination limit)
+///   - `offset`           — results to skip after sort (pagination offset)
+///   - `_allowed_prefixes`— internal: restrict results to keys with these prefixes
 pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
+    // ── Validation ────────────────────────────────────────────────────────────
     if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
-    const GET_ALLOWED: &[&str] = &[
+    const ALLOWED: &[&str] = &[
         "collection", "keys", "where", "fields", "excludedFields",
-        "joins", "sort", "count", "offset",
-        "_allowed_prefixes",
+        "joins", "sort", "count", "offset", "_allowed_prefixes",
     ];
-    if let Err(e) = validation::validate_allowed_properties(payload, GET_ALLOWED) {
+    if let Err(e) = validation::validate_allowed_properties(payload, ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
 
-    let col_name = payload["collection"].as_str().unwrap_or("default");
-    let where_clause = payload.get("where");
-
-    let fields_req = payload.get("fields").and_then(|f| f.as_array());
-    let excluded_fields_req = payload.get("excludedFields").and_then(|f| f.as_array());
-
-    if fields_req.is_some() && excluded_fields_req.is_some() {
-        return (400, json!({ "error": "'fields' and 'excludedFields' cannot be used together — use one or the other", "statusCode": 400 }));
+    let fields_req   = payload.get("fields").and_then(|f| f.as_array());
+    let excluded_req = payload.get("excludedFields").and_then(|f| f.as_array());
+    if fields_req.is_some() && excluded_req.is_some() {
+        return (400, json!({ "error": "'fields' and 'excludedFields' cannot be used together", "statusCode": 400 }));
     }
 
-    let joins_req = payload.get("joins").and_then(|j| j.as_array());
+    // ── Parse query parameters ────────────────────────────────────────────────
+    let col_name     = payload["collection"].as_str().unwrap_or("default");
+    let where_clause = payload.get("where");
+    let joins_req    = payload.get("joins").and_then(|j| j.as_array());
+    let sort_specs   = payload.get("sort").and_then(|s| s.as_array()).cloned();
     let count_limit: Option<usize> = payload.get("count").and_then(|c| c.as_u64()).map(|n| n as usize);
     let offset: usize = payload.get("offset").and_then(|c| c.as_u64()).map(|n| n as usize).unwrap_or(0);
-    let sort_specs = payload.get("sort").and_then(|s| s.as_array()).cloned();
+    let allowed_prefixes = payload.get("_allowed_prefixes").and_then(|p| p.as_array());
 
-    // Build a sort comparator from sort specs.
-    let make_cmp = |specs: &Vec<Value>| {
-        let specs = specs.clone();
-        move |doc_a: &Value, doc_b: &Value| -> Ordering {
-            for spec in &specs {
-                let (field, descending) = if let Some(field_str) = spec.as_str() {
-                    (field_str.to_string(), false)
-                } else if let Some(obj) = spec.as_object() {
-                    let field = obj.get("field").and_then(|f| f.as_str()).unwrap_or("").to_string();
-                    let desc  = obj.get("order").and_then(|o| o.as_str())
-                        .map(|o| o.eq_ignore_ascii_case("desc")).unwrap_or(false);
-                    (field, desc)
-                } else {
-                    continue;
-                };
-                if field.is_empty() { continue; }
-                let parts: Vec<&str> = field.split('.').collect();
-                let val_a = query::get_nested_value(doc_a, &parts);
-                let val_b = query::get_nested_value(doc_b, &parts);
-                let ord = compare_values(val_a.as_ref(), val_b.as_ref());
-                if ord != Ordering::Equal {
-                    return if descending { ord.reverse() } else { ord };
-                }
+    // ── Fast path: sort + count with no joins / keys / prefix filter ──────────
+    // Use a bounded heap of capacity (offset + count) so peak RAM is O(offset+count)
+    // rather than O(collection size).
+    let no_keys    = payload.get("keys").is_none();
+    let no_joins   = joins_req.map(|j| j.is_empty()).unwrap_or(true);
+    let no_prefix  = allowed_prefixes.map(|p| p.is_empty()).unwrap_or(true);
+
+    if no_keys && no_joins && no_prefix {
+        if let (Some(specs), Some(limit)) = (sort_specs.clone(), count_limit) {
+            let cap = offset + limit;
+            let cmp = make_comparator(specs);
+            let where_clause_owned = where_clause.cloned();
+            let top = db.scan_top_n(
+                col_name,
+                move |doc| where_clause_owned.as_ref()
+                    .map(|c| query::evaluate_where(doc, c).unwrap_or(false))
+                    .unwrap_or(true),
+                cmp,
+                cap,
+            );
+            if top.is_empty() {
+                return (404, json!({ "error": "No documents found", "statusCode": 404 }));
             }
-            Ordering::Equal
+            let array: Vec<Value> = top.into_iter().skip(offset).map(|(k, doc)| {
+                shape_doc(doc, &k, fields_req, excluded_req, &[])
+            }).collect();
+            return (200, Value::Array(array));
         }
-    };
-
-    let joins_present = joins_req.map(|a| !a.is_empty()).unwrap_or(false);
-    let has_prefix_filter = payload.get("_allowed_prefixes")
-        .and_then(|p| p.as_array())
-        .map(|a| !a.is_empty())
-        .unwrap_or(false);
-
-    // ── Fast path: sort + count with no keys/joins/prefix filter ─────────────
-    // Use scan_top_n to keep only offset+count items in a bounded heap,
-    // avoiding materialising the entire collection into RAM.
-    let no_keys = !matches!(payload.get("keys"), Some(Value::String(_)) | Some(Value::Array(_)));
-    if no_keys && !joins_present && !has_prefix_filter
-        && let Some(ref specs) = sort_specs
-        && let Some(limit) = count_limit
-    {
-        let cap = offset + limit;
-        let cmp_specs = specs.clone();
-        let cmp = make_cmp(&cmp_specs);
-        let predicate_clause = where_clause.cloned();
-        let predicate = move |doc: &Value| -> bool {
-            match &predicate_clause {
-                Some(clause) => query::evaluate_where(doc, clause).unwrap_or(false),
-                None => true,
-            }
-        };
-        let top_items = db.scan_top_n(col_name, predicate, cmp, cap);
-
-        // Apply projection/exclusion and build the response array.
-        let array: Vec<Value> = top_items.into_iter().skip(offset).map(|(k, mut doc)| {
-            let mut processed = if let Some(fields) = fields_req {
-                let mut projected = query::project(&doc, fields);
-                if let Some(v_val) = doc.get("_v")
-                    && let Some(obj) = projected.as_object_mut() {
-                        obj.insert("_v".to_string(), v_val.clone());
-                    }
-                projected
-            } else if let Some(excluded) = excluded_fields_req {
-                query::exclude(&doc, excluded)
-            } else {
-                let v_val = doc.get("_v").cloned();
-                if let Some(v_val) = v_val
-                    && let Some(obj) = doc.as_object_mut() {
-                        obj.insert("_v".to_string(), v_val);
-                    }
-                doc
-            };
-            if let Some(obj) = processed.as_object_mut() {
-                obj.insert("_key".to_string(), Value::String(k));
-            }
-            processed
-        }).collect();
-
-        if array.is_empty() {
-            return (404, json!({ "error": "No documents found", "statusCode": 404 }));
-        }
-        return (200, Value::Array(array));
     }
 
     // ── Fetch documents ───────────────────────────────────────────────────────
-    let results: HashMap<String, Value> = {
-        match payload.get("keys") {
-            Some(Value::String(k)) => db.get(col_name, vec![k.to_string()]),
-            Some(Value::Array(arr)) => {
-                let ks = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
-                db.get(col_name, ks)
-            }
-            _ => {
-                if let Some(clause) = where_clause
-                    && !joins_present {
-                        let clause = clause.clone();
-                        db.get_filtered(
-                            col_name,
-                            move |doc| query::evaluate_where(doc, &clause).unwrap_or(false),
-                            0,
-                            None,
-                        )
-                    } else {
-                        db.get_all(col_name)
-                    }
-            }
+    let raw: HashMap<String, Value> = match payload.get("keys") {
+        Some(Value::String(k)) => db.get(col_name, vec![k.clone()]),
+        Some(Value::Array(arr)) => {
+            let ks = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            db.get(col_name, ks)
+        }
+        _ => {
+            // Full scan — apply WHERE early when there are no joins (avoids materialising filtered-out docs).
+            if let Some(clause) = where_clause
+                && joins_req.map(|j| j.is_empty()).unwrap_or(true) {
+                    let clause = clause.clone();
+                    db.get_filtered(col_name, move |doc| query::evaluate_where(doc, &clause).unwrap_or(false), 0, None)
+                } else {
+                    db.get_all(col_name)
+                }
         }
     };
 
-    let mut final_results = HashMap::new();
+    // ── Per-document processing ───────────────────────────────────────────────
+    let mut results: Vec<(String, Value)> = Vec::with_capacity(raw.len());
 
-    for (key, mut doc) in results {
-        // ── Cross-collection joins ────────────────────────────────────────────
-        let mut join_aliases = Vec::new();
-        if let Some(joins) = joins_req {
-            for join_spec in joins {
-                let (target_col, fk_field, alias, join_fields): (String, String, String, Option<&Vec<serde_json::Value>>) = {
-                    let new_syntax = join_spec.as_object().and_then(|obj| {
-                        obj.iter().find_map(|(k, v)| {
-                            if let Some(inner) = v.as_object() {
-                                if inner.contains_key("from") {
-                                    let from = inner.get("from").and_then(|f| f.as_str()).unwrap_or("").to_string();
-                                    let on   = inner.get("on").and_then(|f| f.as_str()).unwrap_or("").to_string();
-                                    Some((from, on, k.clone(), inner.get("fields").and_then(|f| f.as_array())))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                    });
-
-                    if let Some((from, on, al, fields)) = new_syntax {
-                        (from, on, al, fields)
-                    } else {
-                        continue;
-                    }
-                };
-                let target_col = target_col.as_str();
-                let fk_field   = fk_field.as_str();
-                join_aliases.push(alias.clone());
-
-                let fk_val_opt = {
-                    let mut current: &Value = &doc;
-                    for part in fk_field.split('.') {
-                        if let Some(v) = current.get(part) { current = v; }
-                        else { current = &Value::Null; break; }
-                    }
-                    current.as_str().map(|s| s.to_string())
-                };
-
-                if let Some(fk_val) = fk_val_opt
-                    && let Some(related_doc) = db.get(target_col, vec![fk_val.clone()]).remove(&fk_val) {
-                        let final_related = if let Some(j_fields) = join_fields {
-                            query::project(&related_doc, j_fields)
-                        } else {
-                            related_doc
-                        };
-                        if let Some(doc_obj) = doc.as_object_mut() {
-                            doc_obj.insert(alias.clone(), final_related);
-                        }
-                    }
-            }
-        }
-
-        // ── Prefix gatekeeper ─────────────────────────────────────────────────
-        if let Some(prefixes) = payload.get("_allowed_prefixes").and_then(|p| p.as_array())
-            && !prefixes.is_empty() {
-                let allowed = prefixes.iter()
-                    .filter_map(|p| p.as_str())
-                    .any(|prefix| key.starts_with(prefix));
+    for (key, mut doc) in raw {
+        // Prefix gatekeeper (used by scoped auth tokens).
+        if let Some(prefixes) = allowed_prefixes {
+            if !prefixes.is_empty() {
+                let allowed = prefixes.iter().filter_map(|p| p.as_str()).any(|p| key.starts_with(p));
                 if !allowed { continue; }
             }
-
-        // ── WHERE filtering ───────────────────────────────────────────────────
-        if let Some(clause) = where_clause {
-            let matches = match query::evaluate_where(&doc, clause) {
-                Ok(m) => m,
-                Err(e) => return (400, json!({ "error": e.to_string(), "statusCode": 400 })),
-            };
-            if !matches { continue; }
         }
 
-        // ── Field projection / exclusion ──────────────────────────────────────
-        let mut processed_doc = if let Some(fields) = fields_req {
-            let mut projected = query::project(&doc, fields);
-            if !join_aliases.is_empty()
-                && let Some(doc_obj) = doc.as_object()
-                    && let Some(proj_obj) = projected.as_object_mut() {
-                        for alias in &join_aliases {
-                            if let Some(joined_val) = doc_obj.get(alias) {
-                                proj_obj.insert(alias.clone(), joined_val.clone());
-                            }
+        // Cross-collection joins — embed related document under the alias field.
+        let mut join_aliases: Vec<String> = Vec::new();
+        if let Some(joins) = joins_req {
+            for join_spec in joins {
+                let Some(obj) = join_spec.as_object() else { continue };
+                let Some((alias, inner)) = obj.iter().find_map(|(k, v)| {
+                    v.as_object().filter(|o| o.contains_key("from")).map(|o| (k.clone(), o))
+                }) else { continue };
+
+                let from     = inner.get("from").and_then(|f| f.as_str()).unwrap_or("");
+                let on       = inner.get("on").and_then(|f| f.as_str()).unwrap_or("");
+                let j_fields = inner.get("fields").and_then(|f| f.as_array());
+
+                // Resolve the foreign key value (supports dot-notation).
+                let fk_val = on.split('.').fold(Some(&doc as &Value), |cur, part| {
+                    cur.and_then(|v| v.get(part))
+                }).and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                if let Some(fk) = fk_val
+                    && let Some(related) = db.get(from, vec![fk.clone()]).remove(&fk) {
+                        let embedded = if let Some(jf) = j_fields {
+                            query::project(&related, jf)
+                        } else {
+                            related
+                        };
+                        if let Some(doc_obj) = doc.as_object_mut() {
+                            doc_obj.insert(alias.clone(), embedded);
                         }
+                        join_aliases.push(alias);
                     }
-            projected
-        } else if let Some(excluded) = excluded_fields_req {
-            query::exclude(&doc, excluded)
-        } else {
-            doc.clone()
-        };
-
-        // Always include _v for concurrency control.
-        if let Some(v_val) = doc.get("_v")
-            && let Some(obj) = processed_doc.as_object_mut() {
-                obj.insert("_v".to_string(), v_val.clone());
             }
-
-        final_results.insert(key, processed_doc);
-    }
-
-    if final_results.is_empty() { return (404, json!({ "error": "No documents found", "statusCode": 404 })); }
-
-    // Single-key lookup — return the document directly, no array wrapper.
-    if let Some(Value::String(_)) = payload.get("keys")
-        && let Some(first_val) = final_results.values().next().cloned() {
-            return (200, first_val);
         }
 
-    // ── Sort + pagination ─────────────────────────────────────────────────────
-    let mut entries: Vec<(String, Value)> = final_results.into_iter().collect();
+        // WHERE filter (re-applied here when joins are present, since joined fields may be tested).
+        if let Some(clause) = where_clause {
+            match query::evaluate_where(&doc, clause) {
+                Ok(true)  => {}
+                Ok(false) => continue,
+                Err(e)    => return (400, json!({ "error": e.to_string(), "statusCode": 400 })),
+            }
+        }
 
+        results.push((key, doc));
+    }
+
+    if results.is_empty() {
+        return (404, json!({ "error": "No documents found", "statusCode": 404 }));
+    }
+
+    // Single-key lookup — return the document directly (no array wrapper, no _key).
+    if let Some(Value::String(_)) = payload.get("keys") {
+        let (key, doc) = results.remove(0);
+        let mut out = shape_doc(doc, &key, fields_req, excluded_req, &[]);
+        if let Some(obj) = out.as_object_mut() { obj.remove("_key"); }
+        return (200, out);
+    }
+
+    // ── Sort ──────────────────────────────────────────────────────────────────
     if let Some(specs) = sort_specs {
-        let cmp = make_cmp(&specs);
-        entries.sort_by(|(_, a), (_, b)| cmp(a, b));
+        let cmp = make_comparator(specs);
+        results.sort_by(|(_, a), (_, b)| cmp(a, b));
     }
 
+    // ── Pagination ────────────────────────────────────────────────────────────
     if let Some(limit) = count_limit {
-        entries.truncate(offset + limit);
+        results.truncate(offset + limit);
     }
 
-    let array: Vec<Value> = entries.into_iter().skip(offset).map(|(k, mut doc)| {
-        if let Some(obj) = doc.as_object_mut() {
-            obj.insert("_key".to_string(), Value::String(k));
-        }
-        doc
+    // ── Shape and return ──────────────────────────────────────────────────────
+    let array: Vec<Value> = results.into_iter().skip(offset).map(|(k, doc)| {
+        shape_doc(doc, &k, fields_req, excluded_req, &[])
     }).collect();
 
     (200, Value::Array(array))
