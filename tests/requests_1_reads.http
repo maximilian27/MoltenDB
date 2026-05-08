@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODI1NTc2Niwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjcyMzNlZTQxLTdmMTctNGMxNC04ZTczLWU4NjM0NTkzOThlMiJ9.c3HVOKL5_kD6seaSMH0CwNshIigkDZVIC1eTCK0K4wc
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODM2MzgzNiwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjQ2ZjYxY2RiLWRiNjUtNGU4Mi04MWQ4LTY1ZDg1MGU3MmYxYSJ9.FDkPoGfhBzy6WhycZ8EXc4YV-Wvh2CLxmWPhyoa-FOM
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
