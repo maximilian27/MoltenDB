@@ -23,7 +23,6 @@
 
 // Declare the sub-modules of the engine.
 mod types;      // LogEntry, DbError
-mod indexing;   // index_doc, unindex_doc, track_query, create_index
 mod storage;    // StorageBackend trait + concrete implementations
 mod config;     // DbConfig struct
 #[cfg(feature = "schema")]
@@ -42,7 +41,7 @@ pub use storage::{StorageBackend, EncryptedStorage};
 #[cfg(not(target_arch = "wasm32"))]
 pub use storage::{AsyncDiskStorage, SyncDiskStorage};
 
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -72,12 +71,6 @@ pub struct Db {
     /// `pub` so the WebSocket handler in main.rs can call subscribe().
     pub tx: broadcast::Sender<String>,
 
-    /// The index store.
-    /// Key format: "collection:field" (e.g. "users:role").
-    /// Value: field_value → set of document keys with that value.
-    /// e.g. "users:role" → { "admin" → {"u1"}, "user" → {"u2", "u3"} }
-    /// `pub` so handlers.rs can check for index existence directly.
-    pub indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>>,
 
     /// Max requests per window.
     pub rate_limit_requests: u32,
@@ -180,7 +173,6 @@ impl Db {
         }
         operations::insert(operations::InsertParams {
             state: &self.state,
-            indexes: &self.indexes,
             storage: &self.storage,
             tx: &self.tx,
             #[cfg(feature = "schema")] schemas: &self.schemas,
@@ -200,7 +192,6 @@ impl Db {
         }
         let updated = operations::update(operations::UpdateParams {
             state: &self.state,
-            indexes: &self.indexes,
             storage: &self.storage,
             tx: &self.tx,
             #[cfg(feature = "schema")] schemas: &self.schemas,
@@ -221,7 +212,6 @@ impl Db {
         }
         operations::delete(
             &self.state,
-            &self.indexes,
             &self.storage,
             &self.tx,
             collection,
@@ -229,28 +219,14 @@ impl Db {
         )
     }
 
-    /// Drop an entire collection — removes all documents and its indexes.
+    /// Drop an entire collection — removes all documents.
     pub fn delete_collection(&self, collection: &str) -> Result<(), DbError> {
         operations::delete_collection(
             &self.state,
-            &self.indexes,
             &self.storage,
             &self.tx,
             collection,
         )
-    }
-
-    /// Track that `field` was queried in `collection` and auto-create an index
-    /// on first query. Errors are silently ignored — auto-indexing is best-effort.
-    pub fn track_query(&self, collection: &str, field: &str) {
-        // The `let _ =` discards the Result — a failed auto-index is not fatal.
-        let _ = indexing::track_query(
-            &self.indexes,
-            collection,
-            field,
-            &self.storage,
-            &self.state,
-        );
     }
 
     /// Register a JSON schema for a collection.
@@ -266,12 +242,11 @@ impl Db {
         )
     }
     
-    /// Wipe all in-memory state — documents and indexes.
+    /// Wipe all in-memory state.
     /// Used by the WASM layer when a browser tab unloads in in-memory mode,
     /// so that any tab refresh clears the shared RAM store for all tabs.
     pub fn clear_all(&self) {
         self.state.clear();
-        self.indexes.clear();
         #[cfg(feature = "schema")]
         self.schemas.clear();
     }
@@ -284,7 +259,6 @@ impl Db {
         operations::compact(
             &self.state,
             #[cfg(feature = "schema")] &self.schemas,
-            &self.indexes,
             &*self.storage,
             self.post_backup_script.clone(),
         )?;

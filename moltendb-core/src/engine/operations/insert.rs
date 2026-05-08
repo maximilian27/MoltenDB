@@ -2,11 +2,11 @@
 // Insert operation: insert.
 // ─────────────────────────────────────────────────────────────────────────────
 
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use super::common::now_iso;
-use super::super::{indexing, StorageBackend};
+use super::super::StorageBackend;
 use super::super::types::{DbError, LogEntry};
 
 /// Parameters for the [`insert`] operation.
@@ -15,7 +15,6 @@ use super::super::types::{DbError, LogEntry};
 /// argument-count limit and makes call sites more readable.
 pub struct InsertParams<'a> {
     pub state: &'a DashMap<String, DashMap<String, serde_json::Value>>,
-    pub indexes: &'a DashMap<String, DashMap<String, DashSet<String>>>,
     pub storage: &'a Arc<dyn StorageBackend>,
     pub tx: &'a tokio::sync::broadcast::Sender<String>,
     #[cfg(feature = "schema")]
@@ -39,7 +38,6 @@ pub struct InsertParams<'a> {
 pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
     let InsertParams {
         state,
-        indexes,
         storage,
         tx,
         #[cfg(feature = "schema")]
@@ -90,8 +88,6 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &value)?;
 
-            // Unindex the OLD value before overwriting.
-            indexing::unindex_doc(indexes, collection, &key, &existing);
         } else if let Some(obj) = value.as_object_mut() {
             if obj.get("_v").is_none() {
                 obj.insert("_v".to_string(), serde_json::json!(1u64));
@@ -107,10 +103,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         // Step 1: Insert/overwrite in memory.
         col.insert(key.clone(), value.clone());
 
-        // Step 2: Update indexes.
-        indexing::index_doc(indexes, collection, &key, &value);
-
-        // Step 3: Persist within the transaction.
+        // Step 2: Persist within the transaction.
         let entry = LogEntry::new(
             "INSERT".to_string(),
             collection.to_string(),

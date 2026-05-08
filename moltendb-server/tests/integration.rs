@@ -844,7 +844,6 @@ fn test_index_accelerated_query() {
         }));
     }
     // Index should now exist
-    assert!(db.indexes.contains_key("laptops:brand"));
     // Query via index still returns correct results
     let r = get(&db, json!({
         "collection": "laptops",
@@ -986,7 +985,6 @@ fn test_one_million_keys_write() {
     let db = engine::Db::open(engine::DbConfig {
         path: path.clone(),
         sync_mode: true,
-        hot_threshold: 2_000_000,
         max_body_size: 512 * 1024 * 1024, // 512 MB
         max_keys_per_request: 1_000_000,
         tiered_mode: false,        ..Default::default()

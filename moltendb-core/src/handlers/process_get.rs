@@ -3,7 +3,7 @@ use crate::validation;
 use crate::{engine, query};
 use std::collections::HashMap;
 use std::cmp::Ordering;
-use tracing::debug;
+
 
 /// Compare two optional JSON values for sorting purposes.
 /// - Both numbers  → numeric (f64) comparison.
@@ -55,77 +55,6 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     let col_name = payload["collection"].as_str().unwrap_or("default");
     let where_clause = payload.get("where");
 
-    // ── Index-accelerated query planning ──────────────────────────────────────
-    let mut candidate_keys: Vec<String> = Vec::new();
-    let mut used_index = false;
-
-    if let Some(query_obj) = where_clause.and_then(|w| w.as_object()) {
-        for (field, condition) in query_obj {
-            db.track_query(col_name, field);
-            let index_key = format!("{}:{}", col_name, field);
-
-            if let Some(field_index) = db.indexes.get(&index_key) {
-                // Exact equality lookup.
-                let target_val = if condition.is_object() {
-                    condition.get("$eq").or(condition.get("$equals"))
-                } else {
-                    Some(condition)
-                };
-
-                if let Some(val) = target_val {
-                    let val_str = val.to_string();
-                    if let Some(key_set) = field_index.get(&val_str) {
-                        candidate_keys = key_set.iter().map(|k| k.clone()).collect();
-                        used_index = true;
-                        debug!("⚡ Optimizer: Using index for {}", index_key);
-                        break;
-                    }
-                }
-
-                // Range query index scan.
-                if !used_index
-                    && let Some(cond_obj) = condition.as_object() {
-                        let has_range = cond_obj.keys().any(|op| {
-                            matches!(op.as_str(), "$gt" | "$greaterThan" | "$gte" | "$lt" | "$lessThan" | "$lte")
-                        });
-
-                        if has_range {
-                            let mut matched_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
-                            for entry in field_index.iter() {
-                                let index_val_str = entry.key();
-                                if let Ok(index_num) = index_val_str.trim_matches('"').parse::<f64>() {
-                                    let passes = cond_obj.iter().all(|(op, op_val)| {
-                                        if let Some(op_num) = op_val.as_f64() {
-                                            match op.as_str() {
-                                                "$gt" | "$greaterThan" => index_num > op_num,
-                                                "$gte"                 => index_num >= op_num,
-                                                "$lt" | "$lessThan"    => index_num < op_num,
-                                                "$lte"                 => index_num <= op_num,
-                                                _ => true,
-                                            }
-                                        } else {
-                                            true
-                                        }
-                                    });
-                                    if passes {
-                                        for k in entry.value().iter() {
-                                            matched_keys.insert(k.clone());
-                                        }
-                                    }
-                                }
-                            }
-                            if !matched_keys.is_empty() {
-                                candidate_keys = matched_keys.into_iter().collect();
-                                used_index = true;
-                                debug!("⚡ Optimizer: Using index for range query on {}", index_key);
-                                break;
-                            }
-                        }
-                    }
-            }
-        }
-    }
-
     let fields_req = payload.get("fields").and_then(|f| f.as_array());
     let excluded_fields_req = payload.get("excludedFields").and_then(|f| f.as_array());
 
@@ -176,7 +105,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     // Use scan_top_n to keep only offset+count items in a bounded heap,
     // avoiding materialising the entire collection into RAM.
     let no_keys = !matches!(payload.get("keys"), Some(Value::String(_)) | Some(Value::Array(_)));
-    if no_keys && !used_index && !joins_present && !has_prefix_filter
+    if no_keys && !joins_present && !has_prefix_filter
         && let Some(ref specs) = sort_specs
         && let Some(limit) = count_limit
     {
@@ -224,9 +153,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     }
 
     // ── Fetch documents ───────────────────────────────────────────────────────
-    let results: HashMap<String, Value> = if used_index {
-        db.get(col_name, candidate_keys)
-    } else {
+    let results: HashMap<String, Value> = {
         match payload.get("keys") {
             Some(Value::String(k)) => db.get(col_name, vec![k.to_string()]),
             Some(Value::Array(arr)) => {

@@ -78,7 +78,6 @@ use moltendb_core::engine::{Db, DbConfig};
 let config = DbConfig {
     path: "./my_app.log".to_string(),
     sync_mode: true,
-    hot_threshold: 1000,
     ..Default::default()
 };
 
@@ -113,7 +112,6 @@ async fn main() {
     let config = DbConfig {
         path: "my_data.db".to_string(),
         sync_mode: true,
-        hot_threshold: 10000,
         ..Default::default()
     };
 
@@ -743,7 +741,6 @@ Response:
   },
   "database": {
     "hot_keys_count": 14523,
-    "hot_tier_threshold": 50000,
     "wal_size_bytes": 8450122,
     "storage_mode": "tiered"
   }
@@ -757,7 +754,6 @@ Response:
 | `host.memory` | Total / used / free RAM on the host machine |
 | `host.disks` | Per-disk total, used, and available bytes |
 | `database.hot_keys_count` | Number of documents currently held in the hot (RAM) tier |
-| `database.hot_tier_threshold` | Configured max documents per collection before cold eviction |
 | `database.wal_size_bytes` | Current size of the WAL / storage file on disk |
 | `database.storage_mode` | `standard` or `tiered` |
 
@@ -793,7 +789,6 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--db-path` | `MOLTENDB_DB_PATH` | `my_database.log` | Log file path |
 | `--disable-encryption` | `MOLTENDB_DISABLE_ENCRYPTION` | `false` | Store data as plain JSON |
 | `--encryption-key` | `MOLTENDB_ENCRYPTION_KEY` | built-in default ⚠️ | At-rest encryption password |
-| `--hot-threshold` | `MOLTENDB_HOT_THRESHOLD` | `50000` | Max documents per collection to keep in RAM |
 | `--max-body-size` | `MOLTENDB_MAX_BODY_SIZE` | `10485760` | Maximum request body size in bytes |
 | `--max-keys-per-request` | `MOLTENDB_MAX_KEYS_PER_REQUEST` | `1000` | Maximum number of keys allowed per JSON request |
 | `--post-backup-script` | `MOLTENDB_POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup |

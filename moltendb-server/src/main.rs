@@ -154,13 +154,7 @@ struct Config {
     /// The script will be called with the absolute path of the snapshot as its first argument. [env: MOLTENDB_POST_BACKUP_SCRIPT]
     #[arg(long, env = "MOLTENDB_POST_BACKUP_SCRIPT")]
     pub post_backup_script: Option<String>,
-
-    /// Maximum documents per collection to keep in RAM (Hot threshold). [env: MOLTENDB_HOT_THRESHOLD]
-    /// If a collection exceeds this, older documents are moved to the Cold tier (disk).
-    /// Higher values use more RAM but provide sub-microsecond speeds for more documents.
-    #[arg(long, default_value = "50000", env = "MOLTENDB_HOT_THRESHOLD")]
-    hot_threshold: usize,
-
+    
     /// Run entirely in RAM — bypass the WAL and disk storage completely.
     /// All data is lost when the server exits. Ideal for ephemeral caches,
     /// CI environments, or Redis-like use cases. [env: MOLTENDB_IN_MEMORY]

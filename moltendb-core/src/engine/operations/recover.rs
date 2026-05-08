@@ -1,14 +1,9 @@
-// ─── operations/recover.rs ────────────────────────────────────────────────────
-// Recovers the database state to a specific point in time or sequence number.
-// Used by the CLI for Point-in-Time Recovery (PITR).
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg(not(target_arch = "wasm32"))]
 use std::ops::ControlFlow;
 #[cfg(all(not(target_arch = "wasm32"), feature = "schema"))]
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use serde_json::Value;
 #[cfg(not(target_arch = "wasm32"))]
@@ -23,10 +18,8 @@ pub fn recover_to(
     to_seq: Option<u64>,
 ) -> Result<Vec<LogEntry>, DbError> {
     let state: DashMap<String, DashMap<String, Value>> = DashMap::new();
-    let indexes: DashMap<String, DashMap<String, DashSet<String>>> = DashMap::new();
     #[cfg(feature = "schema")]
     let schemas: DashMap<String, Arc<(serde_json::Value, jsonschema::Validator)>> = DashMap::new();
-
     let mut count = 0u64;
     let mut current_tx_entries: Vec<LogEntry> = Vec::new();
     let mut current_tx_id = None;
@@ -38,7 +31,6 @@ pub fn recover_to(
         if let Some(s) = to_seq && count >= s {
             return ControlFlow::Break(());
         }
-
         match entry.cmd.as_str() {
             "TX_BEGIN" => {
                 current_tx_id = Some(entry.key.clone());
@@ -50,7 +42,6 @@ pub fn recover_to(
                         crate::engine::storage::apply_entry(
                             &e,
                             &state,
-                            &indexes,
                             #[cfg(feature = "schema")] &schemas,
                         );
                     }
@@ -64,18 +55,16 @@ pub fn recover_to(
                     crate::engine::storage::apply_entry(
                         &entry,
                         &state,
-                        &indexes,
                         #[cfg(feature = "schema")] &schemas,
                     );
                 }
             }
         }
-
         count += 1;
         ControlFlow::Continue(())
     })?;
 
-    // Convert the recovered state into LogEntries (same as compact logic).
+    // Convert the recovered state into LogEntries.
     let mut entries = Vec::new();
     for col_ref in state.iter() {
         let col_name = col_ref.key();
@@ -88,7 +77,6 @@ pub fn recover_to(
             ));
         }
     }
-
     #[cfg(feature = "schema")]
     for schema_ref in schemas.iter() {
         let col_name = schema_ref.key();
@@ -100,18 +88,5 @@ pub fn recover_to(
             schema_json.clone(),
         ));
     }
-
-    for index_ref in indexes.iter() {
-        let parts: Vec<&str> = index_ref.key().split(':').collect();
-        if parts.len() == 2 {
-            entries.push(LogEntry::new(
-                "INDEX".to_string(),
-                parts[0].to_string(),
-                parts[1].to_string(),
-                serde_json::json!(null),
-            ));
-        }
-    }
-
     Ok(entries)
 }

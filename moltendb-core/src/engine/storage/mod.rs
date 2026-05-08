@@ -59,7 +59,7 @@ use std::ops::ControlFlow;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
 // multiple threads simultaneously without a global lock.
 // DashSet is the set equivalent.
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 // serde_json::Value is a dynamically-typed JSON value (can be object, array,
 // string, number, bool, or null). All document data is stored as Value.
 
@@ -179,16 +179,14 @@ pub trait StorageBackend: Send + Sync {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Drive startup by streaming all log entries from storage into the in-memory
-/// state and index maps. Uses snapshot + delta replay when available.
+/// state map. Uses snapshot + delta replay when available.
 ///
-/// `state`   — the main data store: collection name → (key → document state)
-/// `indexes` — the index store: "collection:field" → (field value → set of keys)
+/// `state` — the main data store: collection name → (key → document state)
 ///
 /// Returns the total number of log entries processed.
 pub fn stream_into_state(
     storage: &dyn StorageBackend,
     state: &DashMap<String, DashMap<String, Value>>,
-    indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
@@ -204,7 +202,7 @@ pub fn stream_into_state(
             "TX_COMMIT" => {
                 if active_tx.as_ref() == Some(&entry.key) {
                     for e in tx_buffer.drain(..) {
-                        apply_entry(&e, state, indexes, #[cfg(feature = "schema")] schemas);
+                        apply_entry(&e, state, #[cfg(feature = "schema")] schemas);
                     }
                     active_tx = None;
                 } else {
@@ -215,7 +213,7 @@ pub fn stream_into_state(
                 if active_tx.is_some() {
                     tx_buffer.push(entry);
                 } else {
-                    apply_entry(&entry, state, indexes, #[cfg(feature = "schema")] schemas);
+                    apply_entry(&entry, state, #[cfg(feature = "schema")] schemas);
                 }
             }
         }
@@ -228,11 +226,10 @@ pub fn stream_into_state(
     Ok(count)
 }
 
-/// Apply a single log entry to the in-memory state and indexes.
+/// Apply a single log entry to the in-memory state.
 pub fn apply_entry(
     entry: &LogEntry,
     state: &DashMap<String, DashMap<String, Value>>,
-    indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) {
     match entry.cmd.as_str() {
@@ -241,37 +238,17 @@ pub fn apply_entry(
                 .entry(entry.collection.clone())
                 .or_default();
             col.insert(entry.key.clone(), entry.value.clone());
-            crate::engine::indexing::index_doc(indexes, &entry.collection, &entry.key, &entry.value);
         }
         "DELETE" => {
             if let Some(col) = state.get(&entry.collection) {
-                if let Some(old_val) = col.get(&entry.key) {
-                    crate::engine::indexing::unindex_doc(
-                        indexes,
-                        &entry.collection,
-                        &entry.key,
-                        old_val.value(),
-                    );
-                }
                 col.remove(&entry.key);
             }
         }
         "DROP" => {
-            // Remove the entire collection from the state map.
             state.remove(&entry.collection);
-            // Remove all indexes that belong to this collection.
-            // retain() keeps only entries where the closure returns true.
-            // We drop any index whose key starts with "collection:" (e.g. "users:role").
-            indexes.retain(|k, _| !k.starts_with(&format!("{}:", entry.collection)));
         }
         "INDEX" => {
-            // Register an empty index slot for "collection:field".
-            // The index will be populated as subsequent INSERT entries are applied.
-            // `entry.key` holds the field name (e.g. "role" for "users:role").
-            indexes.insert(
-                format!("{}:{}", entry.collection, entry.key),
-                DashMap::new(),
-            );
+            // Legacy INDEX entries are silently ignored — indexing has been removed.
         }
         #[cfg(feature = "schema")]
         "SCHEMA" => {
@@ -293,50 +270,3 @@ pub fn apply_entry(
 // already been loaded into memory (e.g. after decryption by EncryptedStorage).
 // It applies the same logic as apply_entry() but iterates a pre-built slice.
 
-// pub fn replay_log_entries(
-//     entries: &[LogEntry],
-//     state: &DashMap<String, DashMap<String, Value>>,
-//     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-// ) {
-//     for entry in entries {
-//         match entry.cmd.as_str() {
-//             "INSERT" => {
-//                 // Get or create the collection, then insert the document.
-//                 let col = state
-//                     .entry(entry.collection.clone())
-//                     .or_insert_with(DashMap::new);
-//                 col.insert(entry.key.clone(), entry.value.clone());
-//                 // Keep indexes in sync with the inserted document.
-//                 crate::engine::indexing::index_doc(indexes, &entry.collection, &entry.key, &entry.value);
-//             }
-//             "DELETE" => {
-//                 if let Some(col) = state.get(&entry.collection) {
-//                     // Remove from indexes before removing from state.
-//                     if let Some(old_val) = col.get(&entry.key) {
-//                         crate::engine::indexing::unindex_doc(
-//                             indexes,
-//                             &entry.collection,
-//                             &entry.key,
-//                             old_val.value(),
-//                         );
-//                     }
-//                     col.remove(&entry.key);
-//                 }
-//             }
-//             "DROP" => {
-//                 // Remove the collection and all its associated indexes.
-//                 state.remove(&entry.collection);
-//                 indexes.retain(|k, _| !k.starts_with(&format!("{}:", entry.collection)));
-//             }
-//             "INDEX" => {
-//                 // Register an empty index slot.
-//                 indexes.insert(
-//                     format!("{}:{}", entry.collection, entry.key),
-//                     DashMap::new(),
-//                 );
-//             }
-//             _ => {}
-//         }
-//     }
-//     println!("✅ Database restored & Indexes rebuilt!");
-// }

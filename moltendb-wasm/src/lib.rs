@@ -100,7 +100,6 @@ impl WorkerDb {
     /// # Arguments
     /// * `db_name` — The name of the OPFS file to open (e.g. "click_analytics_db").
     ///   Each unique name is a separate database file in the browser's OPFS storage.
-    /// * `hot_threshold` — Optional maximum documents per collection to keep in RAM (default: 50,000).
     /// * `encryption_key` — Optional password for at-rest encryption.
     /// * `write_mode` — Optional write mode: "async" (default) or "sync".
     /// * `max_body_size` — Optional maximum request body size in bytes (default: 10MB).
@@ -111,7 +110,6 @@ impl WorkerDb {
     #[wasm_bindgen]
     pub async fn create(
         db_name: &str,
-        hot_threshold: Option<usize>,
         encryption_key: Option<String>,
         write_mode: Option<String>,
         max_body_size: Option<usize>,
@@ -123,7 +121,6 @@ impl WorkerDb {
         // `set_once` ensures it's only installed once even if new() is called multiple times.
         console_error_panic_hook::set_once();
 
-        let threshold = hot_threshold.unwrap_or(50000);
         let sync_mode = write_mode.map(|m| m == "sync").unwrap_or(false);
         let body_size = max_body_size.unwrap_or(10 * 1024 * 1024);
         let keys_limit = max_keys_per_request.unwrap_or(1000);
@@ -135,7 +132,6 @@ impl WorkerDb {
         let db_config = moltendb_core::engine::DbConfig {
             path: db_name.to_string(),
             sync_mode,
-            hot_threshold: threshold,
             max_body_size: body_size,
             max_keys_per_request: keys_limit,
             encryption_key: master_key,

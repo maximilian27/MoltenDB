@@ -18,7 +18,6 @@ fn open_db() -> engine::Db {
         path: path.clone(),
         sync_mode: true,
         tiered_mode: false,
-        hot_threshold: 50000,
         rate_limit_requests: 100,
         rate_limit_window: 60,
         max_body_size: 10485760,

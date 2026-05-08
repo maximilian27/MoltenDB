@@ -2,10 +2,10 @@
 // Delete operations: delete, delete_collection.
 // ─────────────────────────────────────────────────────────────────────────────
 
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use super::super::{indexing, StorageBackend};
+use super::super::StorageBackend;
 use super::super::types::{DbError, LogEntry};
 
 /// Delete one or more documents from a collection in a single call.
@@ -15,7 +15,6 @@ use super::super::types::{DbError, LogEntry};
 /// doesn't exist, this is a no-op. Pass a single key to delete one document.
 pub fn delete(
     state: &DashMap<String, DashMap<String, Value>>,
-    indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
     collection: &str,
@@ -32,10 +31,6 @@ pub fn delete(
 
     if let Some(col) = state.get(collection) {
         for key in keys {
-            if let Some(val) = col.get(&key) {
-                indexing::unindex_doc(indexes, collection, &key, val.value());
-            }
-
             // Remove the document from the in-memory collection.
             col.remove(&key);
 
@@ -82,7 +77,6 @@ pub fn delete(
 ///   - The DROP entry in the log ensures the collection stays gone on restart.
 pub fn delete_collection(
     state: &DashMap<String, DashMap<String, Value>>,
-    indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
     collection: &str,
@@ -98,10 +92,7 @@ pub fn delete_collection(
 
     // Step 1: Remove from memory.
     state.remove(collection);
-    // Step 2: Remove all indexes for this collection.
-    indexes.retain(|k, _| !k.starts_with(&format!("{}:", collection)));
-
-    // Step 3: Persist the DROP command.
+    // Step 2: Persist the DROP command.
     let entry = LogEntry::new(
         "DROP".to_string(),
         collection.to_string(),

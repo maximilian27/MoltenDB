@@ -1,7 +1,3 @@
-// ─── operations/compact.rs ────────────────────────────────────────────────────
-// Compacts the log file — rewrites it to contain only the current live state.
-// ─────────────────────────────────────────────────────────────────────────────
-
 use dashmap::DashMap;
 use tracing::info;
 use crate::engine::types::{DbError, LogEntry};
@@ -11,7 +7,6 @@ pub fn compact(
     state: &DashMap<String, DashMap<String, serde_json::Value>>,
     #[cfg(feature = "schema")]
     schemas: &DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
-    indexes: &DashMap<String, DashMap<String, dashmap::DashSet<String>>>,
     storage: &dyn StorageBackend,
     post_backup_script: Option<String>,
 ) -> Result<Vec<LogEntry>, DbError> {
@@ -44,19 +39,6 @@ pub fn compact(
             "".to_string(),
             schema_json.clone(),
         ));
-    }
-
-    // One INDEX entry per registered index.
-    for index_ref in indexes.iter() {
-        let parts: Vec<&str> = index_ref.key().split(':').collect();
-        if parts.len() == 2 {
-            entries.push(LogEntry::new(
-                "INDEX".to_string(),
-                parts[0].to_string(),
-                parts[1].to_string(),
-                serde_json::json!(null),
-            ));
-        }
     }
 
     // Delegate the actual file rewrite (and snapshot write) to the storage backend.

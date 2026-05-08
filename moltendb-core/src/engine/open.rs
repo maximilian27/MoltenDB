@@ -8,7 +8,7 @@ use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::AtomicBool;
 #[cfg(not(target_arch = "wasm32"))]
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::broadcast;
 
@@ -47,8 +47,6 @@ impl Db {
         // Create the broadcast channel with a buffer of 100 messages.
         // If the buffer fills up (no subscribers reading), old messages are dropped.
         let (tx, _rx) = broadcast::channel(1000);
-        let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
-            Arc::new(Default::default());
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
@@ -102,11 +100,9 @@ impl Db {
         };
 
         // Replay the log (or snapshot + delta) into the in-memory state.
-        // After this call, `state` and `indexes` reflect the persisted data.
         storage::stream_into_state(
             &*storage,
             &state,
-            &indexes,
             #[cfg(feature = "schema")] &schemas,
         )?;
 
@@ -114,7 +110,6 @@ impl Db {
             state,
             storage,
             tx,
-            indexes,
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
