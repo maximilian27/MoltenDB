@@ -142,32 +142,61 @@ impl Drop for OpfsStorage {
     }
 }
 
+impl OpfsStorage {
+    /// Truncate the OPFS file to 0 bytes and close the sync access handle.
+    ///
+    /// Called when the user wants to wipe all persisted data. After this call
+    /// the handle is closed and this storage instance must not be used again.
+    /// The JS side can then call `navigator.storage.getDirectory()` +
+    /// `removeEntry()` to delete the OPFS directory, or simply reload the page
+    /// so a fresh handle is opened on the now-empty file.
+    fn truncate_and_close(&self) -> Result<(), DbError> {
+        let handle = self.handle.lock().expect("db handle mutex poisoned");
+        // Erase all content.
+        handle.truncate_with_f64(0.0).map_err(|_| DbError::WriteError)?;
+        handle.flush().map_err(|_| DbError::WriteError)?;
+        // Release the exclusive lock so the JS side can removeEntry().
+        handle.close();
+        Ok(())
+    }
+}
+
 /// Implement the StorageBackend trait for OPFS-based storage.
 impl StorageBackend for OpfsStorage {
     fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
-        let handle = self.handle.lock().expect("db handle mutex poisoned");
+        // Read all file data while holding the mutex, then release the lock
+        // before invoking the callback. This prevents a recursive mutex deadlock
+        // on WASM's single-threaded no-threads mutex: the callback (apply_entry)
+        // may call storage.read_at() for Cold documents, which also tries to
+        // acquire the same mutex — causing a panic if we still hold it here.
+        let data = {
+            let handle = self.handle.lock().expect("db handle mutex poisoned");
 
-        // Get the file size to know how many bytes to read.
-        let size = handle.get_size().map_err(|_| DbError::WriteError)? as usize;
+            // Get the file size to know how many bytes to read.
+            let size = handle.get_size().map_err(|_| DbError::WriteError)? as usize;
 
-        // If the file is empty (first run), return 0 immediately.
-        if size == 0 { return Ok(0); }
+            // If the file is empty (first run), return early before allocating.
+            if size == 0 { return Ok(0); }
 
-        // Allocate a buffer exactly the size of the file.
-        let mut buf = vec![0u8; size];
+            // Allocate a buffer exactly the size of the file.
+            let mut buf = vec![0u8; size];
 
-        // Set the read position to the beginning of the file.
-        let opts = web_sys::FileSystemReadWriteOptions::new();
-        opts.set_at(0.0);
+            // Set the read position to the beginning of the file.
+            let opts = web_sys::FileSystemReadWriteOptions::new();
+            opts.set_at(0.0);
 
-        // Read the entire file into the buffer in one call.
-        handle
-            .read_with_u8_array_and_options(&mut buf, &opts)
-            .map_err(|_| DbError::WriteError)?;
+            // Read the entire file into the buffer in one call.
+            handle
+                .read_with_u8_array_and_options(&mut buf, &opts)
+                .map_err(|_| DbError::WriteError)?;
+
+            buf
+            // Mutex guard is dropped here — lock released before calling f().
+        };
 
         // Convert bytes to a string. from_utf8_lossy replaces invalid UTF-8
         // sequences with the replacement character instead of returning an error.
-        let data_str = String::from_utf8_lossy(&buf);
+        let data_str = String::from_utf8_lossy(&data);
 
         let mut count = 0u64;
         for line in data_str.lines() {
@@ -266,6 +295,13 @@ impl StorageBackend for OpfsStorage {
         Ok(data_str.lines()
             .filter_map(|line| serde_json::from_str::<LogEntry>(line).ok())
             .collect())
+    }
+
+    /// Truncate the OPFS file to 0 bytes and close the sync handle.
+    /// Delegates to `truncate_and_close()` so the JS side can then call
+    /// `removeEntry()` on the OPFS directory without hitting a "file locked" error.
+    fn clear_opfs(&self) -> Result<(), DbError> {
+        self.truncate_and_close()
     }
 
     /// Return the current size of the OPFS file in bytes.

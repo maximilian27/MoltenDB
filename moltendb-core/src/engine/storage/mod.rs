@@ -128,6 +128,16 @@ pub trait StorageBackend: Send + Sync {
         Ok(0)
     }
 
+    /// Truncate the persistent store to 0 bytes and release any exclusive file
+    /// handles so the caller can delete the underlying file/directory.
+    ///
+    /// Only meaningful for OPFS-backed storage — all other backends return Ok(())
+    /// without doing anything. After this call the storage instance must not be
+    /// used for further reads or writes.
+    fn clear_opfs(&self) -> Result<(), DbError> {
+        Ok(())
+    }
+
     /// Stream log entries into state one at a time, without loading the full
     /// log into RAM. Implementations may load a binary snapshot first and only
     /// replay the delta lines written after the snapshot.

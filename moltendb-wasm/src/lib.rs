@@ -218,6 +218,9 @@ impl WorkerDb {
             "get_size" => self.handle_get_size(),
             // Wipe all in-memory state (used when a browser tab unloads in inMemory mode).
             "clear"    => self.handle_clear(),
+            // Truncate and close the OPFS file so the JS side can removeEntry().
+            // Works from any tab — followers route this through the leader automatically.
+            "clear_opfs" => self.handle_clear_opfs(),
             // Unknown action — return an error instead of panicking.
             _ => Err(JsValue::from_str(&format!("Unknown action: {}", action))),
         }?;
@@ -248,6 +251,21 @@ impl WorkerDb {
     fn handle_clear(&self) -> Result<JsValue, JsValue> {
         self.db.clear_all();
         Ok(serde_wasm_bindgen::to_value(&json!({"status": "cleared"}))?)
+    }
+
+    /// Truncate the OPFS file to 0 bytes and close the sync handle.
+    ///
+    /// After this returns, the JS side can call:
+    ///   `await navigator.storage.getDirectory().then(r => r.removeEntry(dbName, { recursive: true }))`
+    /// without hitting a "file is locked" error, because the handle is now closed.
+    fn handle_clear_opfs(&self) -> Result<JsValue, JsValue> {
+        self.db.storage
+            .clear_opfs()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        // Also wipe the in-memory state so the leader tab can't serve stale
+        // data after the OPFS file has been truncated.
+        self.db.clear_all();
+        Ok(serde_wasm_bindgen::to_value(&json!({"status": "opfs_cleared"}))?)
     }
 
     /// Compact the OPFS log file.

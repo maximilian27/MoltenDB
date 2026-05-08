@@ -20,8 +20,8 @@ fn env(key: &str, default: &str) -> String {
 
 fn main() {
     let base_url = env("MOLTENDB_URL", "https://localhost:1538");
-    let user = env("MOLTENDB_USER", "admin");
-    let pass = env("MOLTENDB_PASS", "admin123");
+    let user = env("MOLTENDB_ROOT_USER", "admin");
+    let pass = env("MOLTENDB_ROOT_PASSWORD", "admin123");
 
     // Build a client that accepts self-signed TLS certs (dev server).
     let client = reqwest::blocking::Client::builder()
