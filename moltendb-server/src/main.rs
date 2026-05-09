@@ -252,7 +252,8 @@ async fn main() {
                         recovered_storage.write_entry(entry).expect("Failed to write entry to recovery log");
                     }
                     // Now compact it to produce the snapshot
-                    recovered_storage.compact(entries).expect("Failed to compact recovery log");
+                    let count = entries.len() as u64;
+                    recovered_storage.compact(count, &mut entries.into_iter()).expect("Failed to compact recovery log");
                 }
                 
                 // The snapshot is now at temp_log.snapshot.bin

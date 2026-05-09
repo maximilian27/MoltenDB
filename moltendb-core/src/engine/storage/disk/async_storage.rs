@@ -13,7 +13,9 @@
 
 use super::super::StorageBackend;
 use super::log::{write_compacted_log_no_tx, stream_log_entries, read_log_from_disk};
-use super::snapshot::{write_snapshot, load_snapshot, snapshot_path};
+use super::snapshot::{write_snapshot, write_snapshot_from_maps, load_snapshot, snapshot_path};
+use dashmap::DashMap;
+use serde_json::Value;
 use crate::engine::types::{DbError, LogEntry};
 use std::fs::OpenOptions;
 use std::ops::ControlFlow;
@@ -185,6 +187,51 @@ impl Drop for AsyncDiskStorage {
     }
 }
 
+impl AsyncDiskStorage {
+    fn run_backup_hook(&self, script_path: String) {
+        let snapshot_path = snapshot_path(&self.path);
+        let abs_snapshot_path = match std::fs::canonicalize(&snapshot_path) {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(_) => snapshot_path,
+        };
+        tokio::spawn(async move {
+            let res = if cfg!(target_os = "windows") {
+                tokio::process::Command::new("powershell")
+                    .arg("-ExecutionPolicy").arg("Bypass").arg("-Command")
+                    .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
+                    .output().await
+            } else {
+                tokio::process::Command::new("sh")
+                    .arg(script_path).arg(abs_snapshot_path)
+                    .output().await
+            };
+            match res {
+                Ok(output) if !output.status.success() => {
+                    tracing::error!("❌ Post-backup hook failed: {}", String::from_utf8_lossy(&output.stderr));
+                }
+                Ok(_) => tracing::info!("✅ Post-backup hook executed successfully"),
+                Err(e) => tracing::error!("❌ Failed to spawn post-backup hook: {}", e),
+            }
+        });
+    }
+
+    fn swap_log(&self) -> Result<(), DbError> {
+        let temp_path = format!("{}.tmp", self.path);
+        write_compacted_log_no_tx(&temp_path, &[])?;
+        if let Some(ref sender) = self.sender {
+            let done = Arc::new((Mutex::new(false), Condvar::new()));
+            sender.send(WriterMsg::Compact { temp_path, done: Arc::clone(&done) })
+                .map_err(|_| DbError::WriteError)?;
+            tokio::task::block_in_place(|| {
+                let (lock, cvar) = &*done;
+                let mut finished = lock.lock().unwrap();
+                while !*finished { finished = cvar.wait(finished).unwrap(); }
+            });
+        }
+        Ok(())
+    }
+}
+
 impl StorageBackend for AsyncDiskStorage {
     /// Serialize `entry` to MessagePack and send it to the background writer.
     /// This call returns immediately — it never blocks waiting for disk I/O.
@@ -208,93 +255,39 @@ impl StorageBackend for AsyncDiskStorage {
 
     /// Compact the log: write a binary snapshot, rewrite the log to be empty,
     /// then signal the background task to swap the file.
-    fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
-        self.compact_with_hook(entries, None)
+    fn compact(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>) -> Result<(), DbError> {
+        self.compact_with_hook(count, entries, None)
+    }
+
+    /// Override: write snapshot directly from DashMaps — no LogEntry allocation, no Value cloning.
+    #[cfg(not(feature = "schema"))]
+    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, hook: Option<String>) -> Result<(), DbError> {
+        if let Err(e) = write_snapshot_from_maps(&self.path, state, 0) {
+            tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
+        } else if let Some(script_path) = hook {
+            self.run_backup_hook(script_path);
+        }
+        self.swap_log()
+    }
+
+    #[cfg(feature = "schema")]
+    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>, hook: Option<String>) -> Result<(), DbError> {
+        if let Err(e) = write_snapshot_from_maps(&self.path, state, schemas, 0) {
+            tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
+        } else if let Some(script_path) = hook {
+            self.run_backup_hook(script_path);
+        }
+        self.swap_log()
     }
 
     /// Internal compact implementation that can take a post-backup script.
-    fn compact_with_hook(&self, entries: Vec<LogEntry>, hook: Option<String>) -> Result<(), DbError> {
-        // Step 1: Write a binary snapshot.
-        // The log is reset to empty after compaction, so seq=0: all log lines
-        // written after this snapshot must be replayed from the start.
-        // This is safe because we synchronously wait for the file swap below
-        // before returning, eliminating the race window where stream_log_into
-        // could read the old (pre-truncation) log and double-apply its entries.
-        let seq = 0u64;
-        if let Err(e) = write_snapshot(&self.path, entries.len() as u64, entries.iter(), seq) {
+    fn compact_with_hook(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>, hook: Option<String>) -> Result<(), DbError> {
+        if let Err(e) = write_snapshot(&self.path, count, entries, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         } else if let Some(script_path) = hook {
-            // If snapshot was successful and we have a hook, execute it.
-            let snapshot_path = snapshot_path(&self.path);
-            let abs_snapshot_path = match std::fs::canonicalize(&snapshot_path) {
-                Ok(p) => p.to_string_lossy().to_string(),
-                Err(_) => snapshot_path,
-            };
-
-            // Execute in background
-            tokio::spawn(async move {
-                let res = if cfg!(target_os = "windows") {
-                    tokio::process::Command::new("powershell")
-                        .arg("-ExecutionPolicy")
-                        .arg("Bypass")
-                        .arg("-Command")
-                        .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
-                        .output()
-                        .await
-                } else {
-                    tokio::process::Command::new("sh")
-                        .arg(script_path)
-                        .arg(abs_snapshot_path)
-                        .output()
-                        .await
-                };
-
-                match res {
-                    Ok(output) => {
-                        if !output.status.success() {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            tracing::error!("❌ Post-backup hook failed: {}", stderr);
-                        } else {
-                            tracing::info!("✅ Post-backup hook executed successfully");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Failed to spawn post-backup hook: {}", e);
-                    }
-                }
-            });
+            self.run_backup_hook(script_path);
         }
-
-        // Step 2: Write an empty compacted log to a temp file.
-        // Since the snapshot now contains the full state, we can start the log fresh.
-        let temp_path = format!("{}.tmp", self.path);
-        write_compacted_log_no_tx(&temp_path, &[])?;
-
-        // Step 3: Send the Compact message to the background task and wait for
-        // it to confirm the file swap is done. This makes compaction synchronous:
-        // by the time compact_with_hook returns, the old log is gone and any
-        // subsequent stream_log_into call will see the fresh empty log.
-        if let Some(ref sender) = self.sender {
-            let done = Arc::new((Mutex::new(false), Condvar::new()));
-            sender
-                .send(WriterMsg::Compact {
-                    temp_path,
-                    done: Arc::clone(&done),
-                })
-                .map_err(|_| DbError::WriteError)?;
-
-            // Block until the background task signals completion.
-            // Use block_in_place so we don't starve the Tokio thread pool
-            // while waiting for the background writer to finish the swap.
-            tokio::task::block_in_place(|| {
-                let (lock, cvar) = &*done;
-                let mut finished = lock.lock().unwrap();
-                while !*finished {
-                    finished = cvar.wait(finished).unwrap();
-                }
-            });
-        }
-        Ok(())
+        self.swap_log()
     }
 
     /// Read exactly `length` bytes from the log at `offset`.

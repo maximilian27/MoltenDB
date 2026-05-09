@@ -36,7 +36,7 @@ impl StorageBackend for InMemoryStorage {
     }
 
     /// No-op — there is no log file to compact.
-    fn compact(&self, _entries: Vec<LogEntry>) -> Result<(), DbError> {
+    fn compact(&self, _count: u64, _entries: &mut dyn Iterator<Item = LogEntry>) -> Result<(), DbError> {
         Ok(())
     }
 

@@ -17,6 +17,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use crate::engine::types::{DbError, LogEntry};
+use dashmap::DashMap;
+use serde_json::Value;
 use std::fs::{File, OpenOptions};
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -32,7 +34,87 @@ pub fn snapshot_path(log_path: &str) -> String {
     format!("{}.snapshot.bin", log_path)
 }
 
-pub fn write_snapshot<'a>(log_path: &str, count: u64, entries: impl Iterator<Item = &'a LogEntry>, seq: u64) -> Result<(), DbError> {
+/// Write a snapshot directly from the in-memory DashMaps without building an
+/// intermediate `Vec<LogEntry>`. Each document is serialized and written to the
+/// gzip stream immediately — peak RAM stays at ~1x (just the DashMap).
+#[cfg(not(feature = "schema"))]
+pub fn write_snapshot_from_maps(
+    log_path: &str,
+    state: &DashMap<String, DashMap<String, Value>>,
+    seq: u64,
+) -> Result<(), DbError> {
+    let count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
+    let path = snapshot_path(log_path);
+    let tmp = format!("{}.tmp", path);
+    let mut gz = open_snapshot_gz(&tmp, count, seq)?;
+    for col_ref in state.iter() {
+        let col_name = col_ref.key().clone();
+        for item_ref in col_ref.value().iter() {
+            write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), item_ref.value())?;
+        }
+    }
+    finish_snapshot_gz(gz, &tmp, &path)
+}
+
+#[cfg(feature = "schema")]
+pub fn write_snapshot_from_maps(
+    log_path: &str,
+    state: &DashMap<String, DashMap<String, Value>>,
+    schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    seq: u64,
+) -> Result<(), DbError> {
+    let doc_count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
+    let count = doc_count + schemas.len() as u64;
+    let path = snapshot_path(log_path);
+    let tmp = format!("{}.tmp", path);
+    let mut gz = open_snapshot_gz(&tmp, count, seq)?;
+    for col_ref in state.iter() {
+        let col_name = col_ref.key().clone();
+        for item_ref in col_ref.value().iter() {
+            write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), item_ref.value())?;
+        }
+    }
+    for schema_ref in schemas.iter() {
+        let (schema_json, _) = &**schema_ref.value();
+        write_entry_to_gz(&mut gz, "SCHEMA", schema_ref.key(), "", schema_json)?;
+    }
+    finish_snapshot_gz(gz, &tmp, &path)
+}
+
+fn open_snapshot_gz(tmp: &str, count: u64, seq: u64) -> Result<GzEncoder<BufWriter<File>>, DbError> {
+    let file = OpenOptions::new().create(true).write(true).truncate(true).open(tmp)?;
+    let mut raw = BufWriter::new(file);
+    raw.write_all(b"MOLTSNG3")?;
+    raw.write_all(&seq.to_le_bytes())?;
+    raw.write_all(&count.to_le_bytes())?;
+    raw.flush()?;
+    let file_inner = raw.into_inner().map_err(|_| DbError::WriteError)?;
+    Ok(GzEncoder::new(BufWriter::new(file_inner), Compression::default()))
+}
+
+fn write_entry_to_gz(gz: &mut GzEncoder<BufWriter<File>>, cmd: &str, collection: &str, key: &str, value: &Value) -> Result<(), DbError> {
+    let entry = LogEntry { cmd: cmd.to_string(), collection: collection.to_string(), key: key.to_string(), value: value.clone(), _t: 0 };
+    let encoded = rmp_serde::to_vec(&entry).map_err(|_| DbError::WriteError)?;
+    gz.write_all(&(encoded.len() as u32).to_le_bytes())?;
+    gz.write_all(&encoded)?;
+    Ok(())
+}
+
+fn finish_snapshot_gz(gz: GzEncoder<BufWriter<File>>, tmp: &str, path: &str) -> Result<(), DbError> {
+    gz.finish().map_err(|_| DbError::WriteError)?;
+    if Path::new(path).exists() {
+        let log_dir = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
+        let backup_dir = log_dir.join("backup");
+        std::fs::create_dir_all(&backup_dir)?;
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let filename = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("snapshot.bin");
+        let _ = std::fs::rename(path, backup_dir.join(format!("{}.{}.bak", filename, now)));
+    }
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+pub fn write_snapshot(log_path: &str, count: u64, entries: &mut dyn Iterator<Item = LogEntry>, seq: u64) -> Result<(), DbError> {
     let path = snapshot_path(log_path);
     // Write to a temp file first so the swap is atomic.
     let tmp = format!("{}.tmp", path);
@@ -62,7 +144,7 @@ pub fn write_snapshot<'a>(log_path: &str, count: u64, entries: impl Iterator<Ite
 
     // Each entry is length-prefixed so the reader knows how many bytes to read.
     for entry in entries {
-        let encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let encoded = rmp_serde::to_vec(&entry).map_err(|_| DbError::WriteError)?;
         let len = encoded.len() as u32;
         gz.write_all(&len.to_le_bytes())?;
         gz.write_all(&encoded)?;

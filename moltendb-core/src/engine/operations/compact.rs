@@ -1,6 +1,6 @@
 use dashmap::DashMap;
 use tracing::info;
-use crate::engine::types::{DbError, LogEntry};
+use crate::engine::types::DbError;
 use crate::engine::storage::StorageBackend;
 
 pub fn compact(
@@ -12,37 +12,11 @@ pub fn compact(
 ) -> Result<(), DbError> {
     info!("🔨 Starting Log Compaction...");
 
-    let mut entries = Vec::new();
+    #[cfg(not(feature = "schema"))]
+    storage.compact_from_maps(state, post_backup_script)?;
 
-    // One INSERT per live document across all collections.
-    for col_ref in state.iter() {
-        let col_name = col_ref.key();
-        for item_ref in col_ref.value().iter() {
-            let entry = LogEntry::new(
-                "INSERT".to_string(),
-                col_name.clone(),
-                item_ref.key().clone(),
-                item_ref.value().clone(),
-            );
-            entries.push(entry);
-        }
-    }
-
-    // One SCHEMA entry per collection.
     #[cfg(feature = "schema")]
-    for schema_ref in schemas.iter() {
-        let col_name = schema_ref.key();
-        let (schema_json, _) = &**schema_ref.value();
-        entries.push(LogEntry::new(
-            "SCHEMA".to_string(),
-            col_name.clone(),
-            "".to_string(),
-            schema_json.clone(),
-        ));
-    }
-
-    // Delegate the actual file rewrite (and snapshot write) to the storage backend.
-    storage.compact_with_hook(entries, post_backup_script)?;
+    storage.compact_from_maps(state, schemas, post_backup_script)?;
 
     info!("✅ Log Compaction Finished!");
     Ok(())

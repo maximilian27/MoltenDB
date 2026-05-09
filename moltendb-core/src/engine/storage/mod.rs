@@ -91,14 +91,57 @@ pub trait StorageBackend: Send + Sync {
     /// `entries` is the complete current state of the database — every live
     /// document as a single INSERT entry. The implementation should atomically
     /// replace the existing log with this minimal set.
-    fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError>;
+    fn compact(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>) -> Result<(), DbError>;
 
     /// Compact the log and execute an optional post-backup shell hook.
     ///
     /// The default implementation calls `compact()` and ignores the hook.
     /// Backends that support shell hooks should override this.
-    fn compact_with_hook(&self, entries: Vec<LogEntry>, _hook: Option<String>) -> Result<(), DbError> {
-        self.compact(entries)
+    fn compact_with_hook(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>, _hook: Option<String>) -> Result<(), DbError> {
+        self.compact(count, entries)
+    }
+
+    /// Compact directly from the in-memory DashMaps, bypassing `LogEntry` allocation.
+    /// Disk backends override this to call `write_snapshot_from_maps` which serializes
+    /// each document inline — peak RAM stays at ~1x instead of ~2x.
+    /// The default falls back to the iterator path (used by memory/encrypted/wasm backends).
+    #[cfg(not(feature = "schema"))]
+    fn compact_from_maps(
+        &self,
+        state: &DashMap<String, DashMap<String, Value>>,
+        hook: Option<String>,
+    ) -> Result<(), DbError> {
+        let count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
+        let mut iter = state.iter().flat_map(|col_ref| {
+            let col_name = col_ref.key().clone();
+            col_ref.value().iter().map(move |item_ref| {
+                LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), item_ref.value().clone())
+            }).collect::<Vec<_>>()
+        });
+        self.compact_with_hook(count, &mut iter, hook)
+    }
+
+    #[cfg(feature = "schema")]
+    fn compact_from_maps(
+        &self,
+        state: &DashMap<String, DashMap<String, Value>>,
+        schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+        hook: Option<String>,
+    ) -> Result<(), DbError> {
+        let doc_count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
+        let count = doc_count + schemas.len() as u64;
+        let doc_iter = state.iter().flat_map(|col_ref| {
+            let col_name = col_ref.key().clone();
+            col_ref.value().iter().map(move |item_ref| {
+                LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), item_ref.value().clone())
+            }).collect::<Vec<_>>()
+        });
+        let schema_iter = schemas.iter().map(|schema_ref| {
+            let (schema_json, _) = &**schema_ref.value();
+            LogEntry::new("SCHEMA".to_string(), schema_ref.key().clone(), "".to_string(), schema_json.clone())
+        }).collect::<Vec<_>>().into_iter();
+        let mut iter = doc_iter.chain(schema_iter);
+        self.compact_with_hook(count, &mut iter, hook)
     }
 
     /// Read exactly `length` bytes starting at `offset` from the log.

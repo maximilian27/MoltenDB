@@ -132,14 +132,14 @@ impl StorageBackend for EncryptedStorage {
         Ok(count)
     }
 
-    fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
-        self.compact_with_hook(entries, None)
+    fn compact(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>) -> Result<(), DbError> {
+        self.compact_with_hook(count, entries, None)
     }
 
-    fn compact_with_hook(&self, entries: Vec<LogEntry>, hook: Option<String>) -> Result<(), DbError> {
+    fn compact_with_hook(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>, hook: Option<String>) -> Result<(), DbError> {
         let encrypted: Result<Vec<LogEntry>, DbError> =
-            entries.iter().map(|e| self.encrypt_entry(e)).collect();
-        self.inner.compact_with_hook(encrypted?, hook)
+            entries.map(|e| self.encrypt_entry(&e)).collect();
+        self.inner.compact_with_hook(count, &mut encrypted?.into_iter(), hook)
     }
 
     fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
