@@ -8,7 +8,7 @@ use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::AtomicBool;
 #[cfg(not(target_arch = "wasm32"))]
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::broadcast;
 
@@ -26,15 +26,12 @@ impl Db {
     ///
     /// `sync_mode`      — if true, use SyncDiskStorage (flush on every write).
     ///                    if false, use AsyncDiskStorage (flush every 50ms).
-    ///                    Ignored when `tiered_mode` is true.
     /// `encryption_key` — if Some, wrap the storage in EncryptedStorage.
     ///                    if None, data is stored in plaintext (not recommended).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn open(config: DbConfig) -> Result<Self, DbError> {
         let path = &config.path;
         let sync_mode = config.sync_mode;
-        let tiered_mode = config.tiered_mode;
-        let hot_threshold = config.hot_threshold;
         let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
         let rate_limit_window = config.rate_limit_window.unwrap_or(60);
         let max_body_size = config.max_body_size;
@@ -48,8 +45,6 @@ impl Db {
         // Create the broadcast channel with a buffer of 100 messages.
         // If the buffer fills up (no subscribers reading), old messages are dropped.
         let (tx, _rx) = broadcast::channel(1000);
-        let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
-            Arc::new(Default::default());
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
@@ -61,25 +56,12 @@ impl Db {
 
         // Choose the base storage backend based on the configured mode.
         //
-        //   in_memory = true    → InMemoryStorage: all data lives in the DashMap only.
-        //                         No disk I/O at all. Data is lost on exit.
-        //                         Ideal for ephemeral caches and CI environments.
-        //
-        //   tiered_mode = true  → TieredStorage: hot log (async writes) + cold log
-        //                         (mmap reads). Best for large datasets. The cold log
-        //                         accumulates promoted hot data and is paged by the OS.
-        //
-        //   sync_mode = true    → SyncDiskStorage: every write is flushed to disk
-        //                         immediately. Zero data loss, lower throughput.
-        //
-        //   default             → AsyncDiskStorage: writes buffered in memory, flushed
-        //                         every 50ms. Highest throughput, up to 50ms data loss.
-        // For AsyncDiskStorage, capture the io_fault flag before wrapping in Arc.
+        //   in_memory = true → InMemoryStorage: no disk I/O, data lost on exit.
+        //   sync_mode = true → SyncDiskStorage: flush on every write, zero data loss.
+        //   default          → AsyncDiskStorage: flush every 50ms, highest throughput.
         let mut io_fault_arc: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let base_storage: Arc<dyn crate::engine::storage::StorageBackend> = if in_memory {
             Arc::new(storage::InMemoryStorage)
-        } else if tiered_mode {
-            Arc::new(storage::TieredStorage::new(path)?)
         } else if sync_mode {
             Arc::new(storage::SyncDiskStorage::new(path)?)
         } else {
@@ -103,21 +85,16 @@ impl Db {
         };
 
         // Replay the log (or snapshot + delta) into the in-memory state.
-        // After this call, `state` and `indexes` reflect the persisted data.
         storage::stream_into_state(
             &*storage,
             &state,
-            &indexes,
             #[cfg(feature = "schema")] &schemas,
-            hot_threshold,
         )?;
 
         Ok(Self {
             state,
             storage,
             tx,
-            indexes,
-            hot_threshold,
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
@@ -125,7 +102,6 @@ impl Db {
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,
-            tiered_mode,
             io_fault: io_fault_arc,
             #[cfg(not(target_arch = "wasm32"))]
             started_at: std::time::Instant::now(),

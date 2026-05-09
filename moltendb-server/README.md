@@ -85,7 +85,6 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--debug` | `MOLTENDB_DEBUG` | `false` | Enable verbose debug logging |
 | `--disable-encryption` | `MOLTENDB_DISABLE_ENCRYPTION` | `false` | Disable at-rest encryption |
 | `--encryption-key` | `MOLTENDB_ENCRYPTION_KEY` | — | At-rest encryption password (ChaCha20-Poly1305) |
-| `--hot-threshold` | `MOLTENDB_HOT_THRESHOLD` | `50000` | Number of documents per collection kept in RAM before paging out to disk |
 | `--jwt-secret` | `MOLTENDB_JWT_SECRET` | **required** | JWT signing secret — server refuses to start without it |
 | `--key` | `MOLTENDB_TLS_KEY` | `key.pem` | TLS private key PEM file |
 | `--max-body-size` | `MOLTENDB_MAX_BODY_SIZE` | `10485760` | Max request body size in bytes (default 10 MB) |

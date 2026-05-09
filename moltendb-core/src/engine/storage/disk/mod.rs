@@ -27,6 +27,3 @@ pub(super) mod sync_storage;
 pub use async_storage::AsyncDiskStorage;
 pub use sync_storage::SyncDiskStorage;
 
-// Re-export helpers used by tiered.rs for its own compaction + snapshot logic.
-pub use log::write_compacted_log;
-pub use snapshot::write_snapshot;

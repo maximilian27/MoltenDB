@@ -18,7 +18,7 @@ Content-Type: application/json
   "password": "admin123"
 }
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODM0MDA5NCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjUxNTEzNGUxLWJiM2YtNDc4OC1hNmQ1LWNlZDZmNWIyMDEwNiJ9.ewSP-afLCpaEhjSsPf4vrbhErPtNOMU056o-4cVQmF8
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODM2MzgzNiwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjQ2ZjYxY2RiLWRiNjUtNGU4Mi04MWQ4LTY1ZDg1MGU3MmYxYSJ9.FDkPoGfhBzy6WhycZ8EXc4YV-Wvh2CLxmWPhyoa-FOM
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document

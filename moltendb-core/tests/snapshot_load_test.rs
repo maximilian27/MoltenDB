@@ -3,8 +3,8 @@ use serde_json::json;
 use std::fs;
 use std::path::Path;
 
-#[test]
-fn test_snapshot_load_with_empty_log() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_snapshot_load_with_empty_log() {
     let db_path = "test_snapshot_empty_log.log";
     let snapshot_path = "test_snapshot_empty_log.log.snapshot.bin";
     
@@ -18,7 +18,6 @@ fn test_snapshot_load_with_empty_log() {
         let db = engine::Db::open(DbConfig {
             path: db_path.to_string(),
             sync_mode: true,
-            hot_threshold: 1000,
             max_body_size: 1024 * 1024,
             ..Default::default()
         }).unwrap();
@@ -42,7 +41,6 @@ fn test_snapshot_load_with_empty_log() {
         let db = engine::Db::open(DbConfig {
             path: db_path.to_string(),
             sync_mode: true,
-            hot_threshold: 1000,
             max_body_size: 1024 * 1024,
             ..Default::default()
         }).unwrap();
