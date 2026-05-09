@@ -15,6 +15,10 @@ The runnable binary. Delegates all database logic to `moltendb-core`.
 
 </div>
 
+> [!WARNING]
+> **Versions starting with `v1.0.0-rc1` are not backwards compatible with previous versions.**
+> We are actively working on improving performance and stability. Please review the changelog before upgrading.
+
 ---
 
 ## What is this crate?

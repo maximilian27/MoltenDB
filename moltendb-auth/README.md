@@ -15,6 +15,10 @@ No knowledge of HTTP routing, TLS, or the database engine.
 
 </div>
 
+> [!WARNING]
+> **Versions starting with `v1.0.0-rc1` are not backwards compatible with previous versions.**
+> We are actively working on improving performance and stability. Please review the changelog before upgrading.
+
 ---
 
 ## What is this crate?

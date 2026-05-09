@@ -10,6 +10,10 @@ Same query engine. Same append-only log + snapshot storage. Two environments.
 
 **Request only the fields you need — like GraphQL, but over a plain JSON API.**
 
+> [!WARNING]
+> **Versions starting with `v1.0.0-rc1` are not backwards compatible with previous versions.**
+> We are actively working on improving performance and stability. Please review the changelog before upgrading.
+
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen?style=flat-square)](#testing)
