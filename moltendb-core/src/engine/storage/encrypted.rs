@@ -132,16 +132,6 @@ impl StorageBackend for EncryptedStorage {
         Ok(count)
     }
 
-    fn compact(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>) -> Result<(), DbError> {
-        self.compact_with_hook(count, entries, None)
-    }
-
-    fn compact_with_hook(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>, hook: Option<String>) -> Result<(), DbError> {
-        let encrypted: Result<Vec<LogEntry>, DbError> =
-            entries.map(|e| self.encrypt_entry(&e)).collect();
-        self.inner.compact_with_hook(count, &mut encrypted?.into_iter(), hook)
-    }
-
     fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
         let raw_bytes = self.inner.read_at(offset, length)?;
         let enc_entry: LogEntry = serde_json::from_slice(&raw_bytes).map_err(DbError::Serialization)?;

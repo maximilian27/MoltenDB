@@ -35,10 +35,6 @@ impl StorageBackend for InMemoryStorage {
         Ok(Vec::new())
     }
 
-    /// No-op — there is no log file to compact.
-    fn compact(&self, _count: u64, _entries: &mut dyn Iterator<Item = LogEntry>) -> Result<(), DbError> {
-        Ok(())
-    }
 
     /// Cold documents never exist in in-memory mode — every document is Hot.
     /// This should never be called, but returns a clear error if it is.

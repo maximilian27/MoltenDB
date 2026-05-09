@@ -248,12 +248,19 @@ async fn main() {
                 let temp_log = format!("{}.log", out);
                 {
                     let recovered_storage = engine::SyncDiskStorage::new(&temp_log).expect("Failed to create recovery log");
+                    // Rebuild state map from recovered entries for compact_from_maps
+                    let state: dashmap::DashMap<String, dashmap::DashMap<String, serde_json::Value>> = dashmap::DashMap::new();
                     for entry in &entries {
-                        recovered_storage.write_entry(entry).expect("Failed to write entry to recovery log");
+                        if entry.cmd == "INSERT" {
+                            state.entry(entry.collection.clone()).or_default().insert(entry.key.clone(), entry.value.clone());
+                        } else if entry.cmd == "DELETE" {
+                            if let Some(col) = state.get(&entry.collection) {
+                                col.remove(&entry.key);
+                            }
+                        }
                     }
-                    // Now compact it to produce the snapshot
-                    let count = entries.len() as u64;
-                    recovered_storage.compact(count, &mut entries.into_iter()).expect("Failed to compact recovery log");
+                    let schemas = dashmap::DashMap::new();
+                    recovered_storage.compact_from_maps(&state, &schemas, None).expect("Failed to compact recovery log");
                 }
                 
                 // The snapshot is now at temp_log.snapshot.bin

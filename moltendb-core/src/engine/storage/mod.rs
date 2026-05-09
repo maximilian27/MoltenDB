@@ -86,21 +86,6 @@ pub trait StorageBackend: Send + Sync {
     /// full log in RAM.
     fn read_log(&self) -> Result<Vec<LogEntry>, DbError>;
 
-    /// Compact the log by writing only the current state (removing dead entries).
-    ///
-    /// `entries` is the complete current state of the database — every live
-    /// document as a single INSERT entry. The implementation should atomically
-    /// replace the existing log with this minimal set.
-    fn compact(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>) -> Result<(), DbError>;
-
-    /// Compact the log and execute an optional post-backup shell hook.
-    ///
-    /// The default implementation calls `compact()` and ignores the hook.
-    /// Backends that support shell hooks should override this.
-    fn compact_with_hook(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>, _hook: Option<String>) -> Result<(), DbError> {
-        self.compact(count, entries)
-    }
-
     /// Compact directly from the in-memory DashMaps, bypassing `LogEntry` allocation.
     /// Disk backends override this to call `write_snapshot_from_maps` which serializes
     /// each document inline — peak RAM stays at ~1x instead of ~2x.
@@ -111,14 +96,7 @@ pub trait StorageBackend: Send + Sync {
         state: &DashMap<String, DashMap<String, Value>>,
         hook: Option<String>,
     ) -> Result<(), DbError> {
-        let count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
-        let mut iter = state.iter().flat_map(|col_ref| {
-            let col_name = col_ref.key().clone();
-            col_ref.value().iter().map(move |item_ref| {
-                LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), item_ref.value().clone())
-            }).collect::<Vec<_>>()
-        });
-        self.compact_with_hook(count, &mut iter, hook)
+        Ok(())
     }
 
     #[cfg(feature = "schema")]
@@ -140,8 +118,8 @@ pub trait StorageBackend: Send + Sync {
             let (schema_json, _) = &**schema_ref.value();
             LogEntry::new("SCHEMA".to_string(), schema_ref.key().clone(), "".to_string(), schema_json.clone())
         }).collect::<Vec<_>>().into_iter();
-        let mut iter = doc_iter.chain(schema_iter);
-        self.compact_with_hook(count, &mut iter, hook)
+        let _ = (count, doc_iter.chain(schema_iter), hook);
+        Ok(())
     }
 
     /// Read exactly `length` bytes starting at `offset` from the log.

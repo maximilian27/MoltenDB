@@ -13,7 +13,7 @@
 
 use super::super::StorageBackend;
 use super::log::{write_compacted_log_no_tx, stream_log_entries, read_log_from_disk};
-use super::snapshot::{write_snapshot, write_snapshot_from_maps, load_snapshot, snapshot_path};
+use super::snapshot::{write_snapshot_from_maps, load_snapshot, snapshot_path};
 use dashmap::DashMap;
 use serde_json::Value;
 use crate::engine::types::{DbError, LogEntry};
@@ -253,12 +253,6 @@ impl StorageBackend for AsyncDiskStorage {
         read_log_from_disk(&self.path)
     }
 
-    /// Compact the log: write a binary snapshot, rewrite the log to be empty,
-    /// then signal the background task to swap the file.
-    fn compact(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>) -> Result<(), DbError> {
-        self.compact_with_hook(count, entries, None)
-    }
-
     /// Override: write snapshot directly from DashMaps — no LogEntry allocation, no Value cloning.
     #[cfg(not(feature = "schema"))]
     fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, hook: Option<String>) -> Result<(), DbError> {
@@ -273,16 +267,6 @@ impl StorageBackend for AsyncDiskStorage {
     #[cfg(feature = "schema")]
     fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>, hook: Option<String>) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, schemas, 0) {
-            tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
-        } else if let Some(script_path) = hook {
-            self.run_backup_hook(script_path);
-        }
-        self.swap_log()
-    }
-
-    /// Internal compact implementation that can take a post-backup script.
-    fn compact_with_hook(&self, count: u64, entries: &mut dyn Iterator<Item = LogEntry>, hook: Option<String>) -> Result<(), DbError> {
-        if let Err(e) = write_snapshot(&self.path, count, entries, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         } else if let Some(script_path) = hook {
             self.run_backup_hook(script_path);
