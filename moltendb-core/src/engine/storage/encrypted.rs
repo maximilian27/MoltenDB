@@ -131,11 +131,4 @@ impl StorageBackend for EncryptedStorage {
         })?;
         Ok(count)
     }
-
-    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
-        let raw_bytes = self.inner.read_at(offset, length)?;
-        let enc_entry: LogEntry = serde_json::from_slice(&raw_bytes).map_err(DbError::Serialization)?;
-        let decrypted = self.decrypt_entry(&enc_entry)?;
-        serde_json::to_vec(&decrypted).map_err(DbError::Serialization)
-    }
 }

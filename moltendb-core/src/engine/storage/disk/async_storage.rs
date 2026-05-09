@@ -274,17 +274,6 @@ impl StorageBackend for AsyncDiskStorage {
         self.swap_log()
     }
 
-    /// Read exactly `length` bytes from the log at `offset`.
-    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
-        use std::fs::File;
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = File::open(&self.path)?;
-        file.seek(SeekFrom::Start(offset))?;
-        let mut buffer = vec![0u8; length as usize];
-        file.read_exact(&mut buffer)?;
-        Ok(buffer)
-    }
-
     /// Stream log entries into state using snapshot + delta replay.
     ///
     /// Fast path (after first compaction):

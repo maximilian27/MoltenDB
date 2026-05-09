@@ -165,10 +165,8 @@ impl OpfsStorage {
 impl StorageBackend for OpfsStorage {
     fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
         // Read all file data while holding the mutex, then release the lock
-        // before invoking the callback. This prevents a recursive mutex deadlock
-        // on WASM's single-threaded no-threads mutex: the callback (apply_entry)
-        // may call storage.read_at() for Cold documents, which also tries to
-        // acquire the same mutex — causing a panic if we still hold it here.
+        // before invoking the callback. This prevents a recursive mutex deadlock:
+        // the callback (apply_entry) would acquire the same mutex, causing a panic.
         let data = {
             let handle = self.handle.lock().expect("db handle mutex poisoned");
 
@@ -246,20 +244,6 @@ impl StorageBackend for OpfsStorage {
         Ok(())
     }
 
-    /// Read exactly `length` bytes from the log at `offset`.
-    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
-        let handle = self.handle.lock().expect("db handle mutex poisoned");
-
-        let mut buf = vec![0u8; length as usize];
-        let opts = web_sys::FileSystemReadWriteOptions::new();
-        opts.set_at(offset as f64);
-
-        handle
-            .read_with_u8_array_and_options(&mut buf, &opts)
-            .map_err(|_| DbError::WriteError)?;
-
-        Ok(buf)
-    }
 
     /// Read the entire OPFS file and parse all log entries.
     ///
