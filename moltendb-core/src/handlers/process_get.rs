@@ -172,7 +172,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     };
 
     // ── Per-document processing ───────────────────────────────────────────────
-    let mut results: Vec<(String, Value)> = Vec::with_capacity(raw.len());
+    let mut results: Vec<(String, Value, Vec<String>)> = Vec::with_capacity(raw.len());
 
     for (key, mut doc) in raw {
         // Prefix gatekeeper (used by scoped auth tokens).
@@ -225,7 +225,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             }
         }
 
-        results.push((key, doc));
+        results.push((key, doc, join_aliases));
     }
 
     if results.is_empty() {
@@ -234,8 +234,8 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
 
     // Single-key lookup — return the document directly (no array wrapper, no _key).
     if let Some(Value::String(_)) = payload.get("keys") {
-        let (key, doc) = results.remove(0);
-        let mut out = shape_doc(doc, &key, fields_req, excluded_req, &[]);
+        let (key, doc, aliases) = results.remove(0);
+        let mut out = shape_doc(doc, &key, fields_req, excluded_req, &aliases);
         if let Some(obj) = out.as_object_mut() { obj.remove("_key"); }
         return (200, out);
     }
@@ -243,7 +243,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     // ── Sort ──────────────────────────────────────────────────────────────────
     if let Some(specs) = sort_specs {
         let cmp = make_comparator(specs);
-        results.sort_by(|(_, a), (_, b)| cmp(a, b));
+        results.sort_by(|(_, a, _), (_, b, _)| cmp(a, b));
     }
 
     // ── Pagination ────────────────────────────────────────────────────────────
@@ -252,8 +252,8 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     }
 
     // ── Shape and return ──────────────────────────────────────────────────────
-    let array: Vec<Value> = results.into_iter().skip(offset).map(|(k, doc)| {
-        shape_doc(doc, &k, fields_req, excluded_req, &[])
+    let array: Vec<Value> = results.into_iter().skip(offset).map(|(k, doc, aliases)| {
+        shape_doc(doc, &k, fields_req, excluded_req, &aliases)
     }).collect();
 
     (200, Value::Array(array))
