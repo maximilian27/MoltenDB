@@ -93,8 +93,8 @@ pub trait StorageBackend: Send + Sync {
     #[cfg(not(feature = "schema"))]
     fn compact_from_maps(
         &self,
-        state: &DashMap<String, DashMap<String, Value>>,
-        hook: Option<String>,
+        _state: &DashMap<String, DashMap<String, Value>>,
+        _hook: Option<String>,
     ) -> Result<(), DbError> {
         Ok(())
     }
@@ -122,22 +122,11 @@ pub trait StorageBackend: Send + Sync {
         Ok(())
     }
 
-    /// Read exactly `length` bytes starting at `offset` from the log.
-    ///
-    /// This is used to fetch "Cold" documents from the append-only log without
-    /// loading the entire file into memory.
-    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError>;
-
     /// Return the current size of the persistent log file in bytes.
     ///
-    /// Used by the WASM worker to implement size-based auto-compaction — the JS
-    /// side calls `get_size` after every INSERT batch and compacts if the file
-    /// exceeds the configured threshold (default: 5 MB).
-    ///
-    /// The default implementation returns 0 (no size information available).
-    /// `OpfsStorage` overrides this with a real `FileSystemSyncAccessHandle.getSize()` call.
-    /// Native disk backends don't need this — they use OS-level file metadata instead.
-    #[allow(dead_code)]
+    /// Used by the WASM worker to report log file size. `OpfsStorage` overrides
+    /// this with a real `FileSystemSyncAccessHandle.getSize()` call.
+    /// Native disk backends return 0 (not needed — use OS-level file metadata).
     fn get_size(&self) -> Result<u64, DbError> {
         Ok(0)
     }
