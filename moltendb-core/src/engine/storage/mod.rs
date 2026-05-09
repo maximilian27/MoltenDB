@@ -93,8 +93,8 @@ pub trait StorageBackend: Send + Sync {
     #[cfg(not(feature = "schema"))]
     fn compact_from_maps(
         &self,
-        state: &DashMap<String, DashMap<String, Value>>,
-        hook: Option<String>,
+        _state: &DashMap<String, DashMap<String, Value>>,
+        _hook: Option<String>,
     ) -> Result<(), DbError> {
         Ok(())
     }

@@ -301,12 +301,16 @@ impl StorageBackend for OpfsStorage {
         Ok(size)
     }
 
+}
+
+impl OpfsStorage {
     /// Compact the OPFS file by truncating it and rewriting only current state.
     ///
     /// Unlike the native disk backend, we don't need a temp file + rename here
     /// because the OPFS handle is exclusive to this worker — no other process
     /// can be reading or writing the file concurrently.
-    fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
+    #[allow(dead_code)]
+    pub fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
         let handle = self.handle.lock().expect("db handle mutex poisoned");
 
         // Truncate the file to 0 bytes — this erases all existing content.
