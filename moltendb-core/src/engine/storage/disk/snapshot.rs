@@ -32,7 +32,7 @@ pub fn snapshot_path(log_path: &str) -> String {
     format!("{}.snapshot.bin", log_path)
 }
 
-pub fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> Result<(), DbError> {
+pub fn write_snapshot<'a>(log_path: &str, count: u64, entries: impl Iterator<Item = &'a LogEntry>, seq: u64) -> Result<(), DbError> {
     let path = snapshot_path(log_path);
     // Write to a temp file first so the swap is atomic.
     let tmp = format!("{}.tmp", path);
@@ -51,7 +51,6 @@ pub fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> Result<
     raw.write_all(&seq.to_le_bytes())?;
 
     // Number of entries written into the compressed body.
-    let count = entries.len() as u64;
     raw.write_all(&count.to_le_bytes())?;
 
     // Flush the header so the GzEncoder starts right after it.

@@ -7,7 +7,7 @@
 // Responsibilities:
 //   1. Read configuration from environment variables.
 //   2. Open the database (with optional encryption).
-//   3. Spawn background tasks (compaction, rate-limit cleanup).
+//   3. Spawn background tasks (rate-limit cleanup).
 //   4. Build the Axum router with all routes and middleware layers.
 //   5. Start the TLS server and block until shutdown.
 //   6. On shutdown: drain in-flight requests, flush the DB, exit cleanly.
@@ -404,42 +404,6 @@ async fn main() {
         warn!("⚡ IN-MEMORY MODE — all data is stored in RAM only. Nothing will be persisted to disk. Data will be lost on exit.");
     }
 
-    // Spawn a background task for log compaction (skipped in --in-memory mode — there is no log to compact).
-    // `db.clone()` is cheap — Db is Arc-backed, so this just increments a counter.
-    // `tokio::spawn` runs the async block concurrently with the main server task.
-    if !is_in_memory {
-    let bg_db = db.clone();
-    let bg_db_path = db_path.clone();
-    tokio::spawn(async move {
-        // Check every 60 seconds whether compaction is needed.
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        let max_log_bytes: u64 = 100 * 1024 * 1024; // 100 MB threshold
-        let mut secs_since_compact: u64 = 0;
-        loop {
-            // `tick().await` waits until the next 60-second interval fires.
-            interval.tick().await;
-            secs_since_compact += 60;
-
-            // Check the current log file size using OS metadata.
-            // `.map(|m| m.len()).unwrap_or(0)` returns 0 if the file doesn't exist.
-            let log_size = std::fs::metadata(&bg_db_path)
-                .map(|m| m.len())
-                .unwrap_or(0);
-
-            // Compact if the log exceeds 100 MB OR if an hour has passed.
-            // This prevents both unbounded file growth and stale data accumulation.
-            let should_compact = log_size >= max_log_bytes || secs_since_compact >= 3600;
-            if should_compact {
-                if let Err(e) = bg_db.compact() {
-                    warn!("⚠️ Background compaction failed: {}", e);
-                } else {
-                    info!("🗜️  Compaction complete (log was {} MB)", log_size / 1024 / 1024);
-                }
-                secs_since_compact = 0;
-            }
-        }
-    });
-    } // end if !is_in_memory (compaction task)
 
     // Initialize the user store with the admin user and password from Config.
     // We've already verified they are present above.

@@ -221,7 +221,7 @@ impl StorageBackend for AsyncDiskStorage {
         // before returning, eliminating the race window where stream_log_into
         // could read the old (pre-truncation) log and double-apply its entries.
         let seq = 0u64;
-        if let Err(e) = write_snapshot(&self.path, &entries, seq) {
+        if let Err(e) = write_snapshot(&self.path, entries.len() as u64, entries.iter(), seq) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         } else if let Some(script_path) = hook {
             // If snapshot was successful and we have a hook, execute it.

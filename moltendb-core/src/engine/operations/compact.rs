@@ -9,7 +9,7 @@ pub fn compact(
     schemas: &DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
     storage: &dyn StorageBackend,
     post_backup_script: Option<String>,
-) -> Result<Vec<LogEntry>, DbError> {
+) -> Result<(), DbError> {
     info!("🔨 Starting Log Compaction...");
 
     let mut entries = Vec::new();
@@ -42,8 +42,8 @@ pub fn compact(
     }
 
     // Delegate the actual file rewrite (and snapshot write) to the storage backend.
-    storage.compact_with_hook(entries.clone(), post_backup_script)?;
+    storage.compact_with_hook(entries, post_backup_script)?;
 
     info!("✅ Log Compaction Finished!");
-    Ok(entries)
+    Ok(())
 }
