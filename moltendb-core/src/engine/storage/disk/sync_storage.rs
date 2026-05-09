@@ -43,14 +43,14 @@ impl SyncDiskStorage {
 }
 
 impl StorageBackend for SyncDiskStorage {
-    /// Serialize `entry` to JSON, write it to the BufWriter, and flush immediately.
+    /// Serialize `entry` to MessagePack, write it to the BufWriter, and flush immediately.
     /// This call blocks until the OS has accepted the data.
     fn write_entry(&self, entry: &LogEntry) -> Result<(), DbError> {
-        let json_line = serde_json::to_string(entry)?;
-        // Lock the Mutex — only one thread can write at a time.
+        let encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let len = (encoded.len() as u32).to_le_bytes();
         let mut w = self.writer.lock().map_err(|_| DbError::LockPoisoned)?;
-        writeln!(w, "{}", json_line)?;
-        // Flush immediately so the data is durable before we return.
+        w.write_all(&len)?;
+        w.write_all(&encoded)?;
         w.flush()?;
         Ok(())
     }

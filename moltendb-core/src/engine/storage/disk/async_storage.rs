@@ -24,10 +24,10 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 /// Message sent over the writer channel.
-/// Normal log lines are `Write(json)`; compaction sends `Compact` with a
+/// Normal log lines are `Write(bytes)`; compaction sends `Compact` with a
 /// shared condvar so `compact_with_hook` can block until the file swap is done.
 enum WriterMsg {
-    Write(String),
+    Write(Vec<u8>),
     Compact {
         temp_path: String,
         done: Arc<(Mutex<bool>, Condvar)>,
@@ -127,9 +127,9 @@ impl AsyncDiskStorage {
                             *finished = true;
                             cvar.notify_one();
                         }
-                        WriterMsg::Write(log_line) => {
-                            // Normal log line — append it to the BufWriter's buffer.
-                            if let Err(e) = writeln!(w, "{}", log_line) {
+                        WriterMsg::Write(bytes) => {
+                            // MessagePack entry — write raw length-prefixed bytes.
+                            if let Err(e) = w.write_all(&bytes) {
                                 tracing::error!("Fatal disk write error — entering read-only mode: {}", e);
                                 fault_flag.store(true, Ordering::Relaxed);
                                 break;
@@ -182,14 +182,16 @@ impl Drop for AsyncDiskStorage {
 }
 
 impl StorageBackend for AsyncDiskStorage {
-    /// Serialize `entry` to a JSON string and send it to the background writer.
+    /// Serialize `entry` to MessagePack and send it to the background writer.
     /// This call returns immediately — it never blocks waiting for disk I/O.
     fn write_entry(&self, entry: &LogEntry) -> Result<(), DbError> {
-        let json_line = serde_json::to_string(entry)?;
-        // send() only fails if the receiver (background task) has been dropped,
-        // which means the server is shutting down.
+        let encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let len = (encoded.len() as u32).to_le_bytes();
+        let mut bytes = Vec::with_capacity(4 + encoded.len());
+        bytes.extend_from_slice(&len);
+        bytes.extend_from_slice(&encoded);
         if let Some(ref sender) = self.sender {
-            sender.send(WriterMsg::Write(json_line)).map_err(|_| DbError::WriteError)?;
+            sender.send(WriterMsg::Write(bytes)).map_err(|_| DbError::WriteError)?;
         }
         Ok(())
     }

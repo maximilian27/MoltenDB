@@ -7,13 +7,13 @@
 // log from the beginning. This dramatically reduces startup time for large DBs.
 //
 // Snapshot file format (binary, little-endian, gzip-compressed body):
-//   [8 bytes]  magic header: "MOLTSNG2"  ("MOLTSNAP" = legacy uncompressed)
+//   [8 bytes]  magic header: "MOLTSNG3"  ("MOLTSNG2" = legacy JSON body)
 //   [8 bytes]  seq: number of log lines captured in this snapshot
 //   [8 bytes]  count: number of LogEntry records that follow
 //   --- everything below this point is gzip-compressed ---
 //   for each entry:
-//     [8 bytes]  len: byte length of the JSON-encoded entry
-//     [len bytes] JSON-encoded LogEntry
+//     [4 bytes]  len: byte length of the MessagePack-encoded entry
+//     [len bytes] rmp-serde encoded LogEntry
 // ─────────────────────────────────────────────────────────────────────────────
 
 use crate::engine::types::{DbError, LogEntry};
@@ -45,8 +45,8 @@ pub fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> Result<
     // Write the uncompressed header first, then compress the body.
     let mut raw = BufWriter::new(file);
 
-    // Magic header — "MOLTSNG2" signals gzip-compressed body.
-    raw.write_all(b"MOLTSNG2")?;
+    // Magic header — "MOLTSNG3" signals gzip-compressed MessagePack body.
+    raw.write_all(b"MOLTSNG3")?;
     // Sequence number: how many log lines are already captured here.
     raw.write_all(&seq.to_le_bytes())?;
 
@@ -63,8 +63,8 @@ pub fn write_snapshot(log_path: &str, entries: &[LogEntry], seq: u64) -> Result<
 
     // Each entry is length-prefixed so the reader knows how many bytes to read.
     for entry in entries {
-        let encoded = serde_json::to_vec(entry).map_err(|_| DbError::WriteError)?;
-        let len = encoded.len() as u64;
+        let encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let len = encoded.len() as u32;
         gz.write_all(&len.to_le_bytes())?;
         gz.write_all(&encoded)?;
     }
@@ -124,8 +124,12 @@ pub fn load_snapshot(
     let mut magic = [0u8; 8];
     file.read_exact(&mut magic).ok()?;
 
-    let compressed = match &magic {
-        b"MOLTSNG2" => true,
+    let use_msgpack = match &magic {
+        b"MOLTSNG3" => true,
+        b"MOLTSNG2" => {
+            tracing::warn!("⚠️  Old JSON snapshot detected — falling back to log replay");
+            return None;
+        }
         b"MOLTSNAP" => {
             tracing::warn!("⚠️  Old uncompressed snapshot detected — falling back to log replay");
             return None;
@@ -135,7 +139,7 @@ pub fn load_snapshot(
             return None;
         }
     };
-    let _ = compressed; // always true for now; kept for future format detection
+    let _ = use_msgpack; // always true for MOLTSNG3
 
     // Read the sequence number (how many log lines to skip on replay).
     let mut seq_bytes = [0u8; 8];
@@ -154,14 +158,14 @@ pub fn load_snapshot(
 
     for i in 0..count {
         // Read the length prefix for this entry.
-        let mut len_bytes = [0u8; 8];
+        let mut len_bytes = [0u8; 4];
         if let Err(e) = gz.read_exact(&mut len_bytes) {
             tracing::error!("❌ Failed to read entry {} length: {}", i, e);
             return None;
         }
-        let len = u64::from_le_bytes(len_bytes) as usize;
+        let len = u32::from_le_bytes(len_bytes) as usize;
 
-        // Read exactly `len` bytes and deserialize with JSON.
+        // Read exactly `len` bytes and deserialize with MessagePack.
         let mut buf = vec![0u8; len];
         if let Err(e) = gz.read_exact(&mut buf) {
             tracing::error!("❌ Failed to read entry {} data: {}", i, e);
@@ -176,12 +180,12 @@ pub fn load_snapshot(
 
         // If deserialization fails (e.g. schema changed), return None so we
         // fall back to full log replay instead of crashing.
-        let entry: LogEntry = match serde_json::from_slice(&buf) {
+        let entry: LogEntry = match rmp_serde::from_slice(&buf) {
             Ok(e) => e,
             Err(err) => {
                 let sample = if buf.len() > 20 { &buf[..20] } else { &buf };
                 tracing::error!(
-                    "❌ Failed to deserialize entry {} (len {}): {}. Sample: {:?}. This usually happens if the snapshot was created with an older version of MoltenDB or is corrupt. Falling back to log replay.",
+                    "❌ Failed to deserialize entry {} (len {}): {}. Sample: {:?}. Falling back to log replay.",
                     i, len, err, sample
                 );
                 return None;
