@@ -33,6 +33,8 @@ pub struct SyncDiskStorage {
 impl SyncDiskStorage {
     /// Open (or create) the log file at `path` in append mode.
     pub fn new(path: &str) -> Result<Self, DbError> {
+        // Remove any stale .tmp file left by a previous crash before compaction swap.
+        let _ = std::fs::remove_file(format!("{}.tmp", path));
         let file = OpenOptions::new().create(true).append(true).open(path)?;
 
         Ok(Self {
@@ -126,6 +128,8 @@ impl StorageBackend for SyncDiskStorage {
         // but since we hold the Mutex no other thread can write concurrently.
         if let Err(e) = std::fs::rename(&temp_path, &self.path) {
              tracing::error!("Failed to swap compacted file: {}", e);
+             // Clean up the orphaned temp file so it doesn't persist.
+             let _ = std::fs::remove_file(&temp_path);
              return Err(DbError::from(e));
         }
 

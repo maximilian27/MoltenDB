@@ -58,6 +58,8 @@ pub struct AsyncDiskStorage {
 impl AsyncDiskStorage {
     /// Open (or create) the log file at `path` and spawn the background writer task.
     pub fn new(path: &str) -> Result<Self, DbError> {
+        // Remove any stale .tmp file left by a previous crash before compaction swap.
+        let _ = std::fs::remove_file(format!("{}.tmp", path));
         // Create an unbounded MPSC channel.
         // `log_tx` (sender) is kept in the struct; `log_rx` (receiver) goes to the task.
         let (log_tx, mut log_rx) = mpsc::unbounded_channel::<WriterMsg>();
@@ -105,6 +107,8 @@ impl AsyncDiskStorage {
                             // Atomically replace the live log with the compacted version.
                             if let Err(e) = std::fs::rename(&temp_path, &path_clone) {
                                 tracing::error!("Failed to swap compacted file: {}", e);
+                                // Clean up the orphaned temp file so it doesn't persist.
+                                let _ = std::fs::remove_file(&temp_path);
                             }
 
                             // Re-open the (now compacted) log file for future writes.
