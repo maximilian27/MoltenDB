@@ -14,3 +14,4 @@
 /backup_hook.sh
 /my_database.revocations.json
 /my_database.cold.log
+/my_database.log.tmp

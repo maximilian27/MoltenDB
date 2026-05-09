@@ -11,8 +11,13 @@ Exposes the `moltendb-core` engine to JavaScript. Zero server-side code.
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![crates.io](https://img.shields.io/crates/v/moltendb-wasm?style=flat-square)](https://crates.io/crates/moltendb-wasm)
+[![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](../CHANGELOG.md)
 
 </div>
+
+> [!WARNING]
+> **Versions starting with `v1.0.0-rc1` are not backwards compatible with previous versions.**
+> We are actively working on improving performance and stability. Please review the changelog before upgrading.
 
 ---
 
@@ -74,11 +79,10 @@ await init();
 // 2. Open (or create) the OPFS database file
 //    ✅ Use the static factory — NOT `new WorkerDb(name)` (deprecated)
 //    Optional parameters (all optional after db_name):
-//      hot_threshold, encryption_key, write_mode,
-//      max_body_size, max_keys_per_request, in_memory
+//      encryption_key, write_mode, max_body_size, max_keys_per_request, in_memory
 //
 //    Pass `true` for in_memory to skip OPFS entirely (ephemeral session cache):
-const db = await WorkerDb.create("my_database", 100000, "my-encryption-password", "async");
+const db = await WorkerDb.create("my_database", "my-encryption-password", "async");
 // In-memory (no OPFS writes, data lost on worker termination):
 
 // 3. Subscribe to real-time mutation events
@@ -133,7 +137,6 @@ The generated `moltendb_core.d.ts` declares `WorkerDb` with the static factory:
 export class WorkerDb {
   static create(
     dbName: string,
-    hot_threshold?: number,
     encryption_key?: string,
     write_mode?: string,
     max_body_size?: number,

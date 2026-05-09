@@ -14,7 +14,6 @@
 //   storage      — the persistence layer (disk, encrypted, or OPFS)
 //   tx           — broadcast channel for real-time WebSocket notifications
 //   indexes      — field indexes for fast WHERE queries
-//   query_heatmap — tracks query frequency for auto-indexing
 //
 // The Db struct has two constructors:
 //   open()      — native (server) build, opens a disk file
@@ -24,7 +23,6 @@
 
 // Declare the sub-modules of the engine.
 mod types;      // LogEntry, DbError
-mod indexing;   // index_doc, unindex_doc, track_query, create_index
 mod storage;    // StorageBackend trait + concrete implementations
 mod config;     // DbConfig struct
 #[cfg(feature = "schema")]
@@ -43,18 +41,11 @@ pub use storage::{StorageBackend, EncryptedStorage};
 #[cfg(not(target_arch = "wasm32"))]
 pub use storage::{AsyncDiskStorage, SyncDiskStorage};
 
-// DashMap = concurrent hash map. DashSet = concurrent hash set.
-use dashmap::{DashMap, DashSet};
-// Value = dynamically-typed JSON value.
+use dashmap::DashMap;
 use serde_json::Value;
-// Standard HashMap — used for return values from get operations.
 use std::collections::HashMap;
-// Arc = thread-safe reference-counted pointer.
-// Wrapping fields in Arc allows Db to be cheaply cloned — all clones share
-// the same underlying data.
 use std::sync::Arc;
-// Tokio's broadcast channel: one sender, many receivers.
-// Used to push real-time change notifications to WebSocket subscribers.
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 
 /// The central database handle. Cheap to clone — all clones share the same state.
@@ -65,9 +56,9 @@ use tokio::sync::broadcast;
 pub struct Db {
     /// The main document store.
     /// Outer map: collection name (e.g. "users") → inner map.
-    /// Inner map: document key (e.g. "u1") → Hybrid Hot/Cold document state.
+    /// Inner map: document key (e.g. "u1") → document value (always in RAM).
     /// DashMap allows concurrent reads and writes from multiple threads.
-    state: Arc<DashMap<String, DashMap<String, crate::engine::types::DocumentState>>>,
+    state: Arc<DashMap<String, DashMap<String, serde_json::Value>>>,
 
     /// The storage backend — handles persistence to disk or OPFS.
     /// `pub` so handlers can access it directly if needed (e.g. for compaction).
@@ -80,22 +71,6 @@ pub struct Db {
     /// `pub` so the WebSocket handler in main.rs can call subscribe().
     pub tx: broadcast::Sender<String>,
 
-    /// The index store.
-    /// Key format: "collection:field" (e.g. "users:role").
-    /// Value: field_value → set of document keys with that value.
-    /// e.g. "users:role" → { "admin" → {"u1"}, "user" → {"u2", "u3"} }
-    /// `pub` so handlers.rs can check for index existence directly.
-    pub indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>>,
-
-    /// Query frequency counter for auto-indexing.
-    /// Key: "collection:field". Value: number of times queried.
-    /// When a field reaches 3 queries, an index is auto-created.
-    pub query_heatmap: Arc<DashMap<String, u32>>,
-
-    /// The maximum number of documents per collection to keep in RAM (Hot).
-    /// If a collection exceeds this, older documents are paged out to disk (Cold).
-    /// Default is 50,000.
-    pub hot_threshold: usize,
 
     /// Max requests per window.
     pub rate_limit_requests: u32,
@@ -118,8 +93,11 @@ pub struct Db {
     /// Supports the {SNAPSHOT_PATH} placeholder.
     pub post_backup_script: Option<String>,
 
-    /// Whether tiered (hot+cold) storage mode is active.
-    pub tiered_mode: bool,
+    /// Circuit-breaker flag shared with `AsyncDiskStorage`.
+    /// When the background writer encounters a fatal I/O error it sets this to
+    /// `true`. All subsequent write operations return `DbError::StorageFault`
+    /// immediately, preventing silent data loss.
+    pub io_fault: Arc<AtomicBool>,
 
     /// Timestamp of when this Db instance was opened, used for uptime calculation.
     #[cfg(not(target_arch = "wasm32"))]
@@ -129,7 +107,7 @@ pub struct Db {
 impl Db {
     /// Returns the total number of hot (in-memory) keys across all collections.
     pub fn hot_keys_count(&self) -> usize {
-        self.state.iter().map(|c| c.value().len()).sum()
+        self.state.iter().map(|c: dashmap::mapref::multiple::RefMulti<_, _>| c.value().len()).sum::<usize>()
     }
 
     /// Create a new broadcast receiver for real-time change notifications.
@@ -150,50 +128,90 @@ impl Db {
         operations::get_all(&self.state, &self.storage, collection)
     }
 
+    /// Lazily scan a collection, returning only documents that match `predicate`.
+    ///
+    /// Avoids the full O(n) clone that `get_all` does — only matching documents
+    /// are cloned. `offset` and `limit` are applied during iteration so the
+    /// scan can stop early. Used for WHERE queries on large collections when
+    /// no index applies.
+    pub fn get_filtered(
+        &self,
+        collection: &str,
+        predicate: impl Fn(&Value) -> bool,
+        offset: usize,
+        limit: Option<usize>,
+    ) -> HashMap<String, Value> {
+        operations::get_filtered(&self.state, &self.storage, collection, predicate, offset, limit)
+    }
+
+    /// Lazily scan a collection and return the top-`cap` documents according
+    /// to a comparator, applying an optional predicate (e.g. WHERE) along the
+    /// way.
+    ///
+    /// Documents flow directly from the DashMap into a bounded max-heap of
+    /// capacity `cap` — peak memory is `O(cap)` extra instead of `O(matching)`,
+    /// even for collections of millions of documents. The result is already
+    /// sorted best-first (per the comparator); the caller still applies
+    /// `offset` and `count` for pagination.
+    pub fn scan_top_n(
+        &self,
+        collection: &str,
+        predicate: impl Fn(&Value) -> bool,
+        cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering,
+        cap: usize,
+    ) -> Vec<(String, Value)> {
+        operations::scan_top_n(&self.state, &self.storage, collection, predicate, cmp, cap)
+    }
+
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
     pub fn insert(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
-        operations::insert(
-            &self.state,
-            &self.indexes,
-            &self.storage,
-            &self.tx,
-            #[cfg(feature = "schema")] &self.schemas,
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
+        operations::insert(operations::InsertParams {
+            state: &self.state,
+            storage: &self.storage,
+            tx: &self.tx,
+            #[cfg(feature = "schema")] schemas: &self.schemas,
             collection,
             items,
-        )?;
-
-        // Auto-evict if the collection exceeds the threshold.
-        let _ = self.evict_collection(collection, self.hot_threshold);
+        })?;
         Ok(())
     }
 
     /// Partially update a document — merges `updates` into the existing document.
     /// Returns true if the document was found and updated, false if not found.
     pub fn update(&self, collection: &str, key: &str, updates: Value) -> Result<bool, DbError> {
-        let updated = operations::update(
-            &self.state,
-            &self.indexes,
-            &self.storage,
-            &self.tx,
-            #[cfg(feature = "schema")] &self.schemas,
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
+        let updated = operations::update(operations::UpdateParams {
+            state: &self.state,
+            storage: &self.storage,
+            tx: &self.tx,
+            #[cfg(feature = "schema")] schemas: &self.schemas,
             collection,
             key,
             updates,
-        )?;
+        })?;
 
-        if updated {
-            // Auto-evict if the collection exceeds the threshold.
-            let _ = self.evict_collection(collection, self.hot_threshold);
-        }
         Ok(updated)
     }
 
     /// Delete one or more documents by key. Pass a single key to delete one document.
     pub fn delete(&self, collection: &str, keys: Vec<String>) -> Result<(), DbError> {
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
         operations::delete(
             &self.state,
-            &self.indexes,
             &self.storage,
             &self.tx,
             collection,
@@ -201,30 +219,14 @@ impl Db {
         )
     }
 
-    /// Drop an entire collection — removes all documents and its indexes.
+    /// Drop an entire collection — removes all documents.
     pub fn delete_collection(&self, collection: &str) -> Result<(), DbError> {
         operations::delete_collection(
             &self.state,
-            &self.indexes,
             &self.storage,
             &self.tx,
             collection,
         )
-    }
-
-    /// Track that `field` was queried in `collection` and auto-create an index
-    /// if this field has been queried 3 or more times.
-    /// Errors are silently ignored — auto-indexing is best-effort.
-    pub fn track_query(&self, collection: &str, field: &str) {
-        // The `let _ =` discards the Result — a failed auto-index is not fatal.
-        let _ = indexing::track_query(
-            &self.indexes,
-            &self.query_heatmap,
-            collection,
-            field,
-            &self.storage,
-            &self.state,
-        );
     }
 
     /// Register a JSON schema for a collection.
@@ -240,13 +242,11 @@ impl Db {
         )
     }
     
-    /// Wipe all in-memory state — documents, indexes, and query heatmap.
+    /// Wipe all in-memory state.
     /// Used by the WASM layer when a browser tab unloads in in-memory mode,
     /// so that any tab refresh clears the shared RAM store for all tabs.
     pub fn clear_all(&self) {
         self.state.clear();
-        self.indexes.clear();
-        self.query_heatmap.clear();
         #[cfg(feature = "schema")]
         self.schemas.clear();
     }
@@ -255,43 +255,14 @@ impl Db {
     ///
     /// This removes all dead entries (superseded INSERTs, DELETE tombstones)
     /// and writes a binary snapshot for fast next startup.
-    ///
-    /// The compacted log contains:
-    ///   - One INSERT entry per live document (current value only).
-    ///   - One INDEX entry per registered index (index data is rebuilt on replay).
     pub fn compact(&self) -> Result<(), DbError> {
-        let entries = operations::compact(
+        operations::compact(
             &self.state,
             #[cfg(feature = "schema")] &self.schemas,
-            &self.indexes,
             &*self.storage,
             self.post_backup_script.clone(),
         )?;
-
-        // After compaction the log is rewritten and all old RecordPointers are invalid.
-        // Promote every Cold entry in the in-memory state to Hot so subsequent reads
-        // don't try to seek to stale byte offsets in the now-truncated log file.
-        for entry in &entries {
-            if entry.cmd == "INSERT" {
-                if let Some(col) = self.state.get(&entry.collection) {
-                    if let Some(mut doc) = col.get_mut(&entry.key) {
-                        if matches!(*doc, crate::engine::types::DocumentState::Cold(_)) {
-                            *doc = crate::engine::types::DocumentState::Hot(entry.value.clone());
-                        }
-                    }
-                }
-            }
-        }
-
         Ok(())
-    }
-
-    /// Evict documents from RAM to disk for a collection if it exceeds the threshold.
-    ///
-    /// This converts `Hot(Value)` entries into `Cold(RecordPointer)` entries.
-    /// In this v1, it re-scans the log to find the exact byte offsets for the documents.
-    pub fn evict_collection(&self, collection: &str, limit: usize) -> Result<usize, DbError> {
-        operations::evict_collection(&self.state, &*self.storage, collection, limit)
     }
 
     /// Recover the database state to a specific point in time or sequence number.

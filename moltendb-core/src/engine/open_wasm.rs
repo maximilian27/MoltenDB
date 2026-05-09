@@ -6,7 +6,9 @@
 #[cfg(target_arch = "wasm32")]
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
-use dashmap::{DashMap, DashSet};
+use std::sync::atomic::AtomicBool;
+#[cfg(target_arch = "wasm32")]
+use dashmap::DashMap;
 #[cfg(target_arch = "wasm32")]
 use tokio::sync::broadcast;
 
@@ -26,7 +28,6 @@ impl Db {
     #[cfg(target_arch = "wasm32")]
     pub async fn open_wasm(config: DbConfig) -> Result<Self, DbError> {
         let db_name = &config.path;
-        let hot_threshold = config.hot_threshold;
         let rate_limit_requests = config.rate_limit_requests.unwrap_or(1000);
         let rate_limit_window = config.rate_limit_window.unwrap_or(60);
         let max_body_size = config.max_body_size;
@@ -37,9 +38,6 @@ impl Db {
 
         let state = Arc::new(DashMap::new());
         let (tx, _rx) = broadcast::channel(1000);
-        let indexes: Arc<DashMap<String, DashMap<String, DashSet<String>>>> =
-            Arc::new(Default::default());
-        let query_heatmap = Arc::new(Default::default());
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
 
@@ -65,7 +63,6 @@ impl Db {
             storage::stream_into_state(
                 &*wrapped,
                 &state,
-                &indexes,
                 #[cfg(feature = "schema")] &schemas,
             )?;
 
@@ -76,9 +73,6 @@ impl Db {
             state,
             storage,
             tx,
-            indexes,
-            query_heatmap,
-            hot_threshold,
             rate_limit_requests,
             rate_limit_window,
             max_body_size,
@@ -86,7 +80,7 @@ impl Db {
             #[cfg(feature = "schema")]
             schemas,
             post_backup_script,
-            tiered_mode: config.tiered_mode,
+            io_fault: Arc::new(AtomicBool::new(false)),
         })
     }
 }

@@ -1,3 +1,4 @@
+#![deny(warnings)]
 // ─── main.rs ──────────────────────────────────────────────────────────────────
 // This is the server entry point. It starts the HTTP/WebSocket server,
 // wires up all routes, middleware, and background tasks, then listens for
@@ -6,7 +7,7 @@
 // Responsibilities:
 //   1. Read configuration from environment variables.
 //   2. Open the database (with optional encryption).
-//   3. Spawn background tasks (compaction, rate-limit cleanup).
+//   3. Spawn background tasks (rate-limit cleanup).
 //   4. Build the Axum router with all routes and middleware layers.
 //   5. Start the TLS server and block until shutdown.
 //   6. On shutdown: drain in-flight requests, flush the DB, exit cleanly.
@@ -101,10 +102,6 @@ struct Config {
     #[arg(long, default_value = "async", env = "MOLTENDB_WRITE_MODE")]
     write_mode: String,
 
-    /// Storage mode: "standard" or "tiered" (hot+cold log, recommended for 100k+ docs) [env: MOLTENDB_STORAGE_MODE]
-    #[arg(long, default_value = "standard", env = "MOLTENDB_STORAGE_MODE")]
-    storage_mode: String,
-
     /// Maximum requests per IP per rate-limit window [env: MOLTENDB_RATE_LIMIT_REQS]
     #[arg(long, default_value = "100", env = "MOLTENDB_RATE_LIMIT_REQS")]
     rate_limit_requests: u32,
@@ -157,13 +154,7 @@ struct Config {
     /// The script will be called with the absolute path of the snapshot as its first argument. [env: MOLTENDB_POST_BACKUP_SCRIPT]
     #[arg(long, env = "MOLTENDB_POST_BACKUP_SCRIPT")]
     pub post_backup_script: Option<String>,
-
-    /// Maximum documents per collection to keep in RAM (Hot threshold). [env: MOLTENDB_HOT_THRESHOLD]
-    /// If a collection exceeds this, older documents are moved to the Cold tier (disk).
-    /// Higher values use more RAM but provide sub-microsecond speeds for more documents.
-    #[arg(long, default_value = "50000", env = "MOLTENDB_HOT_THRESHOLD")]
-    hot_threshold: usize,
-
+    
     /// Run entirely in RAM — bypass the WAL and disk storage completely.
     /// All data is lost when the server exits. Ideal for ephemeral caches,
     /// CI environments, or Redis-like use cases. [env: MOLTENDB_IN_MEMORY]
@@ -225,11 +216,11 @@ async fn main() {
         info!("🕒 MoltenDB Point-in-Time Recovery Tool");
         info!("📖 Reading log: {}", log);
 
-        let password = encryption_key.as_ref().map(|s| s.clone()).unwrap_or_else(|| "default_molten_password".to_string());
+        let password = encryption_key.clone().unwrap_or_else(|| "default_molten_password".to_string());
         let master_key = engine::EncryptedStorage::derive_key(&password, "moltendb_log_salt");
 
         // Open storage
-        let base_storage = Arc::new(engine::SyncDiskStorage::new(&log).expect("Failed to open log file"));
+        let base_storage = Arc::new(engine::SyncDiskStorage::new(log).expect("Failed to open log file"));
         let storage: Arc<dyn engine::StorageBackend> = Arc::new(engine::EncryptedStorage::new(base_storage, &master_key));
 
         match engine::Db::recover_to(&*storage, *to_time, *to_seq) {
@@ -257,16 +248,24 @@ async fn main() {
                 let temp_log = format!("{}.log", out);
                 {
                     let recovered_storage = engine::SyncDiskStorage::new(&temp_log).expect("Failed to create recovery log");
+                    // Rebuild state map from recovered entries for compact_from_maps
+                    let state: dashmap::DashMap<String, dashmap::DashMap<String, serde_json::Value>> = dashmap::DashMap::new();
                     for entry in &entries {
-                        recovered_storage.write_entry(entry).expect("Failed to write entry to recovery log");
+                        if entry.cmd == "INSERT" {
+                            state.entry(entry.collection.clone()).or_default().insert(entry.key.clone(), entry.value.clone());
+                        } else if entry.cmd == "DELETE" {
+                            if let Some(col) = state.get(&entry.collection) {
+                                col.remove(&entry.key);
+                            }
+                        }
                     }
-                    // Now compact it to produce the snapshot
-                    recovered_storage.compact(entries).expect("Failed to compact recovery log");
+                    let schemas = dashmap::DashMap::new();
+                    recovered_storage.compact_from_maps(&state, &schemas, None).expect("Failed to compact recovery log");
                 }
                 
                 // The snapshot is now at temp_log.snapshot.bin
                 let snapshot_path = format!("{}.snapshot.bin", temp_log);
-                std::fs::rename(snapshot_path, &out).expect("Failed to move snapshot to output path");
+                std::fs::rename(snapshot_path, out).expect("Failed to move snapshot to output path");
                 std::fs::remove_file(temp_log).ok();
                 
                 info!("✨ Recovery complete! You can now use {} as your database snapshot.", out);
@@ -354,13 +353,6 @@ async fn main() {
     //                 up to 50ms of data loss on crash, much higher throughput).
     let is_sync_mode = cfg.write_mode.to_lowercase() == "sync";
 
-    // Determine the storage mode from the --storage-mode flag (or STORAGE_MODE env var).
-    // "tiered" = TieredStorage: hot log (active writes, kept < 50 MB) + cold log
-    //            (archived data, read via memory-mapped file on startup). Recommended
-    //            for large datasets (100k+ documents) because the OS pages in only
-    //            the cold data that's actually needed, reducing startup RAM usage.
-    // anything else = single-file mode (AsyncDiskStorage or SyncDiskStorage).
-    let is_tiered_mode = cfg.storage_mode.to_lowercase() == "tiered";
     let is_in_memory = cfg.in_memory;
 
     // ── Encryption key setup ──────────────────────────────────────────────────
@@ -399,8 +391,6 @@ async fn main() {
     let db_config = engine::DbConfig {
         path: db_path.clone(),
         sync_mode: is_sync_mode,
-        tiered_mode: is_tiered_mode,
-        hot_threshold: cfg.hot_threshold,
         rate_limit_requests: Some(rate_limit_requests),
         rate_limit_window: Some(rate_limit_window),
         max_body_size: cfg.max_body_size,
@@ -422,42 +412,6 @@ async fn main() {
         warn!("⚡ IN-MEMORY MODE — all data is stored in RAM only. Nothing will be persisted to disk. Data will be lost on exit.");
     }
 
-    // Spawn a background task for log compaction (skipped in --in-memory mode — there is no log to compact).
-    // `db.clone()` is cheap — Db is Arc-backed, so this just increments a counter.
-    // `tokio::spawn` runs the async block concurrently with the main server task.
-    if !is_in_memory {
-    let bg_db = db.clone();
-    let bg_db_path = db_path.clone();
-    tokio::spawn(async move {
-        // Check every 60 seconds whether compaction is needed.
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        let max_log_bytes: u64 = 100 * 1024 * 1024; // 100 MB threshold
-        let mut secs_since_compact: u64 = 0;
-        loop {
-            // `tick().await` waits until the next 60-second interval fires.
-            interval.tick().await;
-            secs_since_compact += 60;
-
-            // Check the current log file size using OS metadata.
-            // `.map(|m| m.len()).unwrap_or(0)` returns 0 if the file doesn't exist.
-            let log_size = std::fs::metadata(&bg_db_path)
-                .map(|m| m.len())
-                .unwrap_or(0);
-
-            // Compact if the log exceeds 100 MB OR if an hour has passed.
-            // This prevents both unbounded file growth and stale data accumulation.
-            let should_compact = log_size >= max_log_bytes || secs_since_compact >= 3600;
-            if should_compact {
-                if let Err(e) = bg_db.compact() {
-                    warn!("⚠️ Background compaction failed: {}", e);
-                } else {
-                    info!("🗜️  Compaction complete (log was {} MB)", log_size / 1024 / 1024);
-                }
-                secs_since_compact = 0;
-            }
-        }
-    });
-    } // end if !is_in_memory (compaction task)
 
     // Initialize the user store with the admin user and password from Config.
     // We've already verified they are present above.

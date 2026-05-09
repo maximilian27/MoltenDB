@@ -27,10 +27,3 @@ pub(super) mod sync_storage;
 pub use async_storage::AsyncDiskStorage;
 pub use sync_storage::SyncDiskStorage;
 
-// Re-export stream_log_entries and read_log_from_disk — used by encrypted.rs
-// and other storage wrappers that need to read the raw log.
-pub use log::{stream_log_entries, read_log_from_disk};
-
-// Re-export helpers used by tiered.rs for its own compaction + snapshot logic.
-pub use log::{count_log_lines, write_compacted_log};
-pub use snapshot::write_snapshot;

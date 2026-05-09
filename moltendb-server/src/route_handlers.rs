@@ -160,9 +160,9 @@ pub async fn handle_update(
 /// Scope rules:
 ///   - `read:{collection}:*` (or `read:*:*` or `admin`) → full access, all docs returned.
 ///   - Document-level scopes (`read:{collection}:key1`, `read:{collection}:key2`, …):
-///       • If `"keys"` is specified, all requested keys must be covered by the token.
-///       • If no `"keys"` is specified, the result is filtered to only the docs the
-///         token is allowed to read.
+///     - If `"keys"` is specified, all requested keys must be covered by the token.
+///     - If no `"keys"` is specified, the result is filtered to only the docs the
+///       token is allowed to read.
 pub async fn handle_get(
     State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
     Extension(claims): Extension<auth::Claims>,
@@ -307,6 +307,7 @@ pub async fn handle_rest_get(
 /// Query params:
 ///   - `limit`  (optional) — maximum number of documents to return.
 ///   - `offset` (optional) — number of documents to skip before returning.
+///
 /// Requires: read:{collection}:* scope (or admin).
 pub async fn handle_rest_get_collection(
     State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
@@ -439,7 +440,7 @@ pub async fn handle_metrics(
     // Database internals
     let hot_keys_count: usize = db.hot_keys_count();
     let wal_size_bytes = db.storage.get_size().unwrap_or(0);
-    let storage_mode = if db.tiered_mode { "tiered" } else { "standard" };
+    let storage_mode = "tiered";
 
     (StatusCode::OK, Json(json!({
         "uptime_seconds": uptime_seconds,
@@ -456,7 +457,6 @@ pub async fn handle_metrics(
         },
         "database": {
             "hot_keys_count":    hot_keys_count,
-            "hot_tier_threshold": db.hot_threshold,
             "wal_size_bytes":    wal_size_bytes,
             "storage_mode":      storage_mode,
         },

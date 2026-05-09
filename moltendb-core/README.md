@@ -11,8 +11,13 @@ Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![crates.io](https://img.shields.io/crates/v/moltendb-core?style=flat-square)](https://crates.io/crates/moltendb-core)
+[![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](../CHANGELOG.md)
 
 </div>
+
+> [!WARNING]
+> **Versions starting with `v1.0.0-rc1` are not backwards compatible with previous versions.**
+> We are actively working on improving performance and stability. Please review the changelog before upgrading.
 
 ---
 
@@ -22,12 +27,11 @@ Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 
 - **In-memory store** — `DashMap`-backed document collections, keyed by `(collection, key)`.
 - **Append-only WAL** — every write is appended to a log file (`LogEntry`: INSERT, DELETE, DROP, INDEX, ENC) with an engine-level `_t` timestamp for Point-in-Time Recovery.
-- **Storage backends** — `DiskStorage` (sync/async), `TieredStorage` (hot + cold log), `EncryptedStorage` (ChaCha20-Poly1305), `OpfsStorage` (WASM / browser OPFS).
+- **Storage backends** — `DiskStorage` (sync/async), `EncryptedStorage` (ChaCha20-Poly1305), `OpfsStorage` (WASM / browser OPFS).
 - **Snapshot Versioning** — Automatically backs up old snapshots to a `/backup` folder before rotation.
 - **Point-in-Time Recovery (PITR)** — Rebuild the state to any millisecond or sequence number (native only).
 - **Query evaluator** — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$contains`, `$or`, `$and`, field projection (include / exclude), dot-notation for nested fields, joins, sort, count, offset.
 - **Analytics engine** — COUNT, SUM, AVG, MIN, MAX with optional WHERE filtering. ⚠️ **Under active development — not ready for production use.**
-- **Auto-indexing** — `query_heatmap` tracks hot fields and builds indexes automatically.
 - **Handler pipeline** — `process_get`, `process_set`, `process_update`, `process_delete`, `process_analytics` — the single source of truth consumed by both the server and the WASM adapter.
 - **Input validation** — collection name, key, and field name rules enforced before any operation reaches the engine.
 
@@ -50,7 +54,7 @@ WASM-specific code (`OpfsStorage`, `Db::open_wasm`) is gated behind `#[cfg(targe
 
 ```toml
 [dependencies]
-moltendb-core = "0.10.2"
+moltendb-core = "0.10.3"
 ```
 
 ### Minimal example
@@ -107,11 +111,9 @@ println!("{} — {}", status_code, result);
 
 ---
 
-## Hybrid Bitcask Storage
+## Storage Model
 
-MoltenDB uses a **Hybrid Bitcask-inspired Storage Model**. Frequently accessed data is kept in RAM (`Hot`) as parsed JSON for sub-microsecond reads. Less frequently used data is paged out to disk (`Cold`) as byte-offsets, freeing up memory. This allows MoltenDB to handle datasets much larger than the available RAM while maintaining high performance for the active working set.
-
-By default, any collection exceeding **50,000 documents** will automatically evict the oldest documents to the `Cold` tier (disk/OPFS). This limit is configurable when opening the database.
+All documents are kept in RAM in a `DashMap`. On startup, the snapshot is loaded and the delta log is replayed — no cold tier, no eviction, no offset arithmetic. Compaction writes a new snapshot and resets the log.
 
 ---
 
@@ -120,7 +122,7 @@ By default, any collection exceeding **50,000 documents** will automatically evi
 | Module | Responsibility |
 |---|---|
 | `engine` | `Db` struct, storage backends, WAL replay, operations |
-| `engine::storage` | `DiskStorage`, `TieredStorage`, `EncryptedStorage`, `OpfsStorage` |
+| `engine::storage` | `DiskStorage`, `EncryptedStorage`, `OpfsStorage` |
 | `query` | Query condition evaluation, field projection, joins, sort, pagination |
 | `analytics` | Aggregate functions: COUNT, SUM, AVG, MIN, MAX — ⚠️ under development, not ready for use |
 | `handlers` | `process_get`, `process_set`, `process_update`, `process_delete`, `process_analytics` |
@@ -130,19 +132,69 @@ By default, any collection exceeding **50,000 documents** will automatically evi
 
 ## Storage modes
 
-| Mode | Use case |
-|---|---|
-| `DiskStorage` (sync) | Durable writes. Each write is flushed to disk before returning. Slower but safer for mission-critical data. |
-| `DiskStorage` (async) | Blazing fast, high-throughput writes. Data is buffered and flushed in the background. Recommended for most web use-cases. |
-| `TieredStorage` | 100k+ documents — separates hot and cold log files |
-| `EncryptedStorage` | At-rest encryption with ChaCha20-Poly1305 |
-| `OpfsStorage` | Browser WASM — Origin Private File System |
+MoltenDB has three storage backends:
+
+| Mode | `DbConfig` field | Best for |
+|---|---|---|
+| `AsyncDiskStorage` (default) | `sync_mode: false` | General use, max throughput |
+| `SyncDiskStorage` | `sync_mode: true` | Zero data loss per write |
+| `InMemoryStorage` | `in_memory: true` | Ephemeral caches, CI, tests |
+
+### Async (default)
+
+Single append-only log file. Writes are buffered and flushed to disk every **50 ms** — up to 50 ms of data can be lost on a hard crash. Highest write throughput.
+
+### Sync (`sync_mode: true`)
+
+Same single-file layout as async, but every write blocks until the OS confirms the data is on disk. **Zero data loss on crash.** Lower throughput. Use this when losing even 50 ms of writes is unacceptable (financial records, audit logs).
+
+
+### In-Memory (`in_memory: true`)
+
+Bypasses the WAL and all disk I/O entirely. All data lives exclusively in the RAM `DashMap`. Compaction is skipped. All data is lost when the process exits.
+
+### `EncryptedStorage`
+
+Wraps any of the above backends with ChaCha20-Poly1305 at-rest encryption. Enable via `DbConfig::encryption_key`.
+
+### `OpfsStorage`
+
+Browser WASM only — uses the Origin Private File System (OPFS) as the storage backend instead of the native filesystem.
+
+---
+
+## Snapshots, Compaction & Data Safety
+
+Compaction is triggered automatically when the log file exceeds 100 MB or every hour. It:
+
+1. Writes the complete current in-memory state to a **temp snapshot file** — the live snapshot is untouched at this point.
+2. **Moves the existing snapshot** to `backup/<name>.snapshot.bin.<unix_timestamp>.bak` — the old snapshot is never deleted.
+3. **Atomically renames** the temp file to the live snapshot — a single OS rename, no window where neither file exists.
+4. **Resets the live log to empty** — all data is already captured in the new snapshot before this happens.
+
+### No data is lost across compactions
+
+Each snapshot is a **full state dump**, not a diff. A document inserted in compaction 1 is present in every subsequent snapshot until it is explicitly deleted:
+
+```
+Compaction 1:  snapshot = { doc_A, doc_B }
+Compaction 2:  snapshot = { doc_A, doc_B, doc_C }   ← doc_A still here
+Compaction 3:  snapshot = { doc_A, doc_B, doc_C, doc_D }  ← doc_A still here
+```
+
+### The `backup/` folder
+
+Every compaction moves the previous snapshot to `backup/` as a `.bak` file — a point-in-time copy of the full database state. These files are not loaded at startup and are not pruned automatically. Use them for manual point-in-time recovery via `Db::recover_to`.
+
+### Startup RAM usage
+
+At startup, `stream_into_state` reads the snapshot and applies each entry **directly into the `DashMap`** as it is read — no intermediate buffer. Peak RAM at startup is approximately **1× the snapshot file size**.
 
 ---
 
 ## Design constraints
 
-- **No longer limited by RAM.** While MoltenDB is "Memory-First," the Hybrid Bitcask model allows it to page out documents to disk while keeping only the keys and offsets in RAM. A 10GB database can now comfortably run on a machine with 512MB of RAM.
+- **Memory-First.** All documents are kept in RAM for sub-microsecond reads. Compaction + snapshot keep startup fast even for large collections.
 - **No HTTP, no auth, no JWT.** This crate has zero knowledge of the network layer. It is safe to embed in any Rust application without pulling in Axum, Tokio TLS, or any auth dependency.
 - **Programmatic Configuration.** Unlike `moltendb-server`, this crate does **not** parse environment variables or CLI flags. All configuration must be passed via the `DbConfig` struct.
 - **Single writer, many readers.** The `DashMap` store is safe for concurrent reads. Writes are serialised through the storage backend.

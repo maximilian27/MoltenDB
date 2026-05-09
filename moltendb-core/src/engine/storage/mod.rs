@@ -31,19 +31,12 @@
 mod disk;
 mod encrypted;
 mod memory;
-// tiered.rs provides MmapLogReader (memory-mapped cold log reads) and
-// TieredStorage (hot + cold two-tier backend for large-scale deployments).
-#[cfg(not(target_arch = "wasm32"))]
-mod tiered;
 // Re-export the concrete types so callers can write `storage::AsyncDiskStorage`
 // instead of `storage::disk::AsyncDiskStorage`.
 #[cfg(not(target_arch = "wasm32"))]
 pub use disk::{AsyncDiskStorage, SyncDiskStorage};
 pub use encrypted::EncryptedStorage;
 pub use memory::InMemoryStorage;
-// Re-export TieredStorage so engine/mod.rs and main.rs can use it directly.
-#[cfg(not(target_arch = "wasm32"))]
-pub use tiered::TieredStorage;
 
 // On WASM builds, expose the browser-side OPFS storage.
 #[cfg(target_arch = "wasm32")]
@@ -54,13 +47,12 @@ pub use wasm::OpfsStorage;
 // ── Shared imports ────────────────────────────────────────────────────────────
 // These are used by both the trait definition and the replay functions below.
 use crate::engine::types::{DbError, LogEntry};
-#[cfg(feature = "schema")]
 use serde_json::Value;
 use std::ops::ControlFlow;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
 // multiple threads simultaneously without a global lock.
 // DashSet is the set equivalent.
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 // serde_json::Value is a dynamically-typed JSON value (can be object, array,
 // string, number, bool, or null). All document data is stored as Value.
 
@@ -94,39 +86,59 @@ pub trait StorageBackend: Send + Sync {
     /// full log in RAM.
     fn read_log(&self) -> Result<Vec<LogEntry>, DbError>;
 
-    /// Compact the log by writing only the current state (removing dead entries).
-    ///
-    /// `entries` is the complete current state of the database — every live
-    /// document as a single INSERT entry. The implementation should atomically
-    /// replace the existing log with this minimal set.
-    fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError>;
-
-    /// Compact the log and execute an optional post-backup shell hook.
-    ///
-    /// The default implementation calls `compact()` and ignores the hook.
-    /// Backends that support shell hooks should override this.
-    fn compact_with_hook(&self, entries: Vec<LogEntry>, _hook: Option<String>) -> Result<(), DbError> {
-        self.compact(entries)
+    /// Compact directly from the in-memory DashMaps, bypassing `LogEntry` allocation.
+    /// Disk backends override this to call `write_snapshot_from_maps` which serializes
+    /// each document inline — peak RAM stays at ~1x instead of ~2x.
+    /// The default falls back to the iterator path (used by memory/encrypted/wasm backends).
+    #[cfg(not(feature = "schema"))]
+    fn compact_from_maps(
+        &self,
+        _state: &DashMap<String, DashMap<String, Value>>,
+        _hook: Option<String>,
+    ) -> Result<(), DbError> {
+        Ok(())
     }
 
-    /// Read exactly `length` bytes starting at `offset` from the log.
-    ///
-    /// This is used to fetch "Cold" documents from the append-only log without
-    /// loading the entire file into memory.
-    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError>;
+    #[cfg(feature = "schema")]
+    fn compact_from_maps(
+        &self,
+        state: &DashMap<String, DashMap<String, Value>>,
+        schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+        hook: Option<String>,
+    ) -> Result<(), DbError> {
+        let doc_count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
+        let count = doc_count + schemas.len() as u64;
+        let doc_iter = state.iter().flat_map(|col_ref| {
+            let col_name = col_ref.key().clone();
+            col_ref.value().iter().map(move |item_ref| {
+                LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), item_ref.value().clone())
+            }).collect::<Vec<_>>()
+        });
+        let schema_iter = schemas.iter().map(|schema_ref| {
+            let (schema_json, _) = &**schema_ref.value();
+            LogEntry::new("SCHEMA".to_string(), schema_ref.key().clone(), "".to_string(), schema_json.clone())
+        }).collect::<Vec<_>>().into_iter();
+        let _ = (count, doc_iter.chain(schema_iter), hook);
+        Ok(())
+    }
 
     /// Return the current size of the persistent log file in bytes.
     ///
-    /// Used by the WASM worker to implement size-based auto-compaction — the JS
-    /// side calls `get_size` after every INSERT batch and compacts if the file
-    /// exceeds the configured threshold (default: 5 MB).
-    ///
-    /// The default implementation returns 0 (no size information available).
-    /// `OpfsStorage` overrides this with a real `FileSystemSyncAccessHandle.getSize()` call.
-    /// Native disk backends don't need this — they use OS-level file metadata instead.
-    #[allow(dead_code)]
+    /// Used by the WASM worker to report log file size. `OpfsStorage` overrides
+    /// this with a real `FileSystemSyncAccessHandle.getSize()` call.
+    /// Native disk backends return 0 (not needed — use OS-level file metadata).
     fn get_size(&self) -> Result<u64, DbError> {
         Ok(0)
+    }
+
+    /// Truncate the persistent store to 0 bytes and release any exclusive file
+    /// handles so the caller can delete the underlying file/directory.
+    ///
+    /// Only meaningful for OPFS-backed storage — all other backends return Ok(())
+    /// without doing anything. After this call the storage instance must not be
+    /// used for further reads or writes.
+    fn clear_opfs(&self) -> Result<(), DbError> {
+        Ok(())
     }
 
     /// Stream log entries into state one at a time, without loading the full
@@ -170,31 +182,21 @@ pub trait StorageBackend: Send + Sync {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Drive startup by streaming all log entries from storage into the in-memory
-/// state and index maps. Uses snapshot + delta replay when available.
+/// state map. Uses snapshot + delta replay when available.
 ///
-/// `state`   — the main data store: collection name → (key → document state)
-/// `indexes` — the index store: "collection:field" → (field value → set of keys)
+/// `state` — the main data store: collection name → (key → document state)
 ///
 /// Returns the total number of log entries processed.
 pub fn stream_into_state(
     storage: &dyn StorageBackend,
-    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
-    indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
+    state: &DashMap<String, DashMap<String, Value>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
-    let mut offset = 0u64;
-    let mut tx_buffer: Vec<(LogEntry, crate::engine::types::RecordPointer)> = Vec::new();
+    let mut tx_buffer: Vec<LogEntry> = Vec::new();
     let mut active_tx: Option<String> = None;
 
-    // stream_log_into calls our closure once per LogEntry, providing the 
-    // LogEntry and its raw byte length in the log file.
-    storage.stream_log_into(&mut |entry, length| {
-        let pointer = crate::engine::types::RecordPointer {
-            offset,
-            length,
-        };
-
+    storage.stream_log_into(&mut |entry, _length| {
         match entry.cmd.as_str() {
             "TX_BEGIN" => {
                 active_tx = Some(entry.key.clone());
@@ -202,17 +204,8 @@ pub fn stream_into_state(
             }
             "TX_COMMIT" => {
                 if active_tx.as_ref() == Some(&entry.key) {
-                    // Flush buffer to DashMap
-                    for (e, p) in tx_buffer.drain(..) {
-                        // If length was 0, p.length will be 0 (from the snapshot replay)
-                        let pointer = if p.length == 0 { None } else { Some(p) };
-                        apply_entry(
-                            &e,
-                            state,
-                            indexes,
-                            #[cfg(feature = "schema")] schemas,
-                            pointer,
-                        );
+                    for e in tx_buffer.drain(..) {
+                        apply_entry(&e, state, #[cfg(feature = "schema")] schemas);
                     }
                     active_tx = None;
                 } else {
@@ -221,105 +214,44 @@ pub fn stream_into_state(
             }
             _ => {
                 if active_tx.is_some() {
-                    // Hold in RAM until commit
-                    tx_buffer.push((entry, pointer));
+                    tx_buffer.push(entry);
                 } else {
-                    // Standard non-transactional entry
-                    // If length is 0, it means it's from a snapshot, so we want it Hot (pointer=None).
-                    let p = if length == 0 { None } else { Some(pointer) };
-                    apply_entry(
-                        &entry,
-                        state,
-                        indexes,
-                        #[cfg(feature = "schema")] schemas,
-                        p,
-                    );
+                    apply_entry(&entry, state, #[cfg(feature = "schema")] schemas);
                 }
             }
         }
 
         count += 1;
-        // +1 for the newline character appended to each JSON line in the log.
-        // length=0 means this entry came from the snapshot (not the log file),
-        // so we must NOT advance the file offset for it.
-        if length > 0 {
-            offset += (length + 1) as u64;
-        }
         ControlFlow::Continue(())
     })?;
 
-    // If active_tx is still Some, the file ended prematurely (crash).
-    // In this case, we DISCARD the buffer to ensure atomicity of the last operation.
+    // If active_tx is still Some, the file ended prematurely (crash) — discard buffer.
     Ok(count)
 }
 
-/// Apply a single log entry to the in-memory state and indexes.
-///
-/// If `pointer` is provided (during log replay), INSERT entries are stored
-/// as `DocumentState::Cold(pointer)` to save memory. Live writes stay `Hot`.
+/// Apply a single log entry to the in-memory state.
 pub fn apply_entry(
     entry: &LogEntry,
-    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
-    indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
+    state: &DashMap<String, DashMap<String, Value>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
-    pointer: Option<crate::engine::types::RecordPointer>,
 ) {
     match entry.cmd.as_str() {
         "INSERT" => {
             let col = state
                 .entry(entry.collection.clone())
-                .or_insert_with(DashMap::new);
-
-            // During replay, we use the pointer (Cold). For live writes, we store the Value (Hot).
-            let doc_state = if let Some(p) = pointer {
-                crate::engine::types::DocumentState::Cold(p)
-            } else {
-                crate::engine::types::DocumentState::Hot(entry.value.clone())
-            };
-
-            col.insert(entry.key.clone(), doc_state);
-
-            // Indexes ALWAYS store values in RAM to keep searches O(1).
-            crate::engine::indexing::index_doc(indexes, &entry.collection, &entry.key, &entry.value);
+                .or_default();
+            col.insert(entry.key.clone(), entry.value.clone());
         }
         "DELETE" => {
             if let Some(col) = state.get(&entry.collection) {
-                // To unindex, we need the Value. If it's Cold, we'd have to fetch it.
-                // However, during REPLAY, we can just skip unindexing if we don't have the value,
-                // BUT that would break if a DELETE follows an INSERT.
-                // Actually, unindex_doc needs the Value.
-                // For simplicity in this v1 of Hybrid, we'll fetch if needed or change unindex_doc.
-                // Wait, if it's Cold, we don't have the value.
-                // I'll leave a TODO here and for now just handle Hot.
-                if let Some(old_state) = col.get(&entry.key) {
-                    if let crate::engine::types::DocumentState::Hot(old_val) = old_state.value() {
-                         crate::engine::indexing::unindex_doc(
-                            indexes,
-                            &entry.collection,
-                            &entry.key,
-                            old_val,
-                        );
-                    }
-                }
                 col.remove(&entry.key);
             }
         }
         "DROP" => {
-            // Remove the entire collection from the state map.
             state.remove(&entry.collection);
-            // Remove all indexes that belong to this collection.
-            // retain() keeps only entries where the closure returns true.
-            // We drop any index whose key starts with "collection:" (e.g. "users:role").
-            indexes.retain(|k, _| !k.starts_with(&format!("{}:", entry.collection)));
         }
         "INDEX" => {
-            // Register an empty index slot for "collection:field".
-            // The index will be populated as subsequent INSERT entries are applied.
-            // `entry.key` holds the field name (e.g. "role" for "users:role").
-            indexes.insert(
-                format!("{}:{}", entry.collection, entry.key),
-                DashMap::new(),
-            );
+            // Legacy INDEX entries are silently ignored — indexing has been removed.
         }
         #[cfg(feature = "schema")]
         "SCHEMA" => {
@@ -341,50 +273,3 @@ pub fn apply_entry(
 // already been loaded into memory (e.g. after decryption by EncryptedStorage).
 // It applies the same logic as apply_entry() but iterates a pre-built slice.
 
-// pub fn replay_log_entries(
-//     entries: &[LogEntry],
-//     state: &DashMap<String, DashMap<String, Value>>,
-//     indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-// ) {
-//     for entry in entries {
-//         match entry.cmd.as_str() {
-//             "INSERT" => {
-//                 // Get or create the collection, then insert the document.
-//                 let col = state
-//                     .entry(entry.collection.clone())
-//                     .or_insert_with(DashMap::new);
-//                 col.insert(entry.key.clone(), entry.value.clone());
-//                 // Keep indexes in sync with the inserted document.
-//                 crate::engine::indexing::index_doc(indexes, &entry.collection, &entry.key, &entry.value);
-//             }
-//             "DELETE" => {
-//                 if let Some(col) = state.get(&entry.collection) {
-//                     // Remove from indexes before removing from state.
-//                     if let Some(old_val) = col.get(&entry.key) {
-//                         crate::engine::indexing::unindex_doc(
-//                             indexes,
-//                             &entry.collection,
-//                             &entry.key,
-//                             old_val.value(),
-//                         );
-//                     }
-//                     col.remove(&entry.key);
-//                 }
-//             }
-//             "DROP" => {
-//                 // Remove the collection and all its associated indexes.
-//                 state.remove(&entry.collection);
-//                 indexes.retain(|k, _| !k.starts_with(&format!("{}:", entry.collection)));
-//             }
-//             "INDEX" => {
-//                 // Register an empty index slot.
-//                 indexes.insert(
-//                     format!("{}:{}", entry.collection, entry.key),
-//                     DashMap::new(),
-//                 );
-//             }
-//             _ => {}
-//         }
-//     }
-//     println!("✅ Database restored & Indexes rebuilt!");
-// }

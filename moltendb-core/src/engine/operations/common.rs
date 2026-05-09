@@ -11,8 +11,8 @@ pub fn now_iso() -> String {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     let (s, m, h) = (secs % 60, (secs / 60) % 60, (secs / 3600) % 24);
     let mut d = secs / 86400; let mut y = 1970u64;
-    loop { let dy = if (y%4==0 && y%100!=0)||y%400==0{366}else{365}; if d<dy{break;} d-=dy; y+=1; }
-    let lp = (y%4==0&&y%100!=0)||y%400==0;
+    loop { let dy = if (y.is_multiple_of(4) && !y.is_multiple_of(100))||y.is_multiple_of(400){366}else{365}; if d<dy{break;} d-=dy; y+=1; }
+    let lp = (y.is_multiple_of(4)&&!y.is_multiple_of(100))||y.is_multiple_of(400);
     let md:[u64;12]=[31,if lp{29}else{28},31,30,31,30,31,31,30,31,30,31];
     let mut mo=1u64; for &x in &md{if d<x{break;} d-=x; mo+=1;}
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",y,mo,d+1,h,m,s)

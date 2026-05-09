@@ -20,42 +20,6 @@ use serde_json::Value;
 use std::fmt;
 use web_time::{SystemTime, UNIX_EPOCH};
 
-/// A pointer to a document's location in the persistent log file.
-/// Used in the "Cold" state of the hybrid storage model.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct RecordPointer {
-    /// Byte offset from the start of the log file.
-    pub offset: u64,
-    /// Length of the JSON-encoded document in bytes.
-    pub length: u32,
-}
-
-/// The state of a document in the database's in-memory index.
-///
-/// MoltenDB uses a hybrid "Hot/Cold" model to balance speed and memory usage:
-///
-///   Hot(Value)    — The full JSON document is in RAM. Reads are sub-microsecond.
-///   Cold(Pointer) — Only the document's location on disk is in RAM.
-///                   Reads require a single disk I/O and JSON parsing (~50µs).
-#[derive(Clone, Debug)]
-pub enum DocumentState {
-    /// Document is fully cached in memory.
-    Hot(Value),
-    /// Document is on disk; only its offset/length are in memory.
-    Cold(RecordPointer),
-}
-
-impl DocumentState {
-    /// Helper to get the underlying Value. If Cold, it must be fetched from storage.
-    /// This is used by query evaluators and analytics.
-    #[allow(dead_code)]
-    pub fn value(&self) -> Option<&Value> {
-        match self {
-            DocumentState::Hot(v) => Some(v),
-            DocumentState::Cold(_) => None,
-        }
-    }
-}
 
 /// The atomic unit of data in MoltenDB's append-only log.
 ///
@@ -160,6 +124,11 @@ pub enum DbError {
     /// The document version provided by the client is outdated.
     Conflict,
 
+    /// The background disk I/O thread encountered a fatal error (e.g. disk full).
+    /// The engine is now in read-only mode — new writes are rejected until the
+    /// process is restarted and the underlying storage issue is resolved.
+    StorageFault(String),
+
     /// A document failed JSON schema validation.
     #[cfg(feature = "schema")]
     SchemaValidationError(String),
@@ -179,6 +148,7 @@ impl fmt::Display for DbError {
             DbError::TypeMismatch(msg) => write!(f, "Type Mismatch: {}", msg),
             DbError::CollectionNotFound => write!(f, "Collection Not Found"),
             DbError::Conflict => write!(f, "Conflict: Document version is outdated"),
+            DbError::StorageFault(msg) => write!(f, "Storage fault — system is in read-only mode: {}", msg),
             #[cfg(feature = "schema")]
             DbError::SchemaValidationError(msg) => write!(f, "Schema Validation Error: {}", msg),
         }

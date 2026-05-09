@@ -4,12 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct DbConfig {
     /// Path to the database file (e.g., "my_database.log")
     pub path: String,
-    /// Enable tiered storage (hot + cold log)
-    pub tiered_mode: bool,
     /// Force synchronous writes (no data loss, lower performance)
     pub sync_mode: bool,
-    /// Max documents to keep in RAM per collection
-    pub hot_threshold: usize,
     /// Rate limiting: max requests per window (server-only, None = disabled/use default)
     pub rate_limit_requests: Option<u32>,
     /// Rate limiting: window size in seconds (server-only, None = disabled/use default)
@@ -31,9 +27,7 @@ impl Default for DbConfig {
     fn default() -> Self {
         Self {
             path: "molten.db".to_string(),
-            tiered_mode: false,
             sync_mode: false,
-            hot_threshold: 50000,
             rate_limit_requests: Some(1000),
             rate_limit_window: Some(60),
             max_body_size: 10 * 1024 * 1024,

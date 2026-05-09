@@ -11,8 +11,10 @@
 
 use super::super::StorageBackend;
 use super::log::{write_compacted_log_no_tx, stream_log_entries, read_log_from_disk};
-use super::snapshot::{write_snapshot, load_snapshot, snapshot_path};
+use super::snapshot::{write_snapshot_from_maps, load_snapshot, snapshot_path};
 use crate::engine::types::{DbError, LogEntry};
+use dashmap::DashMap;
+use serde_json::Value;
 use std::fs::{File, OpenOptions};
 use std::ops::ControlFlow;
 use std::io::{BufWriter, Write};
@@ -33,6 +35,8 @@ pub struct SyncDiskStorage {
 impl SyncDiskStorage {
     /// Open (or create) the log file at `path` in append mode.
     pub fn new(path: &str) -> Result<Self, DbError> {
+        // Remove any stale .tmp file left by a previous crash before compaction swap.
+        let _ = std::fs::remove_file(format!("{}.tmp", path));
         let file = OpenOptions::new().create(true).append(true).open(path)?;
 
         Ok(Self {
@@ -42,15 +46,58 @@ impl SyncDiskStorage {
     }
 }
 
+impl SyncDiskStorage {
+    fn run_backup_hook(&self, script_path: String) {
+        let snapshot_path = snapshot_path(&self.path);
+        let abs_snapshot_path = match std::fs::canonicalize(&snapshot_path) {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(_) => snapshot_path,
+        };
+        tokio::spawn(async move {
+            let res = if cfg!(target_os = "windows") {
+                tokio::process::Command::new("powershell")
+                    .arg("-ExecutionPolicy").arg("Bypass").arg("-Command")
+                    .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
+                    .output().await
+            } else {
+                tokio::process::Command::new("sh")
+                    .arg(script_path).arg(abs_snapshot_path)
+                    .output().await
+            };
+            match res {
+                Ok(output) if !output.status.success() => {
+                    tracing::error!("❌ Post-backup hook failed: {}", String::from_utf8_lossy(&output.stderr));
+                }
+                Ok(_) => tracing::info!("✅ Post-backup hook executed successfully"),
+                Err(e) => tracing::error!("❌ Failed to spawn post-backup hook: {}", e),
+            }
+        });
+    }
+
+    fn swap_log(&self) -> Result<(), DbError> {
+        let temp_path = format!("{}.tmp", self.path);
+        write_compacted_log_no_tx(&temp_path, &[])?;
+        let mut w = self.writer.lock().map_err(|_| DbError::LockPoisoned)?;
+        if let Err(e) = std::fs::rename(&temp_path, &self.path) {
+            tracing::error!("Failed to swap compacted file: {}", e);
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(DbError::from(e));
+        }
+        let new_file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        *w = BufWriter::new(new_file);
+        Ok(())
+    }
+}
+
 impl StorageBackend for SyncDiskStorage {
-    /// Serialize `entry` to JSON, write it to the BufWriter, and flush immediately.
+    /// Serialize `entry` to MessagePack, write it to the BufWriter, and flush immediately.
     /// This call blocks until the OS has accepted the data.
     fn write_entry(&self, entry: &LogEntry) -> Result<(), DbError> {
-        let json_line = serde_json::to_string(entry)?;
-        // Lock the Mutex — only one thread can write at a time.
+        let encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let len = (encoded.len() as u32).to_le_bytes();
         let mut w = self.writer.lock().map_err(|_| DbError::LockPoisoned)?;
-        writeln!(w, "{}", json_line)?;
-        // Flush immediately so the data is durable before we return.
+        w.write_all(&len)?;
+        w.write_all(&encoded)?;
         w.flush()?;
         Ok(())
     }
@@ -60,92 +107,24 @@ impl StorageBackend for SyncDiskStorage {
         read_log_from_disk(&self.path)
     }
 
-    /// Compact the log: write a binary snapshot, swap the log file with an
-    /// empty one, then reopen the writer.
-    fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
-        self.compact_with_hook(entries, None)
-    }
-
-    fn compact_with_hook(&self, entries: Vec<LogEntry>, hook: Option<String>) -> Result<(), DbError> {
-        // Step 1: Write binary snapshot for fast next startup.
-        // After compaction the log is reset to empty, so seq=0: all future log
-        // lines written after this snapshot must be replayed from the start.
-        let seq = 0u64;
-        if let Err(e) = write_snapshot(&self.path, &entries, seq) {
+    #[cfg(not(feature = "schema"))]
+    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, hook: Option<String>) -> Result<(), DbError> {
+        if let Err(e) = write_snapshot_from_maps(&self.path, state, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         } else if let Some(script_path) = hook {
-            // If snapshot was successful and we have a hook, execute it.
-            let snapshot_path = snapshot_path(&self.path);
-            let abs_snapshot_path = match std::fs::canonicalize(&snapshot_path) {
-                Ok(p) => p.to_string_lossy().to_string(),
-                Err(_) => snapshot_path,
-            };
-
-            // Execute in background
-            tokio::spawn(async move {
-                let res = if cfg!(target_os = "windows") {
-                    tokio::process::Command::new("powershell")
-                        .arg("-ExecutionPolicy")
-                        .arg("Bypass")
-                        .arg("-Command")
-                        .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
-                        .output()
-                        .await
-                } else {
-                    tokio::process::Command::new("sh")
-                        .arg(script_path)
-                        .arg(abs_snapshot_path)
-                        .output()
-                        .await
-                };
-
-                match res {
-                    Ok(output) => {
-                        if !output.status.success() {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            tracing::error!("❌ Post-backup hook failed: {}", stderr);
-                        } else {
-                            tracing::info!("✅ Post-backup hook executed successfully");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Failed to spawn post-backup hook: {}", e);
-                    }
-                }
-            });
+            self.run_backup_hook(script_path);
         }
-
-        // Step 2: Write an empty compacted log to a temp file.
-        let temp_path = format!("{}.tmp", self.path);
-        write_compacted_log_no_tx(&temp_path, &[])?;
-
-        // Step 3: Lock the writer, rename the temp file over the live log,
-        // then reopen the writer so future writes go to the compacted file.
-        let mut w = self.writer.lock().map_err(|_| DbError::LockPoisoned)?;
-        // On Unix this rename is atomic. On Windows the file must be closed first,
-        // but since we hold the Mutex no other thread can write concurrently.
-        if let Err(e) = std::fs::rename(&temp_path, &self.path) {
-             tracing::error!("Failed to swap compacted file: {}", e);
-             return Err(DbError::from(e));
-        }
-
-        // Reopen the file so the writer points at the new compacted log.
-        let new_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        *w = BufWriter::new(new_file);
-        Ok(())
+        self.swap_log()
     }
 
-    /// Read exactly `length` bytes from the log at `offset`.
-    fn read_at(&self, offset: u64, length: u32) -> Result<Vec<u8>, DbError> {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = File::open(&self.path)?;
-        file.seek(SeekFrom::Start(offset))?;
-        let mut buffer = vec![0u8; length as usize];
-        file.read_exact(&mut buffer)?;
-        Ok(buffer)
+    #[cfg(feature = "schema")]
+    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>, hook: Option<String>) -> Result<(), DbError> {
+        if let Err(e) = write_snapshot_from_maps(&self.path, state, schemas, 0) {
+            tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
+        } else if let Some(script_path) = hook {
+            self.run_backup_hook(script_path);
+        }
+        self.swap_log()
     }
 
     /// Stream log entries into state using snapshot + delta replay.
@@ -156,20 +135,15 @@ impl StorageBackend for SyncDiskStorage {
     ) -> Result<u64, DbError> {
         let mut count = 0u64;
         // Fast path: load snapshot and replay only the delta.
-        if let Some((snapshot_entries, seq)) = load_snapshot(&self.path) {
-            tracing::info!(
-                "⚡ Snapshot loaded ({} entries, seq {}). Replaying delta only...",
-                snapshot_entries.len(),
-                seq
-            );
-            for entry in snapshot_entries {
-                // Entries from snapshot MUST be Hot because they are not in the log file
-                // and thus don't have a valid RecordPointer for this log instance.
-                if let ControlFlow::Break(_) = f(entry, 0) {
-                    return Ok(count);
-                }
+        if let Some(seq) = load_snapshot(&self.path, &mut |entry| {
+            // Entries from snapshot MUST be Hot because they are not in the log file
+            // and thus don't have a valid RecordPointer for this log instance.
+            let res = f(entry, 0);
+            if let ControlFlow::Continue(_) = res {
                 count += 1;
             }
+            res
+        }) {
             if let ControlFlow::Break(_) = stream_log_entries(&self.path, seq, |e, l| {
                 let res = f(e, l);
                 if let ControlFlow::Continue(_) = res {

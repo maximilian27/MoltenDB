@@ -4,11 +4,10 @@
 // When `--in-memory` is set, MoltenDB skips all disk I/O:
 //   • write_entry()  → discards the entry (no-op)
 //   • read_log()     → returns an empty Vec (nothing to replay on startup)
-//   • compact()      → no-op
-//   • read_at()      → returns an error (Cold documents never exist in this mode)
+//   • stream_log_into() → no-op, returns 0
 //
 // This turns MoltenDB into a pure in-process cache — think Redis-like behaviour
-// with the full MoltenDB query engine (filters, joins, indexes) on top.
+// with the full MoltenDB query engine (filters, joins, sort, pagination) on top.
 //
 // ⚠️  All data is lost when the process exits. This mode is intentional for:
 //   • Ephemeral caches / session stores
@@ -35,19 +34,6 @@ impl StorageBackend for InMemoryStorage {
         Ok(Vec::new())
     }
 
-    /// No-op — there is no log file to compact.
-    fn compact(&self, _entries: Vec<LogEntry>) -> Result<(), DbError> {
-        Ok(())
-    }
-
-    /// Cold documents never exist in in-memory mode — every document is Hot.
-    /// This should never be called, but returns a clear error if it is.
-    fn read_at(&self, _offset: u64, _length: u32) -> Result<Vec<u8>, DbError> {
-        Err(DbError::Io(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "read_at is not supported in --in-memory mode (no Cold documents exist)",
-        )))
-    }
 
     /// Stream log entries — always empty in in-memory mode.
     fn stream_log_into(&self, _f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {

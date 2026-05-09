@@ -1,4 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
+#![deny(warnings)]
 // ─── auth.rs ──────────────────────────────────────────────────────────────────
 // This file implements authentication and authorisation for the MoltenDB server.
 //

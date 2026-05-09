@@ -2,13 +2,28 @@
 // Update operation: update (partial patch).
 // ─────────────────────────────────────────────────────────────────────────────
 
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::debug;
 use super::common::now_iso;
-use super::super::{indexing, StorageBackend};
+use super::super::StorageBackend;
 use super::super::types::{DbError, LogEntry};
+
+/// Parameters for the [`update`] operation.
+///
+/// Grouping these into a struct keeps the function signature within Clippy's
+/// argument-count limit and makes call sites more readable.
+pub struct UpdateParams<'a> {
+    pub state: &'a DashMap<String, DashMap<String, serde_json::Value>>,
+    pub storage: &'a Arc<dyn StorageBackend>,
+    pub tx: &'a tokio::sync::broadcast::Sender<String>,
+    #[cfg(feature = "schema")]
+    pub schemas: &'a DashMap<String, Arc<(Value, jsonschema::Validator)>>,
+    pub collection: &'a str,
+    pub key: &'a str,
+    pub updates: Value,
+}
 
 /// Partially update (merge) a single document with new field values.
 ///
@@ -20,16 +35,17 @@ use super::super::types::{DbError, LogEntry};
 ///
 /// Example: document { name: "Alice", role: "user" } + update { role: "admin" }
 ///          → result: { name: "Alice", role: "admin" }
-pub fn update(
-    state: &DashMap<String, DashMap<String, crate::engine::types::DocumentState>>,
-    indexes: &DashMap<String, DashMap<String, DashSet<String>>>,
-    storage: &Arc<dyn StorageBackend>,
-    tx: &tokio::sync::broadcast::Sender<String>,
-    #[cfg(feature = "schema")] schemas: &DashMap<String, Arc<(Value, jsonschema::Validator)>>,
-    collection: &str,
-    key: &str,
-    updates: Value, // the partial update — only these fields will be changed
-) -> Result<bool, DbError> {
+pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
+    let UpdateParams {
+        state,
+        storage,
+        tx,
+        #[cfg(feature = "schema")]
+        schemas,
+        collection,
+        key,
+        updates,
+    } = params;
     // TX_BEGIN: Start a transaction for the update.
     let tx_id = uuid::Uuid::new_v4().to_string();
     storage.write_entry(&LogEntry::new(
@@ -39,41 +55,22 @@ pub fn update(
         Value::Null,
     ))?;
 
-    if let Some(col) = state.get(collection) {
-        if let Some(doc) = {
-            if let Some(doc_state) = col.get(key) {
-                // Fetch the full document value first.
-                Some(match doc_state.value() {
-                    crate::engine::types::DocumentState::Hot(v) => v.clone(),
-                    crate::engine::types::DocumentState::Cold(ptr) => {
-                        let bytes = storage.read_at(ptr.offset, ptr.length)?;
-                        let entry: crate::engine::types::LogEntry = serde_json::from_slice(&bytes)?;
-                        entry.value
-                    }
-                })
-            } else {
-                None
-            }
-        } {
+    if let Some(col) = state.get(collection)
+        && let Some(doc) = col.get(key).map(|v| v.clone()) {
             let mut doc = doc;
 
-            // Step 1: Remove the document from indexes BEFORE modifying it,
-            // so the old field values are removed from the index entries.
-            indexing::unindex_doc(indexes, collection, key, &doc);
-
-            // Step 2: Merge the update fields into the existing document.
+            // Step 1: Merge the update fields into the existing document.
             // Only top-level fields are merged — nested objects are replaced,
             // not recursively merged.
             if let Some(update_obj) = updates.as_object() {
                 // If the caller provides a "_v" field in the update, it acts as a guard.
                 // If the current version is not equal to this guard, we return Conflict.
                 let existing_v = doc.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-                if let Some(guard_v) = update_obj.get("_v").and_then(|v| v.as_u64()) {
-                    if guard_v != existing_v {
+                if let Some(guard_v) = update_obj.get("_v").and_then(|v| v.as_u64())
+                    && guard_v != existing_v {
                         debug!("⚡ Conflict error: {}/{} update guard _v={} != stored _v={}", collection, key, guard_v, existing_v);
                         return Err(DbError::Conflict);
                     }
-                }
 
                 if let Some(doc_obj) = doc.as_object_mut() {
                     for (k, v) in update_obj {
@@ -95,11 +92,8 @@ pub fn update(
             #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &new_value)?;
 
-            // Step 4: Re-add the document to indexes with its new field values.
-            indexing::index_doc(indexes, collection, key, &new_value);
-
-            // Step 5: Update state (now Hot).
-            col.insert(key.to_string(), crate::engine::types::DocumentState::Hot(new_value.clone()));
+            // Step 2: Update state.
+            col.insert(key.to_string(), new_value.clone());
 
             // Step 6: Write the full updated document as an INSERT entry.
             let entry = LogEntry::new(
@@ -131,7 +125,6 @@ pub fn update(
             );
             return Ok(true); // document was found and updated
         }
-    }
 
     // If document not found, we still commit the transaction (which was just a BEGIN).
     // Alternatively, we could have started the transaction only after finding the document.

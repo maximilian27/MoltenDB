@@ -72,10 +72,9 @@ fn test_plain_json_if_no_key_provided() {
         db.insert("public", vec![("info".to_string(), json!({"data": "visible"}))]).unwrap();
     }
 
-    // 2. Verify it's plain JSON on disk
-    let content = std::fs::read_to_string(&path).unwrap();
-    assert!(content.contains("\"data\":\"visible\""), "Log should contain plain JSON");
-    assert!(content.contains("\"cmd\":\"INSERT\""), "Log should contain INSERT command");
+    // 2. Verify the log file exists and is non-empty (binary MessagePack format)
+    let metadata = std::fs::metadata(&path).unwrap();
+    assert!(metadata.len() > 0, "Log file should be non-empty");
 
     // 3. Reopen and verify
     let db2 = Db::open(DbConfig {

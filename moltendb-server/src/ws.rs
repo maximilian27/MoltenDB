@@ -44,7 +44,7 @@ pub async fn ws_handler(
 ///      by the token's scopes, so only authorised collections are pushed.
 ///   3. The server pushes a change event to the client whenever a write (insert, update,
 ///      delete, drop) occurs on a collection the token is authorised to read:
-///        `{ "event": "change", "collection": "<name>", "key": "<key>", "new_v": <version> }`
+///      `{ "event": "change", "collection": "<name>", "key": "<key>", "new_v": <version> }`
 ///      Events for collections outside the token's scopes are silently dropped.
 ///      All CRUD operations must be performed via the HTTP endpoints (POST /get, /set, /update,
 ///      /delete). WebSockets are exclusively for real-time push notifications.
@@ -171,11 +171,10 @@ async fn handle_socket(mut socket: WebSocket, db: engine::Db, revocation_store: 
                                 false
                             };
 
-                            if allowed {
-                                if sender.send(Message::Text(Utf8Bytes::from(msg))).await.is_err() {
+                            if allowed
+                                && sender.send(Message::Text(Utf8Bytes::from(msg))).await.is_err() {
                                     break; // Client disconnected.
                                 }
-                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             // The broadcast buffer overflowed — we missed n events.

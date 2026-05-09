@@ -1,4 +1,3 @@
-use tracing::debug;
 use serde_json::{Value, json};
 use crate::validation;
 use crate::engine;
@@ -31,12 +30,6 @@ pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize, ma
                 #[cfg(feature = "schema")]
                 Err(engine::DbError::SchemaValidationError(msg)) => return (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => return (500, json!({ "error": "Database update failed", "details": e.to_string(), "statusCode": 500 }))
-            }
-        }
-        // Check collection size for auto-eviction (Hybrid Bitcask).
-        if let Ok(count) = db.evict_collection(col, db.hot_threshold) {
-            if count > 0 {
-                debug!("❄️  Auto-evicted {} documents from {} to disk", count, col);
             }
         }
         (200, json!({ "status": "ok", "updated": updated_count }))

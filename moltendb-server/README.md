@@ -10,9 +10,14 @@ The runnable binary. Delegates all database logic to `moltendb-core`.
 
 [![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-59%20passing-brightgreen?style=flat-square)](#testing)
+[![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](../CHANGELOG.md)
 
 </div>
+
+> [!WARNING]
+> **Versions starting with `v1.0.0-rc1` are not backwards compatible with previous versions.**
+> We are actively working on improving performance and stability. Please review the changelog before upgrading.
 
 ---
 
@@ -50,7 +55,6 @@ cargo install --path moltendb-server
 moltendb \
   --db-path my_database.log \
   --write-mode async \
-  --storage-mode tiered \
   --jwt-secret my-awesome-secret \
   --root-user admin \
   --root-password admin123 \
@@ -63,7 +67,6 @@ Or with `cargo run` from the workspace root:
 cargo run --package moltendb-server --bin moltendb -- \
   --db-path my_database.log \
   --write-mode async \
-  --storage-mode tiered \
   --jwt-secret my-awesome-secret \
   --root-user admin \
   --root-password admin123 \
@@ -86,7 +89,6 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--debug` | `MOLTENDB_DEBUG` | `false` | Enable verbose debug logging |
 | `--disable-encryption` | `MOLTENDB_DISABLE_ENCRYPTION` | `false` | Disable at-rest encryption |
 | `--encryption-key` | `MOLTENDB_ENCRYPTION_KEY` | — | At-rest encryption password (ChaCha20-Poly1305) |
-| `--hot-threshold` | `MOLTENDB_HOT_THRESHOLD` | `50000` | Number of documents per collection kept in RAM before paging out to disk |
 | `--jwt-secret` | `MOLTENDB_JWT_SECRET` | **required** | JWT signing secret — server refuses to start without it |
 | `--key` | `MOLTENDB_TLS_KEY` | `key.pem` | TLS private key PEM file |
 | `--max-body-size` | `MOLTENDB_MAX_BODY_SIZE` | `10485760` | Max request body size in bytes (default 10 MB) |
@@ -96,7 +98,6 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Rate limit sliding window in seconds |
 | `--root-password` | `MOLTENDB_ROOT_PASSWORD` | — | Root password seeded at startup |
 | `--root-user` | `MOLTENDB_ROOT_USER` | — | Root username seeded at startup |
-| `--storage-mode` | `MOLTENDB_STORAGE_MODE` | `standard` | `standard` or `tiered` (hot + cold log, recommended for 100k+ docs) |
 | `--write-mode` | `MOLTENDB_WRITE_MODE` | `async` | `async` or `sync` |
 
 ### Point-in-Time Recovery (PITR)
