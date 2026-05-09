@@ -163,7 +163,7 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 ### ✅ Browser (WASM + OPFS)
 - Full document store running inside a Web Worker — zero main-thread blocking
 - Data persists across page reloads using the Origin Private File System (OPFS)
-- Automatic log compaction: count-based (every 500 inserts) and size-based (> 5 MB)
+- Manual compaction via `POST /snapshot` — no surprise I/O spikes during writes
 - **[`@moltendb-web/core` on NPM](https://www.npmjs.com/package/@moltendb-web/core)** — bundles the WASM engine, Web Worker, and main-thread client into a single publishable artifact
 - **[`@moltendb-web/query` on NPM](https://www.npmjs.com/package/@moltendb-web/query)** — type-safe, chainable query builder (CJS + ESM + `.d.ts`)
 - **[`@moltendb-web/angular` on NPM](https://www.npmjs.com/package/@moltendb-web/angular)** — official Angular wrapper for seamless integration
@@ -178,12 +178,11 @@ One of MoltenDB's core features is **GraphQL-style field selection**: every quer
 - At-rest encryption with XChaCha20-Poly1305 (on by default, key from `--encryption-key`)
 - **In-memory store:** the entire dataset lives in RAM (`DashMap`) — reads are pure hashmap lookups with no disk I/O; RAM is the hard dataset size limit
 - Two write modes: async (50 ms flush, high throughput) and sync (flush-on-write, zero data loss)
-- Binary snapshots on compaction for fast startup (snapshot + delta replay, not full log replay)
+- Binary snapshots for fast startup (snapshot + delta replay, not full log replay)
 - **Point-in-Time Recovery (PITR):** Recover the database to any millisecond or log sequence number using the `recover` CLI command.
 - **Snapshot Versioning:** Historical snapshots are automatically moved to a `/backup` folder with Unix timestamps.
 - **Post-Backup Hook:** Automatically execute custom shell commands (e.g., S3 upload, Slack notify) after every successful snapshot.
 - **Manual Snapshots:** Trigger a snapshot on demand via the `POST /snapshot` endpoint.
-- Size-based compaction trigger (> 100 MB) in addition to the hourly timer
 - WebSocket endpoint (`/ws`) for real-time push notifications — subscribe and receive change events on every write
 
 ### ✅ Query Engine (shared between browser and server)
@@ -823,7 +822,7 @@ MoltenDB has three storage modes. Choose based on your durability requirements:
 
 ### Async (default)
 
-Single append-only log file (`my_database.log`). Writes are buffered in memory and flushed to disk every **50 ms** — up to 50 ms of data can be lost on a hard crash. Highest write throughput. Compaction is triggered when the log exceeds 100 MB or every hour; a binary snapshot is written so the next startup only replays the delta, not the full log.
+Single append-only log file (`my_database.log`). Writes are buffered in memory and flushed to disk every **50 ms** — up to 50 ms of data can be lost on a hard crash. Highest write throughput. Call `POST /snapshot` to compact manually — a binary snapshot is written so the next startup only replays the delta, not the full log.
 
 ### Sync (`--write-mode sync`)
 
@@ -845,7 +844,7 @@ Bypasses the WAL and all disk I/O entirely. All data lives exclusively in the RA
 
 ### What happens during compaction
 
-Compaction is triggered automatically when the log file exceeds 100 MB or every hour. It:
+Compaction runs on demand when you call `POST /snapshot`. It:
 
 1. Writes the complete current in-memory state to a **temp snapshot file** — the live snapshot is untouched at this point.
 2. **Moves the existing snapshot** to `backup/<name>.snapshot.bin.<unix_timestamp>.bak` — the old snapshot is never deleted.

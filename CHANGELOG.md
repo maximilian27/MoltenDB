@@ -4,6 +4,7 @@
 * **Removed cold log / tiered storage** — `my_database.cold.log`, `TieredStorage` hot/cold promotion, `MmapLogReader`, and `HOT_TIER_MAX_BYTES` are gone. The `--storage-mode tiered` CLI flag is removed. All data now lives in a single log file + snapshot. `TieredStorage` is kept as a thin newtype over `AsyncDiskStorage` for compatibility but does no tiering.
 * **Removed `--hot-threshold` / `MOLTENDB_HOT_THRESHOLD`** — the hot/cold eviction threshold no longer exists. All documents are loaded into RAM on startup. `evict_collection` and the `evict.rs` module are removed.
 * **Removed auto-indexing** — `indexing.rs`, the `indexes` field on `Db`, `track_query`, and all INDEX log entries are removed. Queries always use full-collection scans. Indexes will be rebuilt from scratch in a future release.
+* **Removed auto-compaction** — compaction no longer triggers automatically on write count or log size thresholds. Call `POST /snapshot` explicitly to compact. This eliminates surprise I/O spikes during bulk writes and gives full control over when the log is reset.
 
 ### Performance
 * Rewrote `process_get.rs` — simplified from ~500 lines to ~230 lines; removed incorrect pre-sort fast path, extracted `shape_doc` helper, unified sort/truncate/skip pipeline.
@@ -17,6 +18,7 @@
 * Removed `write_compacted_log` from `disk/log.rs` — only used by the old cold-log promotion path.
 * Removed re-exports of `write_compacted_log` and `write_snapshot` from `disk/mod.rs`.
 * Deleted stale `my_database.cold.log` from project root.
+* Removed stale auto-compaction references from README storage mode descriptions and the "Snapshots, Compaction & Data Safety" section.
 
 ---
 
