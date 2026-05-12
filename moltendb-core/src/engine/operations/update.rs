@@ -56,12 +56,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
     ))?;
 
     if let Some(col) = state.get(collection)
-        && let Some(doc) = col.get(key).and_then(|b| {
-            #[cfg(not(target_arch = "wasm32"))]
-            { rmp_serde::from_slice::<Value>(&b).ok() }
-            #[cfg(target_arch = "wasm32")]
-            { serde_json::from_slice::<Value>(&b).ok() }
-        }) {
+        && let Some(doc) = col.get(key).and_then(|b| rmp_serde::from_slice::<Value>(&b).ok()) {
             let mut doc = doc;
 
             // Step 1: Merge the update fields into the existing document.
@@ -97,12 +92,8 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
             #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &new_value)?;
 
-            // Step 2: Update state as encoded bytes.
-            #[cfg(not(target_arch = "wasm32"))]
-            let encode_result = rmp_serde::to_vec(&new_value);
-            #[cfg(target_arch = "wasm32")]
-            let encode_result = serde_json::to_vec(&new_value);
-            if let Ok(bytes) = encode_result {
+            // Step 2: Update state as MsgPack-encoded bytes.
+            if let Ok(bytes) = rmp_serde::to_vec(&new_value) {
                 col.insert(key.to_string(), bytes.into_boxed_slice());
             }
 

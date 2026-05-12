@@ -112,12 +112,7 @@ pub trait StorageBackend: Send + Sync {
         let doc_iter = state.iter().flat_map(|col_ref| {
             let col_name = col_ref.key().clone();
             col_ref.value().iter().filter_map(move |item_ref| {
-                let value: Value = {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    { rmp_serde::from_slice(item_ref.value()).ok()? }
-                    #[cfg(target_arch = "wasm32")]
-                    { serde_json::from_slice(item_ref.value()).ok()? }
-                };
+                let value: Value = rmp_serde::from_slice(item_ref.value()).ok()?;
                 Some(LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), value))
             }).collect::<Vec<_>>()
         });
@@ -238,11 +233,7 @@ pub fn apply_entry(
             let col = state
                 .entry(entry.collection.clone())
                 .or_default();
-            #[cfg(not(target_arch = "wasm32"))]
-            let encode_result = rmp_serde::to_vec(&entry.value);
-            #[cfg(target_arch = "wasm32")]
-            let encode_result = serde_json::to_vec(&entry.value);
-            if let Ok(bytes) = encode_result {
+            if let Ok(bytes) = rmp_serde::to_vec(&entry.value) {
                 col.insert(entry.key.clone(), bytes.into_boxed_slice());
             }
         }

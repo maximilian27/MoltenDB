@@ -17,15 +17,11 @@ use super::super::StorageBackend;
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 
-/// Decode a stored byte slice to a serde_json::Value.
-/// On native: MsgPack via rmp_serde. On wasm32: JSON via serde_json.
+/// Decode a stored MsgPack byte slice to a serde_json::Value.
 /// Returns None if deserialization fails (should never happen for well-formed data).
 #[inline]
 fn decode(bytes: &[u8]) -> Option<Value> {
-    #[cfg(not(target_arch = "wasm32"))]
-    { rmp_serde::from_slice(bytes).ok() }
-    #[cfg(target_arch = "wasm32")]
-    { serde_json::from_slice(bytes).ok() }
+    rmp_serde::from_slice(bytes).ok()
 }
 
 /// Retrieve a specific set of documents by their keys.

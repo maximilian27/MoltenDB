@@ -456,7 +456,7 @@ Authorization: Bearer {{token}}
 {
   "collection": "stress",
   "data": {
-    "stress_000000": { "in_stock": true, "price": 999 }
+    "stress_000000": { "in_stock": true, "price": 399 }
   }
 }
 
