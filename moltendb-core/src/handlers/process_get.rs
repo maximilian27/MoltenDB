@@ -53,9 +53,11 @@ fn make_comparator(specs: Vec<Value>) -> impl Fn(&Value, &Value) -> Ordering {
     }
 }
 
-/// Apply field projection or exclusion to a document, preserving `_v` and inserting `_key`.
+/// Apply field projection or exclusion to a document, preserving `_v`, `_createdAt`, `_modifiedAt` and inserting `_key`.
 fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Option<&Vec<Value>>, join_aliases: &[String]) -> Value {
-    let v_val = doc.get("_v").cloned();
+    let v_val           = doc.get("_v").cloned();
+    let created_val     = doc.get("_createdAt").cloned();
+    let modified_val    = doc.get("_modifiedAt").cloned();
 
     let mut out = if let Some(f) = fields {
         let mut projected = query::project(&doc, f);
@@ -75,7 +77,9 @@ fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Optio
     };
 
     if let Some(obj) = out.as_object_mut() {
-        if let Some(v) = v_val { obj.insert("_v".to_string(), v); }
+        if let Some(v) = v_val           { obj.insert("_v".to_string(), v); }
+        if let Some(v) = created_val     { obj.insert("_createdAt".to_string(), v); }
+        if let Some(v) = modified_val    { obj.insert("_modifiedAt".to_string(), v); }
         obj.insert("_key".to_string(), Value::String(key.to_string()));
     }
     out

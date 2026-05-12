@@ -78,6 +78,7 @@ Authorization: Bearer {{token}}
       }
     },
     "lp2": {
+      "_v": 3,
       "brand": "Apple",
       "model": "MacBook Pro 16",
       "price": 3499,

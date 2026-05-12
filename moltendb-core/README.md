@@ -117,6 +117,23 @@ All documents are kept in RAM in a `DashMap`. On startup, the snapshot is loaded
 
 ---
 
+## Reserved fields
+
+Every document automatically receives the following engine-managed fields. Any field whose name starts with `_` is reserved — the handler layer rejects inserts or updates that contain such fields (with the sole exception of `_v`, which may be supplied as an optimistic-lock guard on `/set`).
+
+| Field | Description |
+|---|---|
+| `_key` | The document's own key — injected on read, never stored inside the document body |
+| `_v` | Version counter, incremented on every write. Clients may send `_v` on `/set` as a conflict guard; stale values return `409 Conflict`. |
+| `_createdAt` | ISO-8601 timestamp set once at first insert and never overwritten. Always returned in every response. |
+| `_modifiedAt` | ISO-8601 timestamp updated on every write. Always returned in every response. |
+
+Attempting to insert or update a document containing any `_`-prefixed field other than `_v` returns `400 Bad Request`.
+
+`_key`, `_v`, `_createdAt`, and `_modifiedAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed.
+
+---
+
 ## Module overview
 
 | Module | Responsibility |

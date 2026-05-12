@@ -397,7 +397,18 @@ Pass `data` as an **array** to auto-generate UUIDv7 keys:
 
 Returns `{ "statusCode": 200, "status": "ok", "count": 1 }`.
 
-Every document automatically receives `_v` (version counter), `createdAt`, and `modifiedAt` fields managed by the engine.
+Every document automatically receives the following engine-managed fields — clients cannot set any field whose name starts with `_`:
+
+| Field | Description |
+|---|---|
+| `_key` | The document's own key (injected on read, never stored) |
+| `_v` | Version counter — incremented on every write. May be supplied by the client as an **optimistic-lock guard** on `/set`; any other `_`-prefixed field is rejected with `400`. |
+| `_createdAt` | ISO-8601 timestamp set once at first insert, never overwritten. Always returned in every response. |
+| `_modifiedAt` | ISO-8601 timestamp updated on every write. Always returned in every response. |
+
+Attempting to insert or update a document that contains any field starting with `_` (other than `_v` as a lock guard) returns `400 Bad Request`.
+
+`_key`, `_v`, `_createdAt`, and `_modifiedAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed.
 
 ### Query
 

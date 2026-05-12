@@ -23,6 +23,11 @@ pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize, ma
     if let Some(data_map) = payload.get("data").and_then(|v| v.as_object()) {
         let mut updated_count = 0;
         for (k, v) in data_map {
+            if let Some(obj) = v.as_object() {
+                if obj.keys().any(|k| k.starts_with('_')) {
+                    return (400, json!({ "error": "Fields starting with '_' are reserved for internal use and cannot be set by the client.", "statusCode": 400 }));
+                }
+            }
             match db.update(col, k, v.clone()) {
                 Ok(true)  => updated_count += 1,  // Document found and updated
                 Ok(false) => {},                   // Document not found — skip

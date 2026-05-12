@@ -75,12 +75,12 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
                     return Err(DbError::Conflict);
                 }
 
-            let orig_created = existing.get("createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string();
+            let orig_created = existing.get("_createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string();
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("_v".to_string(), serde_json::json!(new_v));
-                obj.insert("createdAt".to_string(), serde_json::json!(orig_created));
-                obj.insert("modifiedAt".to_string(), serde_json::json!(now));
+                obj.insert("_createdAt".to_string(), serde_json::json!(orig_created));
+                obj.insert("_modifiedAt".to_string(), serde_json::json!(now));
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
@@ -91,8 +91,8 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             if obj.get("_v").is_none() {
                 obj.insert("_v".to_string(), serde_json::json!(1u64));
             }
-            obj.insert("createdAt".to_string(), serde_json::json!(now.clone()));
-            obj.insert("modifiedAt".to_string(), serde_json::json!(now));
+            obj.insert("_createdAt".to_string(), serde_json::json!(now.clone()));
+            obj.insert("_modifiedAt".to_string(), serde_json::json!(now));
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]

@@ -76,14 +76,14 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
                     for (k, v) in update_obj {
                         // _v and createdAt are managed exclusively by the engine.
                         // Callers cannot set them directly — silently skip if present.
-                        if k == "_v" || k == "createdAt" { continue; }
+                        if k == "_v" || k == "_createdAt" { continue; }
                         doc_obj.insert(k.clone(), v.clone());
                     }
                     // Bump the version counter on every update.
                     doc_obj.insert("_v".to_string(), serde_json::json!(existing_v + 1));
                     // Stamp the modification time. createdAt is already in the
                     // document and is intentionally left untouched.
-                    doc_obj.insert("modifiedAt".to_string(), serde_json::json!(now_iso()));
+                    doc_obj.insert("_modifiedAt".to_string(), serde_json::json!(now_iso()));
                 }
             }
 
