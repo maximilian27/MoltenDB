@@ -93,7 +93,7 @@ pub trait StorageBackend: Send + Sync {
     #[cfg(not(feature = "schema"))]
     fn compact_from_maps(
         &self,
-        _state: &DashMap<String, DashMap<String, Value>>,
+        _state: &DashMap<String, DashMap<String, Box<[u8]>>>,
         _hook: Option<String>,
     ) -> Result<(), DbError> {
         Ok(())
@@ -102,7 +102,7 @@ pub trait StorageBackend: Send + Sync {
     #[cfg(feature = "schema")]
     fn compact_from_maps(
         &self,
-        state: &DashMap<String, DashMap<String, Value>>,
+        state: &DashMap<String, DashMap<String, Box<[u8]>>>,
         schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
         hook: Option<String>,
     ) -> Result<(), DbError> {
@@ -110,8 +110,9 @@ pub trait StorageBackend: Send + Sync {
         let count = doc_count + schemas.len() as u64;
         let doc_iter = state.iter().flat_map(|col_ref| {
             let col_name = col_ref.key().clone();
-            col_ref.value().iter().map(move |item_ref| {
-                LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), item_ref.value().clone())
+            col_ref.value().iter().filter_map(move |item_ref| {
+                let value: Value = rmp_serde::from_slice(item_ref.value()).ok()?;
+                Some(LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), value))
             }).collect::<Vec<_>>()
         });
         let schema_iter = schemas.iter().map(|schema_ref| {
@@ -189,7 +190,7 @@ pub trait StorageBackend: Send + Sync {
 /// Returns the total number of log entries processed.
 pub fn stream_into_state(
     storage: &dyn StorageBackend,
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
@@ -232,7 +233,7 @@ pub fn stream_into_state(
 /// Apply a single log entry to the in-memory state.
 pub fn apply_entry(
     entry: &LogEntry,
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) {
     match entry.cmd.as_str() {
@@ -240,7 +241,9 @@ pub fn apply_entry(
             let col = state
                 .entry(entry.collection.clone())
                 .or_default();
-            col.insert(entry.key.clone(), entry.value.clone());
+            if let Ok(bytes) = rmp_serde::to_vec(&entry.value) {
+                col.insert(entry.key.clone(), bytes.into_boxed_slice());
+            }
         }
         "DELETE" => {
             if let Some(col) = state.get(&entry.collection) {

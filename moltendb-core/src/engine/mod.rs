@@ -43,6 +43,7 @@ pub use storage::{AsyncDiskStorage, SyncDiskStorage};
 
 use dashmap::DashMap;
 use serde_json::Value;
+#[allow(unused_imports)]
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -58,7 +59,7 @@ pub struct Db {
     /// Outer map: collection name (e.g. "users") → inner map.
     /// Inner map: document key (e.g. "u1") → document value (always in RAM).
     /// DashMap allows concurrent reads and writes from multiple threads.
-    state: Arc<DashMap<String, DashMap<String, serde_json::Value>>>,
+    state: Arc<DashMap<String, DashMap<String, Box<[u8]>>>>,  // documents stored as MsgPack bytes
 
     /// The storage backend — handles persistence to disk or OPFS.
     /// `pub` so handlers can access it directly if needed (e.g. for compaction).
@@ -137,7 +138,7 @@ impl Db {
     pub fn get_filtered(
         &self,
         collection: &str,
-        predicate: impl Fn(&Value) -> bool,
+        predicate: impl Fn(&Value) -> bool + Sync,
         offset: usize,
         limit: Option<usize>,
     ) -> HashMap<String, Value> {
@@ -156,8 +157,8 @@ impl Db {
     pub fn scan_top_n(
         &self,
         collection: &str,
-        predicate: impl Fn(&Value) -> bool,
-        cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering,
+        predicate: impl Fn(&Value) -> bool + Sync,
+        cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering + Sync,
         cap: usize,
     ) -> Vec<(String, Value)> {
         operations::scan_top_n(&self.state, &self.storage, collection, predicate, cmp, cap)

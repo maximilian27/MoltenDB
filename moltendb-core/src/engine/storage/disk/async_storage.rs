@@ -255,7 +255,7 @@ impl StorageBackend for AsyncDiskStorage {
 
     /// Override: write snapshot directly from DashMaps — no LogEntry allocation, no Value cloning.
     #[cfg(not(feature = "schema"))]
-    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, hook: Option<String>) -> Result<(), DbError> {
+    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Box<[u8]>>>, hook: Option<String>) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         } else if let Some(script_path) = hook {
@@ -265,7 +265,7 @@ impl StorageBackend for AsyncDiskStorage {
     }
 
     #[cfg(feature = "schema")]
-    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>, hook: Option<String>) -> Result<(), DbError> {
+    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Box<[u8]>>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>, hook: Option<String>) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, schemas, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         } else if let Some(script_path) = hook {

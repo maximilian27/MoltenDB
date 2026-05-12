@@ -40,7 +40,7 @@ pub fn snapshot_path(log_path: &str) -> String {
 #[cfg(not(feature = "schema"))]
 pub fn write_snapshot_from_maps(
     log_path: &str,
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
     seq: u64,
 ) -> Result<(), DbError> {
     let count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
@@ -50,7 +50,9 @@ pub fn write_snapshot_from_maps(
     for col_ref in state.iter() {
         let col_name = col_ref.key().clone();
         for item_ref in col_ref.value().iter() {
-            write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), item_ref.value())?;
+            if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
+                write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), &value)?;
+            }
         }
     }
     finish_snapshot_gz(gz, &tmp, &path)
@@ -59,7 +61,7 @@ pub fn write_snapshot_from_maps(
 #[cfg(feature = "schema")]
 pub fn write_snapshot_from_maps(
     log_path: &str,
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
     schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     seq: u64,
 ) -> Result<(), DbError> {
@@ -71,7 +73,9 @@ pub fn write_snapshot_from_maps(
     for col_ref in state.iter() {
         let col_name = col_ref.key().clone();
         for item_ref in col_ref.value().iter() {
-            write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), item_ref.value())?;
+            if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
+                write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), &value)?;
+            }
         }
     }
     for schema_ref in schemas.iter() {

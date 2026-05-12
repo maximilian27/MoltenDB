@@ -18,7 +18,7 @@ Content-Type: application/json
   "password": "admin123"
 }
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODQ1MDM3MSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjlmNDBiMjdmLTY3ZWEtNDQ1NS1iZDBhLTljODI0ZDNhOTRhNiJ9.s-wiOMfeJpoN65HRTNDJCHOqOruE-X36jLNwiZWpkbo
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODY2NTU5OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjhhNTQ3ZmVmLTE1YzEtNGZjMy05ODUwLTJjYThiYWMxODg5NSJ9.pKudQ3ZuxD4g02egE99A9bv5DQnzVk88SjKhTBCLlDw
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document
@@ -48,7 +48,7 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "stress",
-  "keys": "stress_099999"
+  "keys": "stress_999999"
 }
 
 ### §1d. Batch fetch — three specific keys at once

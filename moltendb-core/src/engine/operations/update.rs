@@ -15,7 +15,7 @@ use super::super::types::{DbError, LogEntry};
 /// Grouping these into a struct keeps the function signature within Clippy's
 /// argument-count limit and makes call sites more readable.
 pub struct UpdateParams<'a> {
-    pub state: &'a DashMap<String, DashMap<String, serde_json::Value>>,
+    pub state: &'a DashMap<String, DashMap<String, Box<[u8]>>>,
     pub storage: &'a Arc<dyn StorageBackend>,
     pub tx: &'a tokio::sync::broadcast::Sender<String>,
     #[cfg(feature = "schema")]
@@ -56,7 +56,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
     ))?;
 
     if let Some(col) = state.get(collection)
-        && let Some(doc) = col.get(key).map(|v| v.clone()) {
+        && let Some(doc) = col.get(key).and_then(|b| rmp_serde::from_slice::<Value>(&b).ok()) {
             let mut doc = doc;
 
             // Step 1: Merge the update fields into the existing document.
@@ -92,8 +92,10 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
             #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &new_value)?;
 
-            // Step 2: Update state.
-            col.insert(key.to_string(), new_value.clone());
+            // Step 2: Update state as MsgPack bytes.
+            if let Ok(bytes) = rmp_serde::to_vec(&new_value) {
+                col.insert(key.to_string(), bytes.into_boxed_slice());
+            }
 
             // Step 6: Write the full updated document as an INSERT entry.
             let entry = LogEntry::new(

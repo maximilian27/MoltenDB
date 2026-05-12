@@ -635,6 +635,7 @@ dependencies = [
  "lock_api",
  "once_cell",
  "parking_lot_core",
+ "rayon",
 ]
 
 [[package]]
@@ -1626,6 +1627,7 @@ dependencies = [
  "jsonschema",
  "memmap2",
  "rand_core 0.6.4",
+ "rayon",
  "regex",
  "rmp-serde",
  "serde",
@@ -1654,6 +1656,7 @@ dependencies = [
  "moltendb-auth",
  "moltendb-core",
  "reqwest",
+ "rmp-serde",
  "serde",
  "serde_json",
  "sysinfo",
