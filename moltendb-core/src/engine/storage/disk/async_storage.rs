@@ -227,6 +227,9 @@ impl AsyncDiskStorage {
                 let mut finished = lock.lock().unwrap();
                 while !*finished { finished = cvar.wait(finished).unwrap(); }
             });
+        } else {
+            // No async writer — rename directly on the calling thread.
+            std::fs::rename(&temp_path, &self.path).map_err(|_| DbError::WriteError)?;
         }
         Ok(())
     }

@@ -7,6 +7,8 @@
 ### Bug Fixes
 * Fixed `compact` method incorrectly placed inside `impl StorageBackend for OpfsStorage` (not a trait member) — moved to a separate `impl OpfsStorage` block in `wasm.rs`.
 * Fixed unused-variable warnings (`state`, `hook`) in the default `compact_from_maps` impl under `#[cfg(not(feature = "schema"))]`.
+* Fixed log file not being cleared after compaction on the encrypted storage path — `swap_log` now renames the `.tmp` file directly on the calling thread when there is no async writer (the case when `EncryptedStorage` delegates compaction to its inner storage).
+* Implemented `compact_from_maps` on `EncryptedStorage` so the encrypted path now writes snapshots on compaction, reducing boot time from O(full WAL) to O(delta entries) — matching the non-encrypted path behaviour.
 
 ---
 # [1.0.0-rc1] (May 9, 2026)
