@@ -288,18 +288,6 @@ impl StorageBackend for OpfsStorage {
         self.truncate_and_close()
     }
 
-    /// Return the current size of the OPFS file in bytes.
-    ///
-    /// Called by the JS worker after every INSERT batch to decide whether to
-    /// trigger size-based auto-compaction. Uses `FileSystemSyncAccessHandle.getSize()`
-    /// which is a cheap metadata call — it does not read any file content.
-    fn get_size(&self) -> Result<u64, DbError> {
-        let handle = self.handle.lock().expect("db handle mutex poisoned");
-        // get_size() returns the file byte length as a JS number (f64).
-        // We cast to u64 — OPFS files are never negative or fractional.
-        let size = handle.get_size().map_err(|_| DbError::WriteError)? as u64;
-        Ok(size)
-    }
 
 }
 

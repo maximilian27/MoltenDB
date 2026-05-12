@@ -47,6 +47,7 @@ pub use wasm::OpfsStorage;
 // ── Shared imports ────────────────────────────────────────────────────────────
 // These are used by both the trait definition and the replay functions below.
 use crate::engine::types::{DbError, LogEntry};
+#[cfg(feature = "schema")]
 use serde_json::Value;
 use std::ops::ControlFlow;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
@@ -111,7 +112,12 @@ pub trait StorageBackend: Send + Sync {
         let doc_iter = state.iter().flat_map(|col_ref| {
             let col_name = col_ref.key().clone();
             col_ref.value().iter().filter_map(move |item_ref| {
-                let value: Value = rmp_serde::from_slice(item_ref.value()).ok()?;
+                let value: Value = {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    { rmp_serde::from_slice(item_ref.value()).ok()? }
+                    #[cfg(target_arch = "wasm32")]
+                    { serde_json::from_slice(item_ref.value()).ok()? }
+                };
                 Some(LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), value))
             }).collect::<Vec<_>>()
         });
@@ -121,15 +127,6 @@ pub trait StorageBackend: Send + Sync {
         }).collect::<Vec<_>>().into_iter();
         let _ = (count, doc_iter.chain(schema_iter), hook);
         Ok(())
-    }
-
-    /// Return the current size of the persistent log file in bytes.
-    ///
-    /// Used by the WASM worker to report log file size. `OpfsStorage` overrides
-    /// this with a real `FileSystemSyncAccessHandle.getSize()` call.
-    /// Native disk backends return 0 (not needed — use OS-level file metadata).
-    fn get_size(&self) -> Result<u64, DbError> {
-        Ok(0)
     }
 
     /// Truncate the persistent store to 0 bytes and release any exclusive file
@@ -241,7 +238,11 @@ pub fn apply_entry(
             let col = state
                 .entry(entry.collection.clone())
                 .or_default();
-            if let Ok(bytes) = rmp_serde::to_vec(&entry.value) {
+            #[cfg(not(target_arch = "wasm32"))]
+            let encode_result = rmp_serde::to_vec(&entry.value);
+            #[cfg(target_arch = "wasm32")]
+            let encode_result = serde_json::to_vec(&entry.value);
+            if let Ok(bytes) = encode_result {
                 col.insert(entry.key.clone(), bytes.into_boxed_slice());
             }
         }

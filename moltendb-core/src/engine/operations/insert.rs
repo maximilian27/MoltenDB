@@ -62,8 +62,12 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         let now = now_iso();
         
         // Decode existing MsgPack bytes → Value for versioning check.
-        let existing_val: Option<Value> = col.get(&key)
-            .and_then(|b| rmp_serde::from_slice::<Value>(&b).ok());
+        let existing_val: Option<Value> = col.get(&key).and_then(|b| {
+            #[cfg(not(target_arch = "wasm32"))]
+            { rmp_serde::from_slice::<Value>(&b).ok() }
+            #[cfg(target_arch = "wasm32")]
+            { serde_json::from_slice::<Value>(&b).ok() }
+        });
 
         if let Some(existing) = existing_val {
             // ... (existing logic) ...
@@ -100,8 +104,12 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             crate::engine::schema::validate_document(schemas, collection, &value)?;
         }
 
-        // Step 1: Insert/overwrite in memory as MsgPack bytes.
-        if let Ok(bytes) = rmp_serde::to_vec(&value) {
+        // Step 1: Insert/overwrite in memory as encoded bytes.
+        #[cfg(not(target_arch = "wasm32"))]
+        let encode_result = rmp_serde::to_vec(&value);
+        #[cfg(target_arch = "wasm32")]
+        let encode_result = serde_json::to_vec(&value);
+        if let Ok(bytes) = encode_result {
             col.insert(key.clone(), bytes.into_boxed_slice());
         }
 
