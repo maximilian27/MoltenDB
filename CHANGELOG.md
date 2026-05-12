@@ -1,3 +1,25 @@
+# [1.0.0-rc2] (May 12, 2026)
+### Breaking Changes
+* **Encrypted WAL inner payload switched from JSON to MessagePack** — existing encrypted `.log` files written by `v1.0.0-rc1` or earlier are not readable by this version. Delete or migrate your encrypted WAL before upgrading.
+
+### Performance
+* **`Arc<str>` collection-key interning** — changed the outer `DashMap` key from `String` to `Arc<str>`. During bulk insert and WAL replay, all documents in the same collection share a single `Arc<str>` pointer instead of allocating a new `String` per document. Saves ~30 B per doc (~30 MB at 1M docs) and reduces allocator pressure during startup.
+* **MessagePack in-memory storage** — switched the hot document map from `serde_json::Value` to `Box<[u8]>` (MessagePack bytes). Reduces steady-state RSS for 1M docs from ~4 GB to ~500 MB (~8× lower). Decoding to `Value` happens lazily on read; write paths encode via `rmp_serde`. Full analysis in `MEMORY_ANALYSIS.md`.
+* **Parallel read paths (rayon)** — `get_filtered`, `get_all`, and `scan_top_n` now use `rayon` `par_iter` across DashMap shards on native targets. MsgPack decode (the dominant cost) runs across all CPU cores. Sequential fallback retained for `wasm32`.
+* **Bounded per-worker heaps in `scan_top_n`** — rewrote sort-only paginated queries with rayon `fold` + `reduce` so each worker keeps its own small heap (size ≤ `cap`). Eliminates the 1M-element intermediate `Vec` that caused ~7s latency on sort-only queries; peak intermediate memory drops from O(N) to O(workers × cap).
+
+### Removed (Backward Compatibility)
+* **Dropped JSON-lines WAL fallback** — `log.rs` no longer accepts the legacy JSON-lines log format. The WAL is exclusively MessagePack length-prefixed. Databases written before `v1.0.0-rc1` must be migrated or discarded.
+* **Dropped legacy snapshot format references** — `MOLTSNG2` (JSON body) and `MOLTSNAP` (uncompressed) snapshot formats were already rejected at load time; all remaining references and comments have been removed. Only `MOLTSNG3` (MsgPack + gzip) is supported.
+
+### Bug Fixes
+* **Eliminated memory spike during WAL replay and bulk insert** — changed `apply_entry` to take `LogEntry` by value so the `serde_json::Value` tree inside each entry is dropped immediately after MsgPack encoding. Previously both the `LogEntry` (~2.4 KB Value tree) and the new `Box<[u8]>` (~120 B) coexisted in RAM for every entry, causing ~2× peak memory during boot replay and stress inserts.
+* Fixed `compact` method incorrectly placed inside `impl StorageBackend for OpfsStorage` (not a trait member) — moved to a separate `impl OpfsStorage` block in `wasm.rs`.
+* Fixed unused-variable warnings (`state`, `hook`) in the default `compact_from_maps` impl under `#[cfg(not(feature = "schema"))]`.
+* Fixed log file not being cleared after compaction on the encrypted storage path — `swap_log` now renames the `.tmp` file directly on the calling thread when there is no async writer (the case when `EncryptedStorage` delegates compaction to its inner storage).
+* Implemented `compact_from_maps` on `EncryptedStorage` so the encrypted path now writes snapshots on compaction, reducing boot time from O(full WAL) to O(delta entries) — matching the non-encrypted path behaviour.
+
+---
 # [1.0.0-rc1] (May 9, 2026)
 
 ### Breaking Changes

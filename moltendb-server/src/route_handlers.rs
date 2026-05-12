@@ -439,7 +439,6 @@ pub async fn handle_metrics(
 
     // Database internals
     let hot_keys_count: usize = db.hot_keys_count();
-    let wal_size_bytes = db.storage.get_size().unwrap_or(0);
     let storage_mode = "tiered";
 
     (StatusCode::OK, Json(json!({
@@ -457,7 +456,6 @@ pub async fn handle_metrics(
         },
         "database": {
             "hot_keys_count":    hot_keys_count,
-            "wal_size_bytes":    wal_size_bytes,
             "storage_mode":      storage_mode,
         },
     })))

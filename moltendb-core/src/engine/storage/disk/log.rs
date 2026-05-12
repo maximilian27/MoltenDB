@@ -4,9 +4,6 @@
 //   [4 bytes LE] payload length
 //   [N bytes]    rmp-serde encoded LogEntry
 //
-// On read, JSON lines are also accepted as a fallback so that existing databases
-// written with the old format are replayed correctly on first startup after the
-// upgrade. After the next compaction the log will be fully MessagePack.
 // ─────────────────────────────────────────────────────────────────────────────
 
 use crate::engine::types::{DbError, LogEntry};
@@ -40,8 +37,6 @@ fn write_msgpack_entry<W: Write>(w: &mut W, entry: &LogEntry) -> Result<(), DbEr
 
 /// Stream all log entries, calling `f` for each one.
 /// Skips the first `skip_lines` entries (already covered by a loaded snapshot).
-/// Supports both the new MessagePack length-prefixed format and the legacy
-/// JSON-lines format so existing databases are replayed correctly.
 pub fn stream_log_entries<F>(path: &str, skip_lines: u64, mut f: F) -> Result<ControlFlow<(), ()>, DbError>
 where
     F: FnMut(LogEntry, u32) -> ControlFlow<(), ()>,
@@ -51,9 +46,6 @@ where
         Err(_) => return Ok(ControlFlow::Continue(())), // first run, no log yet
     };
 
-    // Peek at the first byte to detect format.
-    // MessagePack entries start with a 4-byte length prefix; the first byte of
-    // a valid length will never be `{` (0x7B) which is how JSON lines start.
     let mut buf = Vec::new();
     {
         let mut reader = std::io::BufReader::new(&file);
@@ -64,40 +56,22 @@ where
         return Ok(ControlFlow::Continue(()));
     }
 
-    // Detect format by first byte.
-    if buf[0] == b'{' || buf[0] == b'\n' {
-        // Legacy JSON-lines format.
-        let text = String::from_utf8_lossy(&buf);
-        let mut idx: u64 = 0;
-        for line in text.lines() {
-            if line.trim().is_empty() { continue; }
-            if idx < skip_lines { idx += 1; continue; }
-            let len = line.len() as u32;
-            if let Ok(entry) = serde_json::from_str::<LogEntry>(line) {
-                if let ControlFlow::Break(_) = f(entry, len) {
-                    return Ok(ControlFlow::Break(()));
-                }
+    // MessagePack length-prefixed format: [4 bytes LE length][N bytes payload]
+    let mut pos = 0usize;
+    let mut idx: u64 = 0;
+    while pos + 4 <= buf.len() {
+        let len = u32::from_le_bytes([buf[pos], buf[pos+1], buf[pos+2], buf[pos+3]]) as usize;
+        pos += 4;
+        if pos + len > buf.len() { break; }
+        let payload = &buf[pos..pos + len];
+        pos += len;
+        if idx < skip_lines { idx += 1; continue; }
+        if let Ok(entry) = rmp_serde::from_slice::<LogEntry>(payload) {
+            if let ControlFlow::Break(_) = f(entry, (len + 4) as u32) {
+                return Ok(ControlFlow::Break(()));
             }
-            idx += 1;
         }
-    } else {
-        // MessagePack length-prefixed format.
-        let mut pos = 0usize;
-        let mut idx: u64 = 0;
-        while pos + 4 <= buf.len() {
-            let len = u32::from_le_bytes([buf[pos], buf[pos+1], buf[pos+2], buf[pos+3]]) as usize;
-            pos += 4;
-            if pos + len > buf.len() { break; }
-            let payload = &buf[pos..pos + len];
-            pos += len;
-            if idx < skip_lines { idx += 1; continue; }
-            if let Ok(entry) = rmp_serde::from_slice::<LogEntry>(payload) {
-                if let ControlFlow::Break(_) = f(entry, (len + 4) as u32) {
-                    return Ok(ControlFlow::Break(()));
-                }
-            }
-            idx += 1;
-        }
+        idx += 1;
     }
 
     Ok(ControlFlow::Continue(()))

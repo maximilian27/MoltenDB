@@ -14,7 +14,7 @@ use super::super::types::{DbError, LogEntry};
 /// separate DELETE LogEntry is written for each key. If the collection
 /// doesn't exist, this is a no-op. Pass a single key to delete one document.
 pub fn delete(
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
     collection: &str,
@@ -76,7 +76,7 @@ pub fn delete(
 ///   - All indexes for this collection are removed.
 ///   - The DROP entry in the log ensures the collection stays gone on restart.
 pub fn delete_collection(
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
     collection: &str,

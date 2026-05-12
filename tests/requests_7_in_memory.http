@@ -21,7 +21,8 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODM2MzgzNiwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjQ2ZjYxY2RiLWRiNjUtNGU4Mi04MWQ4LTY1ZDg1MGU3MmYxYSJ9.FDkPoGfhBzy6WhycZ8EXc4YV-Wvh2CLxmWPhyoa-FOM
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODY2NTU5OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjhhNTQ3ZmVmLTE1YzEtNGZjMy05ODUwLTJjYThiYWMxODg5NSJ9.pKudQ3ZuxD4g02egE99A9bv5DQnzVk88SjKhTBCLlDw
+
 
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────

@@ -47,12 +47,14 @@ pub use wasm::OpfsStorage;
 // ── Shared imports ────────────────────────────────────────────────────────────
 // These are used by both the trait definition and the replay functions below.
 use crate::engine::types::{DbError, LogEntry};
+#[cfg(feature = "schema")]
 use serde_json::Value;
 use std::ops::ControlFlow;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
 // multiple threads simultaneously without a global lock.
 // DashSet is the set equivalent.
 use dashmap::DashMap;
+use std::sync::Arc;
 // serde_json::Value is a dynamically-typed JSON value (can be object, array,
 // string, number, bool, or null). All document data is stored as Value.
 
@@ -93,7 +95,7 @@ pub trait StorageBackend: Send + Sync {
     #[cfg(not(feature = "schema"))]
     fn compact_from_maps(
         &self,
-        _state: &DashMap<String, DashMap<String, Value>>,
+        _state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
         _hook: Option<String>,
     ) -> Result<(), DbError> {
         Ok(())
@@ -102,7 +104,7 @@ pub trait StorageBackend: Send + Sync {
     #[cfg(feature = "schema")]
     fn compact_from_maps(
         &self,
-        state: &DashMap<String, DashMap<String, Value>>,
+        state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
         schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
         hook: Option<String>,
     ) -> Result<(), DbError> {
@@ -110,25 +112,17 @@ pub trait StorageBackend: Send + Sync {
         let count = doc_count + schemas.len() as u64;
         let doc_iter = state.iter().flat_map(|col_ref| {
             let col_name = col_ref.key().clone();
-            col_ref.value().iter().map(move |item_ref| {
-                LogEntry::new("INSERT".to_string(), col_name.clone(), item_ref.key().clone(), item_ref.value().clone())
+            col_ref.value().iter().filter_map(move |item_ref| {
+                let value: Value = rmp_serde::from_slice(item_ref.value()).ok()?;
+                Some(LogEntry::new("INSERT".to_string(), col_name.to_string(), item_ref.key().clone(), value))
             }).collect::<Vec<_>>()
         });
         let schema_iter = schemas.iter().map(|schema_ref| {
             let (schema_json, _) = &**schema_ref.value();
-            LogEntry::new("SCHEMA".to_string(), schema_ref.key().clone(), "".to_string(), schema_json.clone())
+            LogEntry::new("SCHEMA".to_string(), schema_ref.key().to_string(), "".to_string(), schema_json.clone())
         }).collect::<Vec<_>>().into_iter();
         let _ = (count, doc_iter.chain(schema_iter), hook);
         Ok(())
-    }
-
-    /// Return the current size of the persistent log file in bytes.
-    ///
-    /// Used by the WASM worker to report log file size. `OpfsStorage` overrides
-    /// this with a real `FileSystemSyncAccessHandle.getSize()` call.
-    /// Native disk backends return 0 (not needed — use OS-level file metadata).
-    fn get_size(&self) -> Result<u64, DbError> {
-        Ok(0)
     }
 
     /// Truncate the persistent store to 0 bytes and release any exclusive file
@@ -189,7 +183,7 @@ pub trait StorageBackend: Send + Sync {
 /// Returns the total number of log entries processed.
 pub fn stream_into_state(
     storage: &dyn StorageBackend,
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
@@ -232,23 +226,25 @@ pub fn stream_into_state(
 /// Apply a single log entry to the in-memory state.
 pub fn apply_entry(
     entry: &LogEntry,
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) {
     match entry.cmd.as_str() {
         "INSERT" => {
             let col = state
-                .entry(entry.collection.clone())
+                .entry(Arc::from(entry.collection.as_str()))
                 .or_default();
-            col.insert(entry.key.clone(), entry.value.clone());
+            if let Ok(bytes) = rmp_serde::to_vec(&entry.value) {
+                col.insert(entry.key.clone(), bytes.into_boxed_slice());
+            }
         }
         "DELETE" => {
-            if let Some(col) = state.get(&entry.collection) {
+            if let Some(col) = state.get(entry.collection.as_str()) {
                 col.remove(&entry.key);
             }
         }
         "DROP" => {
-            state.remove(&entry.collection);
+            state.remove(entry.collection.as_str());
         }
         "INDEX" => {
             // Legacy INDEX entries are silently ignored — indexing has been removed.

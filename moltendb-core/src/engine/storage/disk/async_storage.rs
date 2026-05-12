@@ -62,6 +62,17 @@ impl AsyncDiskStorage {
     pub fn new(path: &str) -> Result<Self, DbError> {
         // Remove any stale .tmp file left by a previous crash before compaction swap.
         let _ = std::fs::remove_file(format!("{}.tmp", path));
+        // Eagerly create the log file (or verify it is accessible) before spawning
+        // the background task. This surfaces I/O errors immediately to the caller
+        // instead of silently swallowing them inside the async task.
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| {
+                tracing::error!("Failed to open log file '{}': {}", path, e);
+                DbError::WriteError
+            })?;
         // Create an unbounded MPSC channel.
         // `log_tx` (sender) is kept in the struct; `log_rx` (receiver) goes to the task.
         let (log_tx, mut log_rx) = mpsc::unbounded_channel::<WriterMsg>();
@@ -227,6 +238,9 @@ impl AsyncDiskStorage {
                 let mut finished = lock.lock().unwrap();
                 while !*finished { finished = cvar.wait(finished).unwrap(); }
             });
+        } else {
+            // No async writer — rename directly on the calling thread.
+            std::fs::rename(&temp_path, &self.path).map_err(|_| DbError::WriteError)?;
         }
         Ok(())
     }
@@ -255,7 +269,7 @@ impl StorageBackend for AsyncDiskStorage {
 
     /// Override: write snapshot directly from DashMaps — no LogEntry allocation, no Value cloning.
     #[cfg(not(feature = "schema"))]
-    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, hook: Option<String>) -> Result<(), DbError> {
+    fn compact_from_maps(&self, state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>, hook: Option<String>) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         } else if let Some(script_path) = hook {
@@ -265,7 +279,7 @@ impl StorageBackend for AsyncDiskStorage {
     }
 
     #[cfg(feature = "schema")]
-    fn compact_from_maps(&self, state: &DashMap<String, DashMap<String, Value>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>, hook: Option<String>) -> Result<(), DbError> {
+    fn compact_from_maps(&self, state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>, hook: Option<String>) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, schemas, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         } else if let Some(script_path) = hook {

@@ -14,7 +14,7 @@ use super::super::types::{DbError, LogEntry};
 /// Grouping these into a struct keeps the function signature within Clippy's
 /// argument-count limit and makes call sites more readable.
 pub struct InsertParams<'a> {
-    pub state: &'a DashMap<String, DashMap<String, serde_json::Value>>,
+    pub state: &'a DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     pub storage: &'a Arc<dyn StorageBackend>,
     pub tx: &'a tokio::sync::broadcast::Sender<String>,
     #[cfg(feature = "schema")]
@@ -46,7 +46,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         items,
     } = params;
     let col = state
-        .entry(collection.to_string())
+        .entry(Arc::from(collection))
         .or_insert_with(DashMap::new);
 
     // TX_BEGIN: Start a transaction.
@@ -61,9 +61,8 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
     for (key, mut value) in items {
         let now = now_iso();
         
-        // We need to check the existing document for versioning.
-        // If it's Cold, we MUST fetch it to check _v and createdAt.
-        let existing_val = col.get(&key).map(|v| v.clone());
+        // Decode existing MsgPack bytes → Value for versioning check.
+        let existing_val: Option<Value> = col.get(&key).and_then(|b| rmp_serde::from_slice::<Value>(&b).ok());
 
         if let Some(existing) = existing_val {
             // ... (existing logic) ...
@@ -100,8 +99,10 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             crate::engine::schema::validate_document(schemas, collection, &value)?;
         }
 
-        // Step 1: Insert/overwrite in memory.
-        col.insert(key.clone(), value.clone());
+        // Step 1: Insert/overwrite in memory as MsgPack-encoded bytes.
+        if let Ok(bytes) = rmp_serde::to_vec(&value) {
+            col.insert(key.clone(), bytes.into_boxed_slice());
+        }
 
         // Step 2: Persist within the transaction.
         let entry = LogEntry::new(
