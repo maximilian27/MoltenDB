@@ -25,10 +25,10 @@ Exposes the `moltendb-core` engine to JavaScript. Zero server-side code.
 
 `moltendb-wasm` is the thin browser adapter that wraps `moltendb-core` and exposes it to JavaScript via `wasm-bindgen`. It contains:
 
-- **`WorkerDb`** — the WASM-exported struct used by the JavaScript Web Worker. Wraps the core `Db` engine and routes `postMessage` actions (`get`, `set`, `update`, `delete`, `snapshot`, `compact`, `get_size`) to the correct handler.
+- **`WorkerDb`** — the WASM-exported struct used by the JavaScript Web Worker. Wraps the core `Db` engine and routes `postMessage` actions (`get`, `set`, `update`, `delete`, `snapshot`, `compact`) to the correct handler.
 - **OPFS storage** — data is persisted in the browser's Origin Private File System. Each unique `db_name` is a separate OPFS file. Data survives page reloads and browser restarts.
 - **PITR Ready** — Every write in the browser includes an engine-level `_t` timestamp. Browser logs can be exported and recovered to any millisecond using the native MoltenDB CLI.
-- **Auto-compaction** — triggered automatically after every 500 writes or when the OPFS file exceeds 5 MB. Can also be triggered manually via `compact`.
+- **Auto-compaction** — triggered automatically after every 500 writes. Can also be triggered manually via `compact`.
 - **Real-time events** — `subscribe(callback)` taps into the same change-feed channel used by the server's WebSocket endpoint. The callback receives a JSON string for every mutation (`change`, `delete`, `drop`).
 - **`wasm-bindgen` glue** — `wasm-pack build moltendb-wasm --target web` generates `moltendb_core.js`, `moltendb_core_bg.wasm`, and TypeScript declarations, ready to be bundled into `@moltendb-web/core`.
 
@@ -111,7 +111,6 @@ const result = db.handle_message({ action: 'get', collection: 'users', keys: 'u1
 // 'update'   → patch / merge documents
 // 'delete'   → delete documents or drop a collection
 // 'compact'  → compact the OPFS log file
-// 'get_size' → return current OPFS file size in bytes
 ```
 
 ### Analytics
@@ -159,7 +158,6 @@ export default function init(wasmUrl?: string | URL): Promise<void>;
 | Trigger | Default |
 |---|---|
 | Write count | Every 500 writes |
-| File size | When OPFS file exceeds 5 MB |
 
 Compaction rewrites the log to contain only the current state — removing superseded INSERT entries and DELETE tombstones. This shrinks the file and speeds up future startup replay. Compaction errors are logged to the browser console but never propagated.
 

@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::ops::ControlFlow;
-#[cfg(all(not(target_arch = "wasm32"), feature = "schema"))]
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use dashmap::DashMap;
@@ -17,7 +17,7 @@ pub fn recover_to(
     to_time: Option<u64>,
     to_seq: Option<u64>,
 ) -> Result<Vec<LogEntry>, DbError> {
-    let state: DashMap<String, DashMap<String, Value>> = DashMap::new();
+    let state: DashMap<Arc<str>, DashMap<String, Box<[u8]>>> = DashMap::new();
     #[cfg(feature = "schema")]
     let schemas: DashMap<String, Arc<(serde_json::Value, jsonschema::Validator)>> = DashMap::new();
     let mut count = 0u64;
@@ -69,12 +69,14 @@ pub fn recover_to(
     for col_ref in state.iter() {
         let col_name = col_ref.key();
         for item_ref in col_ref.value().iter() {
-            entries.push(LogEntry::new(
-                "INSERT".to_string(),
-                col_name.clone(),
-                item_ref.key().clone(),
-                item_ref.value().clone(),
-            ));
+            if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
+                entries.push(LogEntry::new(
+                    "INSERT".to_string(),
+                    col_name.to_string(),
+                    item_ref.key().clone(),
+                    value,
+                ));
+            }
         }
     }
     #[cfg(feature = "schema")]

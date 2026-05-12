@@ -7,7 +7,7 @@
 // log from the beginning. This dramatically reduces startup time for large DBs.
 //
 // Snapshot file format (binary, little-endian, gzip-compressed body):
-//   [8 bytes]  magic header: "MOLTSNG3"  ("MOLTSNG2" = legacy JSON body)
+//   [8 bytes]  magic header: "MOLTSNG3"
 //   [8 bytes]  seq: number of log lines captured in this snapshot
 //   [8 bytes]  count: number of LogEntry records that follow
 //   --- everything below this point is gzip-compressed ---
@@ -18,6 +18,7 @@
 
 use crate::engine::types::{DbError, LogEntry};
 use dashmap::DashMap;
+use std::sync::Arc;
 use serde_json::Value;
 use std::fs::{File, OpenOptions};
 use std::ops::ControlFlow;
@@ -40,7 +41,7 @@ pub fn snapshot_path(log_path: &str) -> String {
 #[cfg(not(feature = "schema"))]
 pub fn write_snapshot_from_maps(
     log_path: &str,
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     seq: u64,
 ) -> Result<(), DbError> {
     let count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
@@ -50,7 +51,9 @@ pub fn write_snapshot_from_maps(
     for col_ref in state.iter() {
         let col_name = col_ref.key().clone();
         for item_ref in col_ref.value().iter() {
-            write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), item_ref.value())?;
+            if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
+                write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), &value)?;
+            }
         }
     }
     finish_snapshot_gz(gz, &tmp, &path)
@@ -59,7 +62,7 @@ pub fn write_snapshot_from_maps(
 #[cfg(feature = "schema")]
 pub fn write_snapshot_from_maps(
     log_path: &str,
-    state: &DashMap<String, DashMap<String, Value>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     seq: u64,
 ) -> Result<(), DbError> {
@@ -71,7 +74,9 @@ pub fn write_snapshot_from_maps(
     for col_ref in state.iter() {
         let col_name = col_ref.key().clone();
         for item_ref in col_ref.value().iter() {
-            write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), item_ref.value())?;
+            if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
+                write_entry_to_gz(&mut gz, "INSERT", &col_name, item_ref.key(), &value)?;
+            }
         }
     }
     for schema_ref in schemas.iter() {
@@ -139,22 +144,10 @@ pub fn load_snapshot(
     let mut magic = [0u8; 8];
     file.read_exact(&mut magic).ok()?;
 
-    let use_msgpack = match &magic {
-        b"MOLTSNG3" => true,
-        b"MOLTSNG2" => {
-            tracing::warn!("⚠️  Old JSON snapshot detected — falling back to log replay");
-            return None;
-        }
-        b"MOLTSNAP" => {
-            tracing::warn!("⚠️  Old uncompressed snapshot detected — falling back to log replay");
-            return None;
-        }
-        _ => {
-            tracing::warn!("❌ Invalid snapshot magic header");
-            return None;
-        }
-    };
-    let _ = use_msgpack; // always true for MOLTSNG3
+    if &magic != b"MOLTSNG3" {
+        tracing::warn!("❌ Invalid or unsupported snapshot format — falling back to log replay");
+        return None;
+    }
 
     // Read the sequence number (how many log lines to skip on replay).
     let mut seq_bytes = [0u8; 8];

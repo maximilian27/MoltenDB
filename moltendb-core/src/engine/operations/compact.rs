@@ -1,10 +1,11 @@
 use dashmap::DashMap;
+use std::sync::Arc;
 use tracing::info;
 use crate::engine::types::DbError;
 use crate::engine::storage::StorageBackend;
 
 pub fn compact(
-    state: &DashMap<String, DashMap<String, serde_json::Value>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     #[cfg(feature = "schema")]
     schemas: &DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
     storage: &dyn StorageBackend,
