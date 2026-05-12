@@ -518,7 +518,7 @@ Authorization: Bearer {{token}}
 ### §9. Compact the stress collection log.
 ### After many inserts/updates/deletes the log file grows. Compaction rewrites
 ### it to contain only the current live state, speeding up future restarts.
-POST http://localhost:1538/compact
+POST http://localhost:1538/snapshot
 Content-Type: application/json
 Authorization: Bearer {{token}}
 

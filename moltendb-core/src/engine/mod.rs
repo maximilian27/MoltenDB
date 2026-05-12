@@ -158,7 +158,7 @@ impl Db {
         &self,
         collection: &str,
         predicate: impl Fn(&Value) -> bool + Sync,
-        cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering + Sync,
+        cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
         cap: usize,
     ) -> Vec<(String, Value)> {
         operations::scan_top_n(&self.state, &self.storage, collection, predicate, cmp, cap)

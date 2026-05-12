@@ -124,60 +124,72 @@ pub fn scan_top_n<P, C>(
 ) -> Vec<(String, Value)>
 where
     P: Fn(&Value) -> bool + Sync,
-    C: Fn(&Value, &Value) -> std::cmp::Ordering + Sync,
+    C: Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
 {
     use std::collections::BinaryHeap;
     use std::cmp::Ordering;
     if cap == 0 {
         return Vec::new();
     }
-    struct HeapItem<'a, F: Fn(&Value, &Value) -> Ordering> {
+    struct HeapItem<F: Fn(&Value, &Value) -> Ordering> {
         key: String,
         value: Value,
-        cmp: &'a F,
+        cmp: Arc<F>,
     }
-    impl<'a, F: Fn(&Value, &Value) -> Ordering> PartialEq for HeapItem<'a, F> {
+    impl<F: Fn(&Value, &Value) -> Ordering> PartialEq for HeapItem<F> {
         fn eq(&self, o: &Self) -> bool { (self.cmp)(&self.value, &o.value) == Ordering::Equal }
     }
-    impl<'a, F: Fn(&Value, &Value) -> Ordering> Eq for HeapItem<'a, F> {}
-    impl<'a, F: Fn(&Value, &Value) -> Ordering> PartialOrd for HeapItem<'a, F> {
+    impl<F: Fn(&Value, &Value) -> Ordering> Eq for HeapItem<F> {}
+    impl<F: Fn(&Value, &Value) -> Ordering> PartialOrd for HeapItem<F> {
         fn partial_cmp(&self, o: &Self) -> Option<Ordering> { Some(self.cmp(o)) }
     }
-    impl<'a, F: Fn(&Value, &Value) -> Ordering> Ord for HeapItem<'a, F> {
+    impl<F: Fn(&Value, &Value) -> Ordering> Ord for HeapItem<F> {
         fn cmp(&self, o: &Self) -> Ordering { (self.cmp)(&self.value, &o.value) }
     }
+
+    let cmp = Arc::new(cmp);
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         let Some(col) = state.get(collection) else { return Vec::new(); };
-        // Parallel pre-filter: each worker decodes & predicates its DashMap shard
-        // independently. The bounded top-N selection happens once on the merged
-        // candidate set; it's O(matching) but the heavy MsgPack decode is what
-        // we actually want parallelised.
-        let candidates: Vec<(String, Value)> = col
-            .par_iter()
-            .filter_map(|entry| {
-                let v = decode(entry.value())?;
-                if predicate(&v) {
-                    Some((entry.key().clone(), v))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let mut heap: BinaryHeap<HeapItem<C>> = BinaryHeap::with_capacity(cap + 1);
-        for (k, v) in candidates {
+        // Each rayon worker keeps its own bounded heap (size ≤ cap) and we merge
+        // them at the end. Peak memory is O(workers * cap) instead of
+        // O(collection size), and we avoid materialising a giant intermediate Vec
+        // — which is the dominant cost for sort-only queries over 1M docs.
+        let push_into = |heap: &mut BinaryHeap<HeapItem<C>>, k: String, v: Value, cmp: &Arc<C>| {
             if heap.len() >= cap
                 && let Some(worst) = heap.peek()
                 && cmp(&v, &worst.value) != Ordering::Less
             {
-                continue;
+                return;
             }
-            heap.push(HeapItem { key: k, value: v, cmp: &cmp });
+            heap.push(HeapItem { key: k, value: v, cmp: cmp.clone() });
             if heap.len() > cap { heap.pop(); }
-        }
-        heap.into_sorted_vec().into_iter().map(|h| (h.key, h.value)).collect()
+        };
+
+        let merged: BinaryHeap<HeapItem<C>> = col
+            .par_iter()
+            .fold(
+                || BinaryHeap::<HeapItem<C>>::with_capacity(cap + 1),
+                |mut heap, entry| {
+                    if let Some(v) = decode(entry.value())
+                        && predicate(&v)
+                    {
+                        push_into(&mut heap, entry.key().clone(), v, &cmp);
+                    }
+                    heap
+                },
+            )
+            .reduce(
+                || BinaryHeap::<HeapItem<C>>::with_capacity(cap + 1),
+                |mut a, b| {
+                    for item in b {
+                        push_into(&mut a, item.key, item.value, &cmp);
+                    }
+                    a
+                },
+            );
+        merged.into_sorted_vec().into_iter().map(|h| (h.key, h.value)).collect()
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -195,7 +207,7 @@ where
                 {
                     continue;
                 }
-                heap.push(HeapItem { key: entry.key().clone(), value: v, cmp: &cmp });
+                heap.push(HeapItem { key: entry.key().clone(), value: v, cmp: cmp.clone() });
                 if heap.len() > cap { heap.pop(); }
             }
         }

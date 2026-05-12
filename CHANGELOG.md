@@ -1,3 +1,14 @@
+# [1.0.0-rc2] (May 12, 2026)
+### Performance
+* **MessagePack in-memory storage** — switched the hot document map from `serde_json::Value` to `Box<[u8]>` (MessagePack bytes). Reduces steady-state RSS for 1M docs from ~4 GB to ~500 MB (~8× lower). Decoding to `Value` happens lazily on read; write paths encode via `rmp_serde`. Full analysis in `MEMORY_ANALYSIS.md`.
+* **Parallel read paths (rayon)** — `get_filtered`, `get_all`, and `scan_top_n` now use `rayon` `par_iter` across DashMap shards on native targets. MsgPack decode (the dominant cost) runs across all CPU cores. Sequential fallback retained for `wasm32`.
+* **Bounded per-worker heaps in `scan_top_n`** — rewrote sort-only paginated queries with rayon `fold` + `reduce` so each worker keeps its own small heap (size ≤ `cap`). Eliminates the 1M-element intermediate `Vec` that caused ~7s latency on sort-only queries; peak intermediate memory drops from O(N) to O(workers × cap).
+
+### Bug Fixes
+* Fixed `compact` method incorrectly placed inside `impl StorageBackend for OpfsStorage` (not a trait member) — moved to a separate `impl OpfsStorage` block in `wasm.rs`.
+* Fixed unused-variable warnings (`state`, `hook`) in the default `compact_from_maps` impl under `#[cfg(not(feature = "schema"))]`.
+
+---
 # [1.0.0-rc1] (May 9, 2026)
 
 ### Breaking Changes

@@ -33,6 +33,16 @@ MoltenDB is a JSON document database written in Rust that compiles to both a nat
 
 ---
 
+## What's new in v1.0.0-rc2
+
+- **~8× lower memory** — documents are now stored as MessagePack bytes (`Box<[u8]>`) instead of `serde_json::Value`, dropping steady-state RSS for 1M docs from ~4 GB to ~500 MB.
+- **Parallel queries** — `get_filtered`, `get_all`, and `scan_top_n` use `rayon` across all CPU cores on native targets; filter + sort queries went from ~13s to ~1–2s on an 8-core machine.
+- **Bounded sort heaps** — sort-only paginated queries (`scan_top_n`) use per-worker heaps via rayon `fold + reduce`, eliminating the 1M-element intermediate allocation that caused ~7s latency.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list of changes.
+
+---
+
 ## Architecture
 
 MoltenDB is structured as a **Cargo Workspace** with four independent crates. Each crate has a single, well-defined responsibility and can be used in isolation.
@@ -73,7 +83,7 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "0.10.3"
+moltendb-core = "1.0.0-rc2"
 ```
 
 ```rust
@@ -147,20 +157,6 @@ The runnable binary. Owns Axum routing, TLS termination, CORS policy, per-IP rat
 MoltenDB keeps the **entire dataset in RAM** (`DashMap`) — reads are pure hashmap lookups with no disk I/O. All data is loaded into memory at startup from the snapshot + WAL delta. RAM is the hard dataset size limit.
 
 One of MoltenDB's core features is **GraphQL-style field selection**: every query lets you specify exactly which fields (including deeply nested ones) you want back. You never receive more data than you asked for — no over-fetching, no under-fetching, no separate schema to maintain.
-
----
-
-### Examples
-
-- **[TODO App (CLI)](moltendb-core/examples/todo_app.rs)** — A simple CLI application demonstrating basic CRUD operations and data persistence using only `moltendb-core`.
-  ```bash
-  cargo run -p moltendb-core --example todo_app
-  ```
-
-- **[TODO App (Desktop)](moltendb-core/examples/todo_desktop.rs)** — A standalone GUI application built with `eframe` (egui) and `moltendb-core`.
-  ```bash
-  cargo run -p moltendb-core --example todo_desktop
-  ```
 
 ## What Actually Works Today
 
@@ -250,7 +246,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "0.10.3"
+moltendb-core = "1.0.0-rc2"
 ```
 
 ### Download Pre-built Binaries
