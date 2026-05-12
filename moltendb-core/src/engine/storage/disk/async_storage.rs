@@ -62,6 +62,17 @@ impl AsyncDiskStorage {
     pub fn new(path: &str) -> Result<Self, DbError> {
         // Remove any stale .tmp file left by a previous crash before compaction swap.
         let _ = std::fs::remove_file(format!("{}.tmp", path));
+        // Eagerly create the log file (or verify it is accessible) before spawning
+        // the background task. This surfaces I/O errors immediately to the caller
+        // instead of silently swallowing them inside the async task.
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| {
+                tracing::error!("Failed to open log file '{}': {}", path, e);
+                DbError::WriteError
+            })?;
         // Create an unbounded MPSC channel.
         // `log_tx` (sender) is kept in the struct; `log_rx` (receiver) goes to the task.
         let (log_tx, mut log_rx) = mpsc::unbounded_channel::<WriterMsg>();

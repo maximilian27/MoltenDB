@@ -1,4 +1,7 @@
 # [1.0.0-rc2] (May 12, 2026)
+### Breaking Changes
+* **Encrypted WAL inner payload switched from JSON to MessagePack** — existing encrypted `.log` files written by `v1.0.0-rc1` or earlier are not readable by this version. Delete or migrate your encrypted WAL before upgrading.
+
 ### Performance
 * **MessagePack in-memory storage** — switched the hot document map from `serde_json::Value` to `Box<[u8]>` (MessagePack bytes). Reduces steady-state RSS for 1M docs from ~4 GB to ~500 MB (~8× lower). Decoding to `Value` happens lazily on read; write paths encode via `rmp_serde`. Full analysis in `MEMORY_ANALYSIS.md`.
 * **Parallel read paths (rayon)** — `get_filtered`, `get_all`, and `scan_top_n` now use `rayon` `par_iter` across DashMap shards on native targets. MsgPack decode (the dominant cost) runs across all CPU cores. Sequential fallback retained for `wasm32`.

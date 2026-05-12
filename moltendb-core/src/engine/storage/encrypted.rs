@@ -41,17 +41,17 @@ impl EncryptedStorage {
         key
     }
 
-    // Serialises the entry to JSON, encrypts it, and wraps the result in an "ENC" log entry.
+    // Serialises the entry to MessagePack, encrypts it, and wraps the result in an "ENC" log entry.
     // Layout: [24-byte nonce][ciphertext], base64-encoded as the entry value.
     fn encrypt_entry(&self, entry: &LogEntry) -> Result<LogEntry, DbError> {
-        let plain_json = serde_json::to_string(entry)?;
+        let plain_bytes = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
 
         let mut nonce_bytes = [0u8; 24];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = XNonce::from_slice(&nonce_bytes);
 
         let cipher_text = self.cipher
-            .encrypt(nonce, plain_json.as_bytes())
+            .encrypt(nonce, plain_bytes.as_ref())
             .map_err(|_| DbError::WriteError)?;
 
         let mut payload = nonce_bytes.to_vec();
@@ -81,8 +81,7 @@ impl EncryptedStorage {
             .decrypt(nonce, cipher_text)
             .map_err(|_| DbError::WriteError)?;
 
-        let plain_json = String::from_utf8(plain_bytes).map_err(|_| DbError::WriteError)?;
-        serde_json::from_str::<LogEntry>(&plain_json).map_err(DbError::Serialization)
+        rmp_serde::from_slice::<LogEntry>(&plain_bytes).map_err(|_| DbError::WriteError)
     }
 }
 
