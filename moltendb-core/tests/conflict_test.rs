@@ -58,3 +58,40 @@ async fn test_update_conflict_guard() {
     let doc = db.get("users", vec!["u1".to_string()]).remove("u1").unwrap();
     assert_eq!(doc.get("_v").unwrap().as_u64().unwrap(), 3);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_delete_filtered() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("test.log");
+    let db = Db::open(DbConfig {
+        path: path.to_str().unwrap().to_string(),
+        max_body_size: 1024 * 1024,
+        ..Default::default()
+    }).unwrap();
+
+    // Insert a mix of documents.
+    db.insert("items", vec![
+        ("a".to_string(), json!({"role": "guest", "score": 10})),
+        ("b".to_string(), json!({"role": "admin", "score": 20})),
+        ("c".to_string(), json!({"role": "guest", "score": 30})),
+        ("d".to_string(), json!({"role": "editor", "score": 40})),
+    ]).unwrap();
+
+    // Delete all guests.
+    let deleted = db.delete_filtered("items", |doc| {
+        doc.get("role").and_then(|v| v.as_str()) == Some("guest")
+    }).unwrap();
+    assert_eq!(deleted, 2);
+
+    // Only admin and editor should remain.
+    let remaining = db.get_all("items");
+    assert_eq!(remaining.len(), 2);
+    assert!(remaining.contains_key("b"));
+    assert!(remaining.contains_key("d"));
+    assert!(!remaining.contains_key("a"));
+    assert!(!remaining.contains_key("c"));
+
+    // delete_filtered on a non-existent collection returns 0, not an error.
+    let deleted = db.delete_filtered("nonexistent", |_| true).unwrap();
+    assert_eq!(deleted, 0);
+}

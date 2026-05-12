@@ -204,6 +204,21 @@ impl Db {
         Ok(updated)
     }
 
+    /// Scan a collection with a predicate and delete all matching documents.
+    /// Mirrors `get_filtered` on the read side. Returns the number of documents deleted.
+    pub fn delete_filtered(
+        &self,
+        collection: &str,
+        predicate: impl Fn(&Value) -> bool + Sync,
+    ) -> Result<usize, DbError> {
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
+        operations::delete_filtered(&self.state, &self.storage, &self.tx, collection, predicate)
+    }
+
     /// Delete one or more documents by key. Pass a single key to delete one document.
     pub fn delete(&self, collection: &str, keys: Vec<String>) -> Result<(), DbError> {
         if self.io_fault.load(Ordering::Relaxed) {

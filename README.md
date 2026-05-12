@@ -583,7 +583,7 @@ Authorization: Bearer <token>
 }
 ```
 
-Only the fields in `data` are changed. All other fields are preserved. `_v` is incremented automatically; `createdAt` cannot be overwritten.
+Only the fields in `data` are changed. All other fields are preserved. `_v` is incremented automatically; `_createdAt` cannot be overwritten.
 
 ### Delete
 
@@ -595,6 +595,13 @@ Authorization: Bearer <token>
 { "collection": "laptops", "keys": "lp6" }              // single key
 { "collection": "laptops", "keys": ["lp4", "lp5"] }     // batch
 { "collection": "laptops", "drop": true }               // drop entire collection
+{ "collection": "laptops", "where": { "in_stock": { "$eq": false } } }  // bulk delete by filter
+```
+
+The `where` clause supports every filter operator available in `/get` — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains`, `$in`, `$nin`, `$and`, `$or`. The response includes the count of deleted documents:
+
+```json
+{ "status": "ok", "deleted": 42 }
 ```
 
 ### Paginated collection fetch

@@ -5,6 +5,7 @@
 * **Renamed `createdAt` → `_createdAt` and `modifiedAt` → `_modifiedAt`** — all engine-managed timestamp fields now use the `_` prefix convention, consistent with `_key` and `_v`. Existing stored documents and any client code referencing `createdAt` or `modifiedAt` must be updated.
 
 ### Features
+* **Bulk delete with `where` filters** — `/delete` now accepts a `"where"` clause using the same filter operators as `/get` (`$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains`, `$in`, `$nin`, `$or`, `$and`). The response includes a `"deleted"` count. Implemented via a new `Db::delete_filtered()` engine method (mirroring `Db::get_filtered()`) that uses a parallel rayon scan on native targets to collect matching keys before deleting them in a single transaction.
 * **Reserved `_`-prefix field enforcement** — the handler layer now rejects any insert (`/set`) or update (`/update`) document that contains a field whose name starts with `_`, returning `400 Bad Request` with a descriptive error. This applies universally to every collection, with or without a JSON Schema registered, at `O(1)` cost per document.
 * **`_createdAt` and `_modifiedAt` always returned** — both timestamp fields are now re-attached after field projection in `shape_doc`, so they appear in every response regardless of `fields` or `excludedFields` — consistent with how `_v` and `_key` are handled.
 

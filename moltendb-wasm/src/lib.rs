@@ -190,7 +190,8 @@ impl WorkerDb {
             // Patch/merge batch: { collection, data: { key: patch, ... } }.
             // Equivalent to POST /update on the server.
             "update"   => self.handle_update(&payload),
-            // Delete single/batch/drop: { collection, keys: ... } or { drop: true }.
+            // Delete single/batch/drop/where: { collection, keys: ... }, { drop: true },
+            // or { where: { field: { $op: value } } } for bulk filter-based delete.
             // Equivalent to POST /delete on the server.
             "delete"   => self.handle_delete(&payload),
             // Compact the OPFS log file (removes superseded entries).
@@ -274,8 +275,11 @@ impl WorkerDb {
         serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Delete documents or drop a collection. Equivalent to POST /delete on the server.
-    ///   { "collection": "laptops", "keys": "lp6" }  or  { "drop": true }
+    /// Delete documents, drop a collection, or bulk-delete by filter. Equivalent to POST /delete on the server.
+    ///   { "collection": "laptops", "keys": "lp6" }                                    — single key
+    ///   { "collection": "laptops", "keys": ["lp4", "lp5"] }                           — batch
+    ///   { "collection": "laptops", "drop": true }                                     — drop collection
+    ///   { "collection": "laptops", "where": { "in_stock": { "$eq": false } } }        — bulk filter delete
     fn handle_delete(&self, request: &Value) -> Result<JsValue, JsValue> {
         let (code, mut body): (u16, Value) = handlers::process_delete::process_delete(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }

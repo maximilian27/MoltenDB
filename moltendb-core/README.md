@@ -134,6 +134,31 @@ Attempting to insert or update a document containing any `_`-prefixed field retu
 
 ---
 
+## Bulk delete with `where` filters
+
+`process_delete` supports the same `where` clause as `process_get`, letting you delete all documents that match a filter in a single atomic operation:
+
+```rust
+use moltendb_core::{engine::Db, handlers};
+use serde_json::json;
+
+let payload = json!({
+    "collection": "users",
+    "where": { "role": { "$eq": "guest" } }
+});
+
+let (status, body) = handlers::process_delete::process_delete(&db, &payload, 10 * 1024 * 1024, 1000);
+// body → { "status": "ok", "deleted": 42 }
+```
+
+All filter operators are supported: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains`, `$in`, `$nin`, `$and`, `$or`.
+
+Internally, `Db::delete_filtered(collection, predicate)` runs a parallel scan (rayon on native, sequential on WASM) to collect matching keys, then deletes them in a single transaction. The response always includes the count of deleted documents.
+
+This works identically in the HTTP server, the WASM browser module, and when embedding `moltendb-core` directly in your own Rust application.
+
+---
+
 ## Module overview
 
 | Module | Responsibility |

@@ -1,5 +1,5 @@
 // ─── operations/delete.rs ─────────────────────────────────────────────────────
-// Delete operations: delete, delete_collection.
+// Delete operations: delete, delete_filtered, delete_collection.
 // ─────────────────────────────────────────────────────────────────────────────
 
 use dashmap::DashMap;
@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use super::super::StorageBackend;
 use super::super::types::{DbError, LogEntry};
+
 
 /// Delete one or more documents from a collection in a single call.
 ///
@@ -64,6 +65,61 @@ pub fn delete(
     ))?;
 
     Ok(())
+}
+
+/// Scan a collection with a predicate and delete all matching documents.
+///
+/// Mirrors `get_filtered` on the read side — uses a parallel scan on native
+/// targets to collect matching keys, then deletes them in a single transaction.
+/// Returns the number of documents deleted.
+pub fn delete_filtered(
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    storage: &Arc<dyn StorageBackend>,
+    tx: &tokio::sync::broadcast::Sender<String>,
+    collection: &str,
+    predicate: impl Fn(&Value) -> bool + Sync,
+) -> Result<usize, DbError> {
+    #[inline]
+    fn decode(bytes: &[u8]) -> Option<Value> {
+        rmp_serde::from_slice(bytes).ok()
+    }
+
+    let keys: Vec<String> = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            match state.get(collection) {
+                Some(col) => col
+                    .par_iter()
+                    .filter_map(|entry| {
+                        let v = decode(entry.value())?;
+                        if predicate(&v) { Some(entry.key().clone()) } else { None }
+                    })
+                    .collect(),
+                None => return Ok(0),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            match state.get(collection) {
+                Some(col) => col
+                    .iter()
+                    .filter_map(|entry| {
+                        let v = decode(entry.value())?;
+                        if predicate(&v) { Some(entry.key().clone()) } else { None }
+                    })
+                    .collect(),
+                None => return Ok(0),
+            }
+        }
+    };
+
+    let count = keys.len();
+    if count == 0 {
+        return Ok(0);
+    }
+    delete(state, storage, tx, collection, keys)?;
+    Ok(count)
 }
 
 /// Drop an entire collection — removes all documents and its indexes.
