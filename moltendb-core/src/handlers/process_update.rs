@@ -24,7 +24,9 @@ pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize, ma
         let mut updated_count = 0;
         for (k, v) in data_map {
             if let Some(obj) = v.as_object() {
-                if obj.keys().any(|k| k.starts_with('_')) {
+                // _v is allowed as an optimistic-lock guard on update.
+                // All other _-prefixed fields are reserved and cannot be set by the client.
+                if obj.keys().any(|k| k.starts_with('_') && k != "_v") {
                     return (400, json!({ "error": "Fields starting with '_' are reserved for internal use and cannot be set by the client.", "statusCode": 400 }));
                 }
             }

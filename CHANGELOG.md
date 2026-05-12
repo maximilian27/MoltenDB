@@ -1,10 +1,11 @@
 # [1.0.0-rc3] (May 12, 2026)
 
 ### Breaking Changes
+* **`_v` is now fully engine-managed on `/set`** — clients can no longer supply `_v` as an optimistic-lock guard on insert. The engine always sets `_v = 1` for new documents and increments it on every overwrite. Any document containing a `_`-prefixed field on `/set` or `/update` is now rejected with `400 Bad Request` without exception.
 * **Renamed `createdAt` → `_createdAt` and `modifiedAt` → `_modifiedAt`** — all engine-managed timestamp fields now use the `_` prefix convention, consistent with `_key` and `_v`. Existing stored documents and any client code referencing `createdAt` or `modifiedAt` must be updated.
 
 ### Features
-* **Reserved `_`-prefix field enforcement** — the handler layer now rejects any insert (`/set`) or update (`/update`) document that contains a field whose name starts with `_`, returning `400 Bad Request` with a descriptive error. The sole exception is `_v`, which may be supplied by the client as an optimistic-lock guard on `/set`. This applies universally to every collection, with or without a JSON Schema registered, at `O(1)` cost per document.
+* **Reserved `_`-prefix field enforcement** — the handler layer now rejects any insert (`/set`) or update (`/update`) document that contains a field whose name starts with `_`, returning `400 Bad Request` with a descriptive error. This applies universally to every collection, with or without a JSON Schema registered, at `O(1)` cost per document.
 * **`_createdAt` and `_modifiedAt` always returned** — both timestamp fields are now re-attached after field projection in `shape_doc`, so they appear in every response regardless of `fields` or `excludedFields` — consistent with how `_v` and `_key` are handled.
 
 ### Documentation

@@ -76,8 +76,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             for (k, v) in data_map {
                 let resolved = resolve_extends(v.clone(), db);
                 if let Some(obj) = resolved.as_object() {
-                    // _v is allowed as an optimistic-lock guard on insert.
-                    if obj.keys().any(|k| k.starts_with('_') && k != "_v") {
+                    if obj.keys().any(|k| k.starts_with('_')) {
                         return (400, json!({ "error": "Fields starting with '_' are reserved for internal use and cannot be set by the client.", "statusCode": 400 }));
                     }
                 }
@@ -112,8 +111,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 // documents exactly the same as for named-key documents.
                 let resolved = resolve_extends(item.clone(), db);
                 if let Some(obj) = resolved.as_object() {
-                    // _v is allowed as an optimistic-lock guard on insert.
-                    if obj.keys().any(|k| k.starts_with('_') && k != "_v") {
+                    if obj.keys().any(|k| k.starts_with('_')) {
                         return (400, json!({ "error": "Fields starting with '_' are reserved for internal use and cannot be set by the client.", "statusCode": 400 }));
                     }
                 }

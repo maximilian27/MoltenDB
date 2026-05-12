@@ -67,14 +67,6 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         if let Some(existing) = existing_val {
             // ... (existing logic) ...
             let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-            let incoming_v = value.get("_v").and_then(|v| v.as_u64());
-
-            if let Some(iv) = incoming_v
-                && iv <= existing_v {
-                    tracing::debug!("⚡ Conflict error: {}/{} incoming _v={} <= stored _v={}", collection, key, iv, existing_v);
-                    return Err(DbError::Conflict);
-                }
-
             let orig_created = existing.get("_createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string();
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
@@ -88,9 +80,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             crate::engine::schema::validate_document(schemas, collection, &value)?;
 
         } else if let Some(obj) = value.as_object_mut() {
-            if obj.get("_v").is_none() {
-                obj.insert("_v".to_string(), serde_json::json!(1u64));
-            }
+            obj.insert("_v".to_string(), serde_json::json!(1u64));
             obj.insert("_createdAt".to_string(), serde_json::json!(now.clone()));
             obj.insert("_modifiedAt".to_string(), serde_json::json!(now));
 
