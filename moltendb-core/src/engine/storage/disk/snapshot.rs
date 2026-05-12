@@ -143,22 +143,10 @@ pub fn load_snapshot(
     let mut magic = [0u8; 8];
     file.read_exact(&mut magic).ok()?;
 
-    let use_msgpack = match &magic {
-        b"MOLTSNG3" => true,
-        b"MOLTSNG2" => {
-            tracing::warn!("⚠️  Old JSON snapshot detected — falling back to log replay");
-            return None;
-        }
-        b"MOLTSNAP" => {
-            tracing::warn!("⚠️  Old uncompressed snapshot detected — falling back to log replay");
-            return None;
-        }
-        _ => {
-            tracing::warn!("❌ Invalid snapshot magic header");
-            return None;
-        }
-    };
-    let _ = use_msgpack; // always true for MOLTSNG3
+    if &magic != b"MOLTSNG3" {
+        tracing::warn!("❌ Invalid or unsupported snapshot format — falling back to log replay");
+        return None;
+    }
 
     // Read the sequence number (how many log lines to skip on replay).
     let mut seq_bytes = [0u8; 8];
