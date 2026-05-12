@@ -89,7 +89,7 @@ impl StorageBackend for EncryptedStorage {
     #[cfg(not(feature = "schema"))]
     fn compact_from_maps(
         &self,
-        state: &dashmap::DashMap<String, dashmap::DashMap<String, Box<[u8]>>>,
+        state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
         hook: Option<String>,
     ) -> Result<(), DbError> {
         self.inner.compact_from_maps(state, hook)
@@ -98,7 +98,7 @@ impl StorageBackend for EncryptedStorage {
     #[cfg(feature = "schema")]
     fn compact_from_maps(
         &self,
-        state: &dashmap::DashMap<String, dashmap::DashMap<String, Box<[u8]>>>,
+        state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
         schemas: &dashmap::DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
         hook: Option<String>,
     ) -> Result<(), DbError> {

@@ -15,7 +15,7 @@ use super::super::types::{DbError, LogEntry};
 /// Grouping these into a struct keeps the function signature within Clippy's
 /// argument-count limit and makes call sites more readable.
 pub struct UpdateParams<'a> {
-    pub state: &'a DashMap<String, DashMap<String, Box<[u8]>>>,
+    pub state: &'a DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     pub storage: &'a Arc<dyn StorageBackend>,
     pub tx: &'a tokio::sync::broadcast::Sender<String>,
     #[cfg(feature = "schema")]

@@ -14,7 +14,7 @@ use super::super::types::{DbError, LogEntry};
 /// Grouping these into a struct keeps the function signature within Clippy's
 /// argument-count limit and makes call sites more readable.
 pub struct InsertParams<'a> {
-    pub state: &'a DashMap<String, DashMap<String, Box<[u8]>>>,
+    pub state: &'a DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     pub storage: &'a Arc<dyn StorageBackend>,
     pub tx: &'a tokio::sync::broadcast::Sender<String>,
     #[cfg(feature = "schema")]
@@ -46,7 +46,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         items,
     } = params;
     let col = state
-        .entry(collection.to_string())
+        .entry(Arc::from(collection))
         .or_insert_with(DashMap::new);
 
     // TX_BEGIN: Start a transaction.

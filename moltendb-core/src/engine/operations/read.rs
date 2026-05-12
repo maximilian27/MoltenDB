@@ -26,7 +26,7 @@ fn decode(bytes: &[u8]) -> Option<Value> {
 
 /// Retrieve a specific set of documents by their keys.
 pub fn get(
-    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
     collection: &str,
     keys: Vec<String>,
@@ -51,7 +51,7 @@ pub fn get(
 /// as the previous DashMap iteration order).
 /// Wasm: sequential scan with early-stop on `limit`.
 pub fn get_filtered(
-    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
     collection: &str,
     predicate: impl Fn(&Value) -> bool + Sync,
@@ -115,7 +115,7 @@ pub fn get_filtered(
 /// at the end.
 /// Wasm: single-threaded bounded heap.
 pub fn scan_top_n<P, C>(
-    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
     collection: &str,
     predicate: P,
@@ -217,7 +217,7 @@ where
 
 /// Retrieve all documents in a collection as a HashMap.
 pub fn get_all(
-    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
     collection: &str,
 ) -> HashMap<String, Value> {

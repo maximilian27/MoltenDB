@@ -249,15 +249,15 @@ async fn main() {
                 {
                     let recovered_storage = engine::SyncDiskStorage::new(&temp_log).expect("Failed to create recovery log");
                     // Rebuild state map from recovered entries for compact_from_maps
-                    let state: dashmap::DashMap<String, dashmap::DashMap<String, Box<[u8]>>> = dashmap::DashMap::new();
+                    let state: dashmap::DashMap<Arc<str>, dashmap::DashMap<String, Box<[u8]>>> = dashmap::DashMap::new();
                     for entry in &entries {
                         if entry.cmd == "INSERT" {
                             if let Ok(bytes) = rmp_serde::to_vec(&entry.value) {
                                 let boxed: Box<[u8]> = bytes.into_boxed_slice();
-                                state.entry(entry.collection.clone()).or_default().insert(entry.key.clone(), boxed);
+                                state.entry(Arc::from(entry.collection.as_str())).or_default().insert(entry.key.clone(), boxed);
                             }
                         } else if entry.cmd == "DELETE" {
-                            if let Some(col) = state.get(&entry.collection) {
+                            if let Some(col) = state.get(entry.collection.as_str()) {
                                 col.remove(&entry.key);
                             }
                         }

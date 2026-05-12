@@ -59,7 +59,7 @@ pub struct Db {
     /// Outer map: collection name (e.g. "users") → inner map.
     /// Inner map: document key (e.g. "u1") → document value (always in RAM).
     /// DashMap allows concurrent reads and writes from multiple threads.
-    state: Arc<DashMap<String, DashMap<String, Box<[u8]>>>>,  // documents stored as MsgPack bytes
+    state: Arc<DashMap<Arc<str>, DashMap<String, Box<[u8]>>>>,  // documents stored as MsgPack bytes
 
     /// The storage backend — handles persistence to disk or OPFS.
     /// `pub` so handlers can access it directly if needed (e.g. for compaction).

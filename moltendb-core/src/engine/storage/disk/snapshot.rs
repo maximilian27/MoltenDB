@@ -18,6 +18,7 @@
 
 use crate::engine::types::{DbError, LogEntry};
 use dashmap::DashMap;
+use std::sync::Arc;
 use serde_json::Value;
 use std::fs::{File, OpenOptions};
 use std::ops::ControlFlow;
@@ -40,7 +41,7 @@ pub fn snapshot_path(log_path: &str) -> String {
 #[cfg(not(feature = "schema"))]
 pub fn write_snapshot_from_maps(
     log_path: &str,
-    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     seq: u64,
 ) -> Result<(), DbError> {
     let count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
@@ -61,7 +62,7 @@ pub fn write_snapshot_from_maps(
 #[cfg(feature = "schema")]
 pub fn write_snapshot_from_maps(
     log_path: &str,
-    state: &DashMap<String, DashMap<String, Box<[u8]>>>,
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     seq: u64,
 ) -> Result<(), DbError> {

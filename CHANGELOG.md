@@ -3,6 +3,7 @@
 * **Encrypted WAL inner payload switched from JSON to MessagePack** — existing encrypted `.log` files written by `v1.0.0-rc1` or earlier are not readable by this version. Delete or migrate your encrypted WAL before upgrading.
 
 ### Performance
+* **`Arc<str>` collection-key interning** — changed the outer `DashMap` key from `String` to `Arc<str>`. During bulk insert and WAL replay, all documents in the same collection share a single `Arc<str>` pointer instead of allocating a new `String` per document. Saves ~30 B per doc (~30 MB at 1M docs) and reduces allocator pressure during startup.
 * **MessagePack in-memory storage** — switched the hot document map from `serde_json::Value` to `Box<[u8]>` (MessagePack bytes). Reduces steady-state RSS for 1M docs from ~4 GB to ~500 MB (~8× lower). Decoding to `Value` happens lazily on read; write paths encode via `rmp_serde`. Full analysis in `MEMORY_ANALYSIS.md`.
 * **Parallel read paths (rayon)** — `get_filtered`, `get_all`, and `scan_top_n` now use `rayon` `par_iter` across DashMap shards on native targets. MsgPack decode (the dominant cost) runs across all CPU cores. Sequential fallback retained for `wasm32`.
 * **Bounded per-worker heaps in `scan_top_n`** — rewrote sort-only paginated queries with rayon `fold` + `reduce` so each worker keeps its own small heap (size ≤ `cap`). Eliminates the 1M-element intermediate `Vec` that caused ~7s latency on sort-only queries; peak intermediate memory drops from O(N) to O(workers × cap).
