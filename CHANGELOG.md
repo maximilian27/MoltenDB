@@ -8,6 +8,7 @@
 * **Bounded per-worker heaps in `scan_top_n`** — rewrote sort-only paginated queries with rayon `fold` + `reduce` so each worker keeps its own small heap (size ≤ `cap`). Eliminates the 1M-element intermediate `Vec` that caused ~7s latency on sort-only queries; peak intermediate memory drops from O(N) to O(workers × cap).
 
 ### Bug Fixes
+* **Eliminated memory spike during WAL replay and bulk insert** — changed `apply_entry` to take `LogEntry` by value so the `serde_json::Value` tree inside each entry is dropped immediately after MsgPack encoding. Previously both the `LogEntry` (~2.4 KB Value tree) and the new `Box<[u8]>` (~120 B) coexisted in RAM for every entry, causing ~2× peak memory during boot replay and stress inserts.
 * Fixed `compact` method incorrectly placed inside `impl StorageBackend for OpfsStorage` (not a trait member) — moved to a separate `impl OpfsStorage` block in `wasm.rs`.
 * Fixed unused-variable warnings (`state`, `hook`) in the default `compact_from_maps` impl under `#[cfg(not(feature = "schema"))]`.
 * Fixed log file not being cleared after compaction on the encrypted storage path — `swap_log` now renames the `.tmp` file directly on the calling thread when there is no async writer (the case when `EncryptedStorage` delegates compaction to its inner storage).

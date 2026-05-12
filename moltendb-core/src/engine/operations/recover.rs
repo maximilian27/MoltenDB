@@ -40,7 +40,7 @@ pub fn recover_to(
                 if current_tx_id.as_ref() == Some(&entry.key) {
                     for e in current_tx_entries.drain(..) {
                         crate::engine::storage::apply_entry(
-                            &e,
+                            e,
                             &state,
                             #[cfg(feature = "schema")] &schemas,
                         );
@@ -53,7 +53,7 @@ pub fn recover_to(
                     current_tx_entries.push(entry);
                 } else {
                     crate::engine::storage::apply_entry(
-                        &entry,
+                        entry,
                         &state,
                         #[cfg(feature = "schema")] &schemas,
                     );

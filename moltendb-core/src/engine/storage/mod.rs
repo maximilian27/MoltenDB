@@ -198,7 +198,7 @@ pub fn stream_into_state(
             "TX_COMMIT" => {
                 if active_tx.as_ref() == Some(&entry.key) {
                     for e in tx_buffer.drain(..) {
-                        apply_entry(&e, state, #[cfg(feature = "schema")] schemas);
+                        apply_entry(e, state, #[cfg(feature = "schema")] schemas);
                     }
                     active_tx = None;
                 } else {
@@ -209,7 +209,7 @@ pub fn stream_into_state(
                 if active_tx.is_some() {
                     tx_buffer.push(entry);
                 } else {
-                    apply_entry(&entry, state, #[cfg(feature = "schema")] schemas);
+                    apply_entry(entry, state, #[cfg(feature = "schema")] schemas);
                 }
             }
         }
@@ -224,17 +224,17 @@ pub fn stream_into_state(
 
 /// Apply a single log entry to the in-memory state.
 pub fn apply_entry(
-    entry: &LogEntry,
+    entry: LogEntry,
     state: &DashMap<String, DashMap<String, Box<[u8]>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
 ) {
     match entry.cmd.as_str() {
         "INSERT" => {
             let col = state
-                .entry(entry.collection.clone())
+                .entry(entry.collection)
                 .or_default();
             if let Ok(bytes) = rmp_serde::to_vec(&entry.value) {
-                col.insert(entry.key.clone(), bytes.into_boxed_slice());
+                col.insert(entry.key, bytes.into_boxed_slice());
             }
         }
         "DELETE" => {
@@ -252,7 +252,7 @@ pub fn apply_entry(
         "SCHEMA" => {
             // Re-compile and register the schema during replay.
             if let Ok(validator) = jsonschema::validator_for(&entry.value) {
-                schemas.insert(entry.collection.clone(), std::sync::Arc::new((entry.value.clone(), validator)));
+                schemas.insert(entry.collection, std::sync::Arc::new((entry.value, validator)));
             }
         }
         // Unknown command types are silently ignored for forward compatibility.
