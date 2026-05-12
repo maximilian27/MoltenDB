@@ -7,6 +7,10 @@
 * **Parallel read paths (rayon)** — `get_filtered`, `get_all`, and `scan_top_n` now use `rayon` `par_iter` across DashMap shards on native targets. MsgPack decode (the dominant cost) runs across all CPU cores. Sequential fallback retained for `wasm32`.
 * **Bounded per-worker heaps in `scan_top_n`** — rewrote sort-only paginated queries with rayon `fold` + `reduce` so each worker keeps its own small heap (size ≤ `cap`). Eliminates the 1M-element intermediate `Vec` that caused ~7s latency on sort-only queries; peak intermediate memory drops from O(N) to O(workers × cap).
 
+### Removed (Backward Compatibility)
+* **Dropped JSON-lines WAL fallback** — `log.rs` no longer accepts the legacy JSON-lines log format. The WAL is exclusively MessagePack length-prefixed. Databases written before `v1.0.0-rc1` must be migrated or discarded.
+* **Dropped legacy snapshot format references** — `MOLTSNG2` (JSON body) and `MOLTSNAP` (uncompressed) snapshot formats were already rejected at load time; all remaining references and comments have been removed. Only `MOLTSNG3` (MsgPack + gzip) is supported.
+
 ### Bug Fixes
 * **Eliminated memory spike during WAL replay and bulk insert** — changed `apply_entry` to take `LogEntry` by value so the `serde_json::Value` tree inside each entry is dropped immediately after MsgPack encoding. Previously both the `LogEntry` (~2.4 KB Value tree) and the new `Box<[u8]>` (~120 B) coexisted in RAM for every entry, causing ~2× peak memory during boot replay and stress inserts.
 * Fixed `compact` method incorrectly placed inside `impl StorageBackend for OpfsStorage` (not a trait member) — moved to a separate `impl OpfsStorage` block in `wasm.rs`.

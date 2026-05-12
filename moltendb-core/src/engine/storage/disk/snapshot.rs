@@ -7,7 +7,7 @@
 // log from the beginning. This dramatically reduces startup time for large DBs.
 //
 // Snapshot file format (binary, little-endian, gzip-compressed body):
-//   [8 bytes]  magic header: "MOLTSNG3"  ("MOLTSNG2" = legacy JSON body)
+//   [8 bytes]  magic header: "MOLTSNG3"
 //   [8 bytes]  seq: number of log lines captured in this snapshot
 //   [8 bytes]  count: number of LogEntry records that follow
 //   --- everything below this point is gzip-compressed ---
