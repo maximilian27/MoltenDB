@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODY2NTU5OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjhhNTQ3ZmVmLTE1YzEtNGZjMy05ODUwLTJjYThiYWMxODg5NSJ9.pKudQ3ZuxD4g02egE99A9bv5DQnzVk88SjKhTBCLlDw
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODg1NzU0OCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI2NGE1NWI0LTU3ZTAtNDQzNy1hYzQwLTAwNWRiOTRlZTBkMiJ9.4BY0sIyEYKt4CdsQsRhfmbCW-UdW9fiOWURp4scVQFE
 
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
@@ -78,7 +78,6 @@ Authorization: Bearer {{token}}
       }
     },
     "lp2": {
-      "_v": 3,
       "brand": "Apple",
       "model": "MacBook Pro 16",
       "price": 3499,
@@ -264,7 +263,8 @@ Authorization: Bearer {{token}}
   "fields": ["brand", "model", "specs.cpu"],
   "where": {
     "specs.cpu.cores": { "$gte": 12 }
-  }
+  },
+  "blabla": true
 }
 
 ### §14. Multiple conditions (implicit AND) — Intel laptops under 2kg

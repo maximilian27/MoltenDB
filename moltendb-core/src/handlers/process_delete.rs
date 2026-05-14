@@ -14,8 +14,8 @@ pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize, ma
     if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
-    // Only "collection", "keys", "where", and "drop" are valid for a delete request.
-    const DELETE_ALLOWED: &[&str] = &["collection", "keys", "where", "drop"];
+    // Only "collection", "keys", "where", "count", and "drop" are valid for a delete request.
+    const DELETE_ALLOWED: &[&str] = &["collection", "keys", "where", "count", "drop"];
     if let Err(e) = validation::validate_allowed_properties(payload, DELETE_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
@@ -32,7 +32,8 @@ pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize, ma
 
     // WHERE-based bulk delete — scan with predicate, delete all matches.
     if let Some(clause) = payload.get("where").cloned() {
-        return match db.delete_filtered(col, move |doc| query::evaluate_where(doc, &clause).unwrap_or(false)) {
+        let count_limit = payload.get("count").and_then(|c| c.as_u64()).map(|n| n as usize);
+        return match db.delete_filtered(col, move |doc| query::evaluate_where(doc, &clause).unwrap_or(false), count_limit) {
             Ok(count) => (200, json!({ "status": "ok", "deleted": count })),
             Err(e)    => (500, json!({ "error": "Failed to delete", "details": e.to_string(), "statusCode": 500 }))
         };

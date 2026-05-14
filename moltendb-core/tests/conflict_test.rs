@@ -80,7 +80,7 @@ async fn test_delete_filtered() {
     // Delete all guests.
     let deleted = db.delete_filtered("items", |doc| {
         doc.get("role").and_then(|v| v.as_str()) == Some("guest")
-    }).unwrap();
+    }, None).unwrap();
     assert_eq!(deleted, 2);
 
     // Only admin and editor should remain.
@@ -92,6 +92,6 @@ async fn test_delete_filtered() {
     assert!(!remaining.contains_key("c"));
 
     // delete_filtered on a non-existent collection returns 0, not an error.
-    let deleted = db.delete_filtered("nonexistent", |_| true).unwrap();
+    let deleted = db.delete_filtered("nonexistent", |_| true, None).unwrap();
     assert_eq!(deleted, 0);
 }

@@ -71,6 +71,7 @@ pub fn delete(
 ///
 /// Mirrors `get_filtered` on the read side — uses a parallel scan on native
 /// targets to collect matching keys, then deletes them in a single transaction.
+/// If `count_limit` is `Some(n)`, at most `n` documents are deleted.
 /// Returns the number of documents deleted.
 pub fn delete_filtered(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
@@ -78,6 +79,7 @@ pub fn delete_filtered(
     tx: &tokio::sync::broadcast::Sender<String>,
     collection: &str,
     predicate: impl Fn(&Value) -> bool + Sync,
+    count_limit: Option<usize>,
 ) -> Result<usize, DbError> {
     #[inline]
     fn decode(bytes: &[u8]) -> Option<Value> {
@@ -113,6 +115,11 @@ pub fn delete_filtered(
             }
         }
     };
+
+    let mut keys = keys;
+    if let Some(limit) = count_limit {
+        keys.truncate(limit);
+    }
 
     let count = keys.len();
     if count == 0 {

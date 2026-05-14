@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODY2NTU5OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjhhNTQ3ZmVmLTE1YzEtNGZjMy05ODUwLTJjYThiYWMxODg5NSJ9.pKudQ3ZuxD4g02egE99A9bv5DQnzVk88SjKhTBCLlDw
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODg1NzU0OCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI2NGE1NWI0LTU3ZTAtNDQzNy1hYzQwLTAwNWRiOTRlZTBkMiJ9.4BY0sIyEYKt4CdsQsRhfmbCW-UdW9fiOWURp4scVQFE
 
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
@@ -336,5 +336,75 @@ Authorization: Bearer {{token}}
       }
     }
   }
+}
+
+### ─── BULK DELETE ──────────────────────────────────────────────────────────────
+### Delete all documents matching a `where` filter in a single request.
+### Response: { "status": "ok", "deleted": <count> }
+### The `count` param (optional) limits how many matching documents are deleted.
+
+### §60. Bulk delete — remove all out-of-stock laptops
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "where": {
+    "in_stock": { "$eq": false }
+  }
+}
+
+### §61. Bulk delete with a numeric filter — remove all laptops under £500
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "where": {
+    "price": { "$lt": 500 }
+  }
+}
+
+### §62. Bulk delete with $or — remove all AMD or Apple laptops
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "where": {
+    "$or": [
+      { "specs.cpu.brand": { "$eq": "AMD" } },
+      { "specs.cpu.brand": { "$eq": "Apple" } }
+    ]
+  }
+}
+
+### §63. Bulk delete with count — remove at most 2 gaming laptops
+### Useful for batched cleanup jobs that process large collections in chunks.
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "where": {
+    "tags": { "$contains": "gaming" }
+  },
+  "count": 2
+}
+
+### §64. Bulk delete — drop all documents in a collection via where: {}
+### An empty where clause matches every document — equivalent to clearing the collection
+### without dropping it (the collection itself remains, just empty).
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "memory",
+  "where": {}
 }
 
