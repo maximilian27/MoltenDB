@@ -58,7 +58,7 @@ fn synthetic_entry(i: usize) -> Value {
 }
 
 fn main() {
-    let total = 100_000usize;
+    let total = 1000_000usize;
     let batch_size = 10_000usize;
     let batches = total / batch_size;
 

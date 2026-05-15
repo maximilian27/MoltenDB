@@ -12,14 +12,11 @@
 * **`count` defaults to 100, max 1000** — `/get` and `/delete` (bulk `where` mode) now default to returning/deleting at most 100 documents when `count` is not supplied. Supplying a value greater than 1000 returns a `400 Bad Request` error. This prevents accidental full-collection scans on large datasets.
 
 ### Features (continued)
-* **TTL eviction** — documents can now expire automatically via a collection-level TTL default registered via `POST /schema` with a `"ttl"` field. The engine injects `_expiresAt` (absolute Unix ms) into every document on insert or update, calculated from the time of the write. Expired documents are evicted lazily on read (`shape_doc`) and eagerly by a background sweep task in the server (event-driven min-heap — sleeps until the next expiry, zero CPU when idle). `_expiresAt` is always returned in responses alongside `_key`, `_v`, `_createdAt`, and `_modifiedAt`. TTL is collection-level only — per-document `_ttl` is not supported.
+* **TTL eviction (collection-level)** — collections can now expire automatically via a TTL registered on `POST /schema` or inline on `POST /set` with a `"ttl"` field (seconds). The expiry clock resets to `now + ttl_secs` at the end of every insert batch — so the clock starts when the last write commits, not when the schema was registered. On expiry the **entire collection is dropped** in one O(1) call. `_expiresAt` is a **virtual field** — never stored inside documents, computed from the collection TTL map and injected into every response. The background sweep task uses an event-driven min-heap with one entry per collection (not per document), sleeping until the next collection expiry. Zero CPU when idle.
 * **`/schema` accepts `ttl` without requiring `schema`** — `POST /schema` now accepts `"ttl"` independently of `"schema"`, allowing collection-level TTL defaults to be set on collections that have no JSON Schema validation.
 
-### Bug Fixes
-* **Compaction now excludes expired documents** — `write_snapshot_from_maps` in `snapshot.rs` now filters out any document whose `_expiresAt` field is in the past before writing the snapshot body. The header `count` reflects only live documents. This means `POST /snapshot` acts as a natural TTL cleanup pass: after compaction + restart, the server loads only live documents and the snapshot header correctly shows the reduced count.
-
 ### Documentation
-* Updated root `README.md` and `moltendb-core/README.md` with a **Reserved fields** table documenting `_key`, `_v`, `_createdAt`, `_modifiedAt`, and `_expiresAt`, the `_`-prefix enforcement rule, and the always-returned guarantee for all five fields. Added TTL documentation covering collection-level TTL via `/schema` and the background sweep strategy.
+* Updated root `README.md` and `moltendb-core/README.md` with a **Reserved fields** table documenting `_key`, `_v`, `_createdAt`, `_modifiedAt`, and `_expiresAt`, the `_`-prefix enforcement rule, and the always-returned guarantee for all five fields. Added TTL documentation covering collection-level TTL via `/schema`, the virtual `_expiresAt` field, and the background sweep strategy.
 
 ---
 

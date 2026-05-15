@@ -405,26 +405,35 @@ Every document automatically receives the following engine-managed fields — cl
 | `_v` | Version counter — incremented on every write by the engine. Always starts at `1` for new documents. |
 | `_createdAt` | ISO-8601 timestamp set once at first insert, never overwritten. Always returned in every response. |
 | `_modifiedAt` | ISO-8601 timestamp updated on every write. Always returned in every response. |
-| `_expiresAt` | Absolute Unix timestamp (ms) when the document expires. Set by the engine when the collection has a TTL default. Always returned in every response when present. |
+| `_expiresAt` | ISO-8601 timestamp when the **collection** expires. This is a **virtual field** — never stored inside documents. Computed from the collection TTL map and injected into every response when the collection has a TTL. |
 
 Attempting to insert or update a document that contains any field starting with `_` (except `_v` on update) returns `400 Bad Request`.
 
-`_key`, `_v`, `_createdAt`, `_modifiedAt`, and `_expiresAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed.
+`_key`, `_v`, `_createdAt`, and `_modifiedAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed. `_expiresAt` is also always returned when the collection has a TTL registered.
 
 ### TTL (Time-to-Live)
 
-Documents can expire automatically via a **collection-level TTL default** set through `/schema` (no JSON schema required):
+Collections can expire automatically via a **collection-level TTL** set through `/schema` (no JSON schema required) or inline on `/set`:
 
 ```json
 POST /schema
 { "collection": "cache", "ttl": 300 }
 ```
 
-Every document inserted or updated in that collection automatically receives `_expiresAt` (absolute Unix ms), calculated from the time of the write. TTL is managed entirely by the engine — clients cannot set `_expiresAt` directly.
+```json
+POST /set
+{ "collection": "cache", "data": { "k": { "value": 1 } }, "ttl": 300 }
+```
+
+**How it works:**
+- The expiry clock resets to `now + ttl_secs` at the end of every insert batch — so the clock starts when the **last write commits**, not when the schema was registered.
+- On expiry the **entire collection is dropped** in one O(1) call.
+- `_expiresAt` is a **virtual field** — never stored inside documents. It is computed from the collection TTL map and injected into every response.
+- TTL is **immutable by design** — changing the TTL requires dropping and recreating the collection. This prevents silent retroactive changes to existing data.
 
 **Eviction strategy:**
-- **Lazy eviction on read** — expired documents are silently dropped at read time and treated as not found.
-- **Background sweep** (server only) — an event-driven min-heap task wakes exactly when the next document expires and calls `delete_filtered`. Zero CPU usage when no TTL documents exist.
+- **Lazy eviction on read** — if the collection has expired, reads return `404` immediately without scanning any documents.
+- **Background sweep** (server only) — an event-driven min-heap with one entry per collection wakes exactly when the next collection expires and drops it. Zero CPU usage when no TTL collections exist.
 - **WASM** — lazy eviction only (no background thread in the browser).
 
 ### Query

@@ -55,17 +55,10 @@ fn make_comparator(specs: Vec<Value>) -> impl Fn(&Value, &Value) -> Ordering {
 }
 
 /// Apply field projection or exclusion to a document, preserving `_v`, `_createdAt`, `_modifiedAt`, `_expiresAt` and inserting `_key`.
-/// Returns `None` if the document has expired (lazy TTL eviction).
-fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Option<&Vec<Value>>, join_aliases: &[String], current_time_ms: u64) -> Option<Value> {
-    // Lazy TTL eviction -- treat expired documents as not found.
-    if ttl::is_expired(&doc, current_time_ms) {
-        return None;
-    }
-
+fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Option<&Vec<Value>>, join_aliases: &[String], expires_val: Option<Value>) -> Option<Value> {
     let v_val           = doc.get("_v").cloned();
     let created_val     = doc.get("_createdAt").cloned();
     let modified_val    = doc.get("_modifiedAt").cloned();
-    let expires_val     = doc.get("_expiresAt").and_then(|v| v.as_u64()).map(|ms| Value::String(ttl::ms_to_iso(ms)));
 
     let mut out = if let Some(f) = fields {
         let mut projected = query::project(&doc, f);
@@ -88,6 +81,7 @@ fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Optio
         if let Some(v) = v_val           { obj.insert("_v".to_string(), v); }
         if let Some(v) = created_val     { obj.insert("_createdAt".to_string(), v); }
         if let Some(v) = modified_val    { obj.insert("_modifiedAt".to_string(), v); }
+        // _expiresAt is a virtual field -- inject it if the collection has a TTL.
         if let Some(v) = expires_val     { obj.insert("_expiresAt".to_string(), v); }
         obj.insert("_key".to_string(), Value::String(key.to_string()));
     }
@@ -143,8 +137,18 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         .map(|n| n as usize)
         .unwrap_or(DEFAULT_COUNT);
     let offset: usize = payload.get("offset").and_then(|c| c.as_u64()).map(|n| n as usize).unwrap_or(0);
-    // Capture current time once for TTL expiry checks -- avoids syscall-per-doc in parallel scans.
+    // Capture current time once for TTL expiry checks.
     let query_time = ttl::now_ms();
+    // Check collection-level TTL expiry -- O(1), not per-document.
+    // If the collection has expired, treat it as empty.
+    if let Some(exp) = db.get_ttl_expiry(col_name) {
+        if ttl::collection_is_expired(exp, query_time) {
+            return (404, json!({ "error": "No documents found", "statusCode": 404 }));
+        }
+    }
+    // Compute the virtual _expiresAt value once for the whole request.
+    let expires_val: Option<Value> = db.get_ttl_expiry(col_name)
+        .map(|ms| Value::String(ttl::ms_to_iso(ms)));
     let allowed_prefixes = payload.get("_allowed_prefixes").and_then(|p| p.as_array());
 
     // -- Fast path: sort + count with no joins / keys / prefix filter ------
@@ -168,7 +172,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 cap,
             );
             let array: Vec<Value> = top.into_iter().skip(offset)
-                .filter_map(|(k, doc)| shape_doc(doc, &k, fields_req, excluded_req, &[], query_time))
+                .filter_map(|(k, doc)| shape_doc(doc, &k, fields_req, excluded_req, &[], expires_val.clone()))
                 .collect();
             if array.is_empty() {
                 return (404, json!({ "error": "No documents found", "statusCode": 404 }));
@@ -260,7 +264,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     // Single-key lookup -- return the document directly (no array wrapper, no _key).
     if let Some(Value::String(_)) = payload.get("keys") {
         let (key, doc, aliases) = results.remove(0);
-        match shape_doc(doc, &key, fields_req, excluded_req, &aliases, query_time) {
+        match shape_doc(doc, &key, fields_req, excluded_req, &aliases, expires_val.clone()) {
             None => return (404, json!({ "error": "No documents found", "statusCode": 404 })),
             Some(mut out) => {
                 if let Some(obj) = out.as_object_mut() { obj.remove("_key"); }
@@ -280,7 +284,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
 
     // -- Shape and return -------------------------------------------------
     let array: Vec<Value> = results.into_iter().skip(offset)
-        .filter_map(|(k, doc, aliases)| shape_doc(doc, &k, fields_req, excluded_req, &aliases, query_time))
+        .filter_map(|(k, doc, aliases)| shape_doc(doc, &k, fields_req, excluded_req, &aliases, expires_val.clone()))
         .collect();
 
     if array.is_empty() {

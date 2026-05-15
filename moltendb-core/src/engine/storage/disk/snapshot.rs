@@ -23,8 +23,8 @@ use serde_json::Value;
 use std::fs::{File, OpenOptions};
 use std::ops::ControlFlow;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::io::{BufWriter, Read, Write};
+use std::time::SystemTime;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
@@ -35,50 +35,23 @@ pub fn snapshot_path(log_path: &str) -> String {
     format!("{}.snapshot.bin", log_path)
 }
 
-/// Returns the current Unix timestamp in milliseconds (used to filter expired docs at snapshot time).
-fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
-}
-
-/// Returns true if the document has an `_expiresAt` field that is in the past.
-fn is_expired(value: &Value, now: u64) -> bool {
-    if let Some(exp) = value.get("_expiresAt").and_then(|v| v.as_u64()) {
-        return exp <= now;
-    }
-    false
-}
-
-/// Write a snapshot directly from the in-memory DashMaps using a two-pass approach:
-/// Pass 1 counts live (non-expired) documents without keeping Values in memory.
-/// Pass 2 streams each document directly into the gzip writer one at a time.
-/// Peak RAM stays at ~1x (just the DashMap) — no intermediate Vec is allocated.
-/// Expired documents (those with `_expiresAt` in the past) are excluded so
-/// compaction acts as a natural TTL cleanup pass.
+/// Write a snapshot directly from the in-memory DashMaps.
+/// Streams each document directly into the gzip writer one at a time.
+/// Peak RAM stays at ~1x (just the DashMap) -- no intermediate Vec is allocated.
 #[cfg(not(feature = "schema"))]
 pub fn write_snapshot_from_maps(
     log_path: &str,
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     seq: u64,
 ) -> Result<(), DbError> {
-    let now = now_ms();
-    // Pass 1 -- count only, no Value allocation kept in memory.
-    let count: u64 = state.iter().map(|col_ref| {
-        col_ref.value().iter().filter(|item_ref| {
-            rmp_serde::from_slice::<Value>(item_ref.value())
-                .map(|v| !is_expired(&v, now))
-                .unwrap_or(true)
-        }).count() as u64
-    }).sum();
+    let count: u64 = state.iter().map(|col_ref| col_ref.value().len() as u64).sum();
     let path = snapshot_path(log_path);
     let tmp = format!("{}.tmp", path);
     let mut gz = open_snapshot_gz(&tmp, count, seq)?;
-    // Pass 2 -- stream directly into the gzip writer, one doc at a time.
     for col_ref in state.iter() {
         for item_ref in col_ref.value().iter() {
             if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
-                if !is_expired(&value, now) {
-                    write_entry_to_gz(&mut gz, "INSERT", col_ref.key(), item_ref.key(), &value)?;
-                }
+                write_entry_to_gz(&mut gz, "INSERT", col_ref.key(), item_ref.key(), &value)?;
             }
         }
     }
@@ -92,26 +65,15 @@ pub fn write_snapshot_from_maps(
     schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     seq: u64,
 ) -> Result<(), DbError> {
-    let now = now_ms();
-    // Pass 1 -- count only, no Value allocation kept in memory.
-    let doc_count: u64 = state.iter().map(|col_ref| {
-        col_ref.value().iter().filter(|item_ref| {
-            rmp_serde::from_slice::<Value>(item_ref.value())
-                .map(|v| !is_expired(&v, now))
-                .unwrap_or(true)
-        }).count() as u64
-    }).sum();
+    let doc_count: u64 = state.iter().map(|col_ref| col_ref.value().len() as u64).sum();
     let count = doc_count + schemas.len() as u64;
     let path = snapshot_path(log_path);
     let tmp = format!("{}.tmp", path);
     let mut gz = open_snapshot_gz(&tmp, count, seq)?;
-    // Pass 2 -- stream directly into the gzip writer, one doc at a time.
     for col_ref in state.iter() {
         for item_ref in col_ref.value().iter() {
             if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
-                if !is_expired(&value, now) {
-                    write_entry_to_gz(&mut gz, "INSERT", col_ref.key(), item_ref.key(), &value)?;
-                }
+                write_entry_to_gz(&mut gz, "INSERT", col_ref.key(), item_ref.key(), &value)?;
             }
         }
     }

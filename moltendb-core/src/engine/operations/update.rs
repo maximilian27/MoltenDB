@@ -116,16 +116,12 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
 
             // Step 7: Broadcast a lean change event to WebSocket subscribers.
             let new_v = new_value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-            let expires_at_ms = new_value.get("_expiresAt").and_then(|v| v.as_u64());
-            let mut event = json!({
+            let event = json!({
                 "event": "change",
                 "collection": collection,
                 "key": key,
                 "new_v": new_v
             });
-            if let Some(exp) = expires_at_ms {
-                event["expires_at_ms"] = json!(exp);
-            }
             let _ = tx.send(event.to_string());
             return Ok(true); // document was found and updated
         }

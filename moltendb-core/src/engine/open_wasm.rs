@@ -41,6 +41,7 @@ impl Db {
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
         let ttl_defaults = Arc::new(DashMap::new());
+        let ttl_expiry = Arc::new(DashMap::new());
 
         // Choose storage backend: pure RAM (no OPFS) or OPFS file.
         // When in_memory = true, OpfsStorage is never opened — no file is created
@@ -81,6 +82,7 @@ impl Db {
             #[cfg(feature = "schema")]
             schemas,
             ttl_defaults,
+            ttl_expiry,
             post_backup_script,
             io_fault: Arc::new(AtomicBool::new(false)),
         })

@@ -92,9 +92,15 @@ pub struct Db {
     pub schemas: Arc<DashMap<String, Arc<(Value, jsonschema::Validator)>>>,
 
     /// Per-collection TTL defaults in seconds.
-    /// When set, every document inserted or updated in the collection
-    /// automatically receives `_expiresAt` (absolute Unix ms) from the engine.
+    /// When a TTL is registered for a collection, every insert batch resets
+    /// the collection's absolute expiry to `now + ttl_secs`.
     pub ttl_defaults: Arc<DashMap<String, u64>>,
+
+    /// Per-collection absolute expiry timestamps (Unix ms).
+    /// Set to `now_ms() + ttl_secs` at the end of every insert batch.
+    /// Checked once per GET request (not per document) for O(1) expiry.
+    /// `_expiresAt` is a virtual field derived from this map -- never stored in docs.
+    pub ttl_expiry: Arc<DashMap<String, u64>>,
 
     /// Optional shell command to execute after a successful backup.
     /// Supports the {SNAPSHOT_PATH} placeholder.
@@ -172,25 +178,14 @@ impl Db {
 
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
-    /// If the collection has a TTL default, `_expiresAt` is injected into
-    /// each document before insert.
+    /// If the collection has a TTL default, the collection expiry is reset
+    /// to `now + ttl_secs` after the batch commits.
     pub fn insert(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
         if self.io_fault.load(Ordering::Relaxed) {
             return Err(DbError::StorageFault(
                 "Background disk I/O failed. System is in read-only mode.".into(),
             ));
         }
-        // Apply collection-level TTL before handing off to the insert operation.
-        let items = if self.ttl_defaults.contains_key(collection) {
-            items.into_iter().map(|(k, mut v)| {
-                if let Some(obj) = v.as_object_mut() {
-                    operations::ttl::apply_ttl(obj, collection, &self.ttl_defaults);
-                }
-                (k, v)
-            }).collect()
-        } else {
-            items
-        };
         operations::insert(operations::InsertParams {
             state: &self.state,
             storage: &self.storage,
@@ -199,21 +194,29 @@ impl Db {
             collection,
             items,
         })?;
+        // Reset collection expiry AFTER the batch commits -- TTL clock starts
+        // when the last write of the batch finishes, not when the schema was set.
+        if let Some(secs) = self.ttl_defaults.get(collection).map(|v| *v) {
+            let expires_at = operations::ttl::now_ms() + secs * 1_000;
+            self.ttl_expiry.insert(collection.to_string(), expires_at);
+            // Broadcast the new expiry so the sweep task can update its heap.
+            let event = serde_json::json!({
+                "event": "ttl_expiry",
+                "collection": collection,
+                "expires_at_ms": expires_at
+            });
+            let _ = self.tx.send(event.to_string());
+        }
         Ok(())
     }
 
     /// Partially update a document — merges `updates` into the existing document.
     /// Returns true if the document was found and updated, false if not found.
-    /// If the collection has a TTL default, `_expiresAt` is refreshed from now.
-    pub fn update(&self, collection: &str, key: &str, mut updates: Value) -> Result<bool, DbError> {
+    pub fn update(&self, collection: &str, key: &str, updates: Value) -> Result<bool, DbError> {
         if self.io_fault.load(Ordering::Relaxed) {
             return Err(DbError::StorageFault(
                 "Background disk I/O failed. System is in read-only mode.".into(),
             ));
-        }
-        // Refresh collection-level TTL on every update.
-        if let Some(obj) = updates.as_object_mut() {
-            operations::ttl::apply_ttl(obj, collection, &self.ttl_defaults);
         }
         let updated = operations::update(operations::UpdateParams {
             state: &self.state,
@@ -272,37 +275,27 @@ impl Db {
     }
 
     /// Returns the names of all collections currently in the state.
-    /// Used by the TTL fallback scan to iterate over all collections.
     pub fn state_collections(&self) -> Vec<Arc<str>> {
         self.state.iter().map(|r| r.key().clone()).collect()
     }
 
-    /// Scan all collections and return `(collection, key, expires_at_ms)` for every
-    /// document that has an `_expiresAt` field. Used by the TTL sweep task on startup
-    /// to populate its min-heap without waiting for broadcast events.
-    pub fn scan_expiring(&self) -> Vec<(String, String, u64)> {
-        let mut out = Vec::new();
-        for col_ref in self.state.iter() {
-            let col_name = col_ref.key().to_string();
-            for doc_ref in col_ref.value().iter() {
-                let key = doc_ref.key().clone();
-                if let Ok(val) = rmp_serde::from_slice::<Value>(doc_ref.value()) {
-                    if let Some(exp) = val.get("_expiresAt").and_then(|v| v.as_u64()) {
-                        out.push((col_name.clone(), key, exp));
-                    }
-                }
-            }
-        }
-        out
+    /// Returns all (collection, expires_at_ms) pairs from the TTL expiry map.
+    /// Used by the TTL sweep task on startup to pre-populate its heap.
+    pub fn all_ttl_expiries(&self) -> Vec<(String, u64)> {
+        self.ttl_expiry.iter().map(|r| (r.key().clone(), *r.value())).collect()
+    }
+
+    /// Returns the absolute expiry timestamp (Unix ms) for a collection, if any.
+    pub fn get_ttl_expiry(&self, collection: &str) -> Option<u64> {
+        self.ttl_expiry.get(collection).map(|v| *v)
     }
 
     /// Set a default TTL (in seconds) for a collection.
-    /// Every document inserted or updated in the collection will automatically
-    /// receive `_expiresAt` computed from the time of the write.
-    /// Pass `0` to remove the default TTL for the collection.
+    /// Pass `0` to remove the TTL for the collection.
     pub fn set_ttl_default(&self, collection: &str, ttl_secs: u64) {
         if ttl_secs == 0 {
             self.ttl_defaults.remove(collection);
+            self.ttl_expiry.remove(collection);
         } else {
             self.ttl_defaults.insert(collection.to_string(), ttl_secs);
         }
