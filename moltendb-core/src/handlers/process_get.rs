@@ -131,7 +131,17 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     let where_clause = payload.get("where");
     let joins_req    = payload.get("joins").and_then(|j| j.as_array());
     let sort_specs   = payload.get("sort").and_then(|s| s.as_array()).cloned();
-    let count_limit: Option<usize> = payload.get("count").and_then(|c| c.as_u64()).map(|n| n as usize);
+    const DEFAULT_COUNT: usize = 100;
+    const MAX_COUNT: usize = 1_000;
+    if let Some(n) = payload.get("count").and_then(|c| c.as_u64()) {
+        if n as usize > MAX_COUNT {
+            return (400, json!({ "error": format!("'count' cannot exceed {MAX_COUNT}"), "statusCode": 400 }));
+        }
+    }
+    let count_limit: usize = payload.get("count")
+        .and_then(|c| c.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_COUNT);
     let offset: usize = payload.get("offset").and_then(|c| c.as_u64()).map(|n| n as usize).unwrap_or(0);
     // Capture current time once for TTL expiry checks -- avoids syscall-per-doc in parallel scans.
     let query_time = ttl::now_ms();
@@ -145,8 +155,8 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     let no_prefix  = allowed_prefixes.map(|p| p.is_empty()).unwrap_or(true);
 
     if no_keys && no_joins && no_prefix {
-        if let (Some(specs), Some(limit)) = (sort_specs.clone(), count_limit) {
-            let cap = offset + limit;
+        if let Some(specs) = sort_specs.clone() {
+            let cap = offset + count_limit;
             let cmp = make_comparator(specs);
             let where_clause_owned = where_clause.cloned();
             let top = db.scan_top_n(
@@ -157,12 +167,12 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                 cmp,
                 cap,
             );
-            if top.is_empty() {
-                return (404, json!({ "error": "No documents found", "statusCode": 404 }));
-            }
             let array: Vec<Value> = top.into_iter().skip(offset)
                 .filter_map(|(k, doc)| shape_doc(doc, &k, fields_req, excluded_req, &[], query_time))
                 .collect();
+            if array.is_empty() {
+                return (404, json!({ "error": "No documents found", "statusCode": 404 }));
+            }
             return (200, Value::Array(array));
         }
     }
@@ -266,9 +276,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     }
 
     // -- Pagination -------------------------------------------------------
-    if let Some(limit) = count_limit {
-        results.truncate(offset + limit);
-    }
+    results.truncate(offset + count_limit);
 
     // -- Shape and return -------------------------------------------------
     let array: Vec<Value> = results.into_iter().skip(offset)

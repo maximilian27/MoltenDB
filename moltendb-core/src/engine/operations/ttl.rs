@@ -20,6 +20,51 @@ pub fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Converts a Unix timestamp in milliseconds to an ISO 8601 string (e.g. "2026-03-04T21:58:00Z").
+/// Matches the format used by `_createdAt` and `_modifiedAt`.
+pub fn ms_to_iso(ms: u64) -> String {
+    let secs = ms / 1_000;
+    let (s, m, h) = (secs % 60, (secs / 60) % 60, (secs / 3600) % 24);
+    let mut d = secs / 86400;
+    let mut y = 1970u64;
+    loop {
+        let dy = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 366 } else { 365 };
+        if d < dy { break; }
+        d -= dy;
+        y += 1;
+    }
+    let lp = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let md: [u64; 12] = [31, if lp { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut mo = 1u64;
+    for &x in &md { if d < x { break; } d -= x; mo += 1; }
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d + 1, h, m, s)
+}
+
+/// Parses an ISO 8601 string (e.g. "2026-03-04T21:58:00Z") back to Unix milliseconds.
+/// Returns `None` if the string cannot be parsed.
+pub(crate) fn iso_to_ms(iso: &str) -> Option<u64> {
+    // Expected format: "YYYY-MM-DDTHH:MM:SSZ"
+    let b = iso.as_bytes();
+    if b.len() < 20 { return None; }
+    let y: u64 = std::str::from_utf8(&b[0..4]).ok()?.parse().ok()?;
+    let mo: u64 = std::str::from_utf8(&b[5..7]).ok()?.parse().ok()?;
+    let d: u64 = std::str::from_utf8(&b[8..10]).ok()?.parse().ok()?;
+    let h: u64 = std::str::from_utf8(&b[11..13]).ok()?.parse().ok()?;
+    let mi: u64 = std::str::from_utf8(&b[14..16]).ok()?.parse().ok()?;
+    let s: u64 = std::str::from_utf8(&b[17..19]).ok()?.parse().ok()?;
+    // Days since epoch
+    let mut days: u64 = 0;
+    for yr in 1970..y {
+        days += if (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0 { 366 } else { 365 };
+    }
+    let lp = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let md: [u64; 12] = [31, if lp { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for i in 0..(mo as usize - 1) { days += md[i]; }
+    days += d - 1;
+    let secs = days * 86400 + h * 3600 + mi * 60 + s;
+    Some(secs * 1_000)
+}
+
 /// Inject `_expiresAt` (absolute Unix ms) if the collection has a TTL default.
 ///
 /// TTL is collection-level only -- per-document `_ttl` is not supported.
@@ -31,8 +76,8 @@ pub fn apply_ttl(
     ttl_defaults: &DashMap<String, u64>,
 ) {
     if let Some(secs) = ttl_defaults.get(collection).map(|v| *v) {
-        let expires_at = now_ms() + secs * 1_000;
-        doc.insert("_expiresAt".to_string(), Value::Number(expires_at.into()));
+        let expires_at_ms = now_ms() + secs * 1_000;
+        doc.insert("_expiresAt".to_string(), Value::String(ms_to_iso(expires_at_ms)));
     }
 }
 
@@ -46,8 +91,8 @@ pub fn apply_ttl(
 /// The caller should invoke `now_ms()` exactly once and pass the result here.
 #[inline]
 pub fn is_expired(doc: &Value, current_time_ms: u64) -> bool {
-    if let Some(expires) = doc.get("_expiresAt").and_then(|v| v.as_u64()) {
-        return current_time_ms >= expires;
+    if let Some(expires_ms) = doc.get("_expiresAt").and_then(|v| v.as_str()).and_then(iso_to_ms) {
+        return current_time_ms >= expires_ms;
     }
     false
 }

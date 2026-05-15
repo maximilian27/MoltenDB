@@ -32,7 +32,17 @@ pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize, ma
 
     // WHERE-based bulk delete — scan with predicate, delete all matches.
     if let Some(clause) = payload.get("where").cloned() {
-        let count_limit = payload.get("count").and_then(|c| c.as_u64()).map(|n| n as usize);
+        const DEFAULT_COUNT: usize = 100;
+        const MAX_COUNT: usize = 1_000;
+        if let Some(n) = payload.get("count").and_then(|c| c.as_u64()) {
+            if n as usize > MAX_COUNT {
+                return (400, json!({ "error": format!("'count' cannot exceed {MAX_COUNT}"), "statusCode": 400 }));
+            }
+        }
+        let count_limit = Some(payload.get("count")
+            .and_then(|c| c.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(DEFAULT_COUNT));
         return match db.delete_filtered(col, move |doc| query::evaluate_where(doc, &clause).unwrap_or(false), count_limit) {
             Ok(count) => (200, json!({ "status": "ok", "deleted": count })),
             Err(e)    => (500, json!({ "error": "Failed to delete", "details": e.to_string(), "statusCode": 500 }))

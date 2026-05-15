@@ -454,7 +454,7 @@ Authorization: Bearer <token>
 | `excludedFields` | string[] | Return everything *except* these fields. Mutually exclusive with `fields`.                                                                 |
 | `joins` | object[] | Cross-collection joins. Each element is `{ "<name>": { "from": "<collection>", "on": "<foreign_key_field>", "fields": [...] } }`.          |
 | `sort` | object[] | Sort results. Each spec is `{ "field": "<name>", "order": "asc" \| "desc" }`. Multiple specs applied in priority order.                    |
-| `count` | number | Maximum number of results to return (applied after filtering and sorting).                                                                 |
+| `count` | number | Maximum number of results to return (applied after filtering and sorting). **Defaults to `100` if not supplied. Values above `1000` return a `400` error.**          |
 | `offset` | number | Number of results to skip (for stable pagination, applied after sorting).                                                                  |
 
 > **Response shape:** All multi-document queries return a **JSON array** where each element includes a `_key` field with the document ID. The only exception is a single-key lookup (`"keys": "lp2"`) which returns the document directly.
@@ -615,7 +615,7 @@ Authorization: Bearer <token>
 { "collection": "laptops", "where": { "in_stock": { "$eq": false } } }  // bulk delete by filter
 ```
 
-The `where` clause supports every filter operator available in `/get` — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains`, `$in`, `$nin`, `$and`, `$or`. The response includes the count of deleted documents:
+The `where` clause supports every filter operator available in `/get` — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains`, `$in`, `$nin`, `$and`, `$or`. An optional `count` property limits how many documents are deleted (**default `100`**, max `1000`). The response includes the count of deleted documents:
 
 ```json
 { "status": "ok", "deleted": 42 }

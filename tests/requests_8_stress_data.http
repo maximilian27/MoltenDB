@@ -92,7 +92,7 @@ Authorization: Bearer {{token}}
 {
   "collection": "stress",
   "keys": ["stress_000000", "stress_000001"],
-  "excluded_fields": ["price", "tags"]
+  "excludedFields": ["price", "tags"]
 }
 
 ### ─── §3. WHERE — simple filters ─────────────────────────────────────────────
@@ -352,7 +352,7 @@ Authorization: Bearer {{token}}
   "collection": "stress",
   "fields": ["brand", "model", "price"],
   "sort": [{ "field": "price", "order": "asc" }],
-  "count": 10
+  "count": 1000
 }
 
 ### §6b. Page 2 of cheapest items (skip 10, take 10)

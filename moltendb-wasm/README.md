@@ -28,7 +28,7 @@ Exposes the `moltendb-core` engine to JavaScript. Zero server-side code.
 - **`WorkerDb`** — the WASM-exported struct used by the JavaScript Web Worker. Wraps the core `Db` engine and routes `postMessage` actions (`get`, `set`, `update`, `delete`, `snapshot`, `compact`) to the correct handler.
 - **OPFS storage** — data is persisted in the browser's Origin Private File System. Each unique `db_name` is a separate OPFS file. Data survives page reloads and browser restarts.
 - **PITR Ready** — Every write in the browser includes an engine-level `_t` timestamp. Browser logs can be exported and recovered to any millisecond using the native MoltenDB CLI.
-- **Auto-compaction** — triggered automatically after every 500 writes. Can also be triggered manually via `compact`.
+- **Manual compaction** — trigger via the `compact` action to rewrite the OPFS log to contain only live documents, discarding tombstones and superseded entries.
 - **Real-time events** — `subscribe(callback)` taps into the same change-feed channel used by the server's WebSocket endpoint. The callback receives a JSON string for every mutation (`change`, `delete`, `drop`).
 - **`wasm-bindgen` glue** — `wasm-pack build moltendb-wasm --target web` generates `moltendb_core.js`, `moltendb_core_bg.wasm`, and TypeScript declarations, ready to be bundled into `@moltendb-web/core`.
 
@@ -153,13 +153,9 @@ export default function init(wasmUrl?: string | URL): Promise<void>;
 
 ---
 
-## Auto-compaction thresholds
+## Compaction
 
-| Trigger | Default |
-|---|---|
-| Write count | Every 500 writes |
-
-Compaction rewrites the log to contain only the current state — removing superseded INSERT entries and DELETE tombstones. This shrinks the file and speeds up future startup replay. Compaction errors are logged to the browser console but never propagated.
+Compaction is **manual-only** — there is no automatic threshold. Call the `compact` action to rewrite the OPFS log to contain only the current live state, removing superseded INSERT entries and DELETE tombstones. This shrinks the file and speeds up future startup replay. Compaction errors are logged to the browser console but never propagated.
 
 ---
 

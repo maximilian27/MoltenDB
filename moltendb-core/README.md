@@ -109,6 +109,8 @@ let (status_code, result) = handlers::process_get::process_get(&db, &payload, 10
 println!("{} — {}", status_code, result);
 ```
 
+> **Pagination defaults:** `count` defaults to `100` if not supplied. Values above `1000` are rejected with a `400 Bad Request` error. This applies to both `/get` and bulk `/delete` (with `where`).
+
 ---
 
 ## Storage Model
@@ -170,9 +172,9 @@ let (status, body) = handlers::process_delete::process_delete(&db, &payload, 10 
 // body → { "status": "ok", "deleted": 42 }
 ```
 
-All filter operators are supported: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains`, `$in`, `$nin`, `$and`, `$or`.
+All filter operators are supported: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains`, `$in`, `$nin`, `$and`, `$or`. An optional `count` property limits how many documents are deleted (**default `100`**, max `1000`).
 
-Internally, `Db::delete_filtered(collection, predicate)` runs a parallel scan (rayon on native, sequential on WASM) to collect matching keys, then deletes them in a single transaction. The response always includes the count of deleted documents.
+Internally, `Db::delete_filtered(collection, predicate, count_limit)` runs a parallel scan (rayon on native, sequential on WASM) to collect matching keys, then deletes them in a single transaction. The response always includes the count of deleted documents.
 
 This works identically in the HTTP server, the WASM browser module, and when embedding `moltendb-core` directly in your own Rust application.
 
@@ -226,7 +228,7 @@ Browser WASM only — uses the Origin Private File System (OPFS) as the storage 
 
 ## Snapshots, Compaction & Data Safety
 
-Compaction is triggered automatically when the log file exceeds 100 MB or every hour. It:
+Compaction is **manual-only** — trigger it explicitly via `POST /snapshot` (HTTP server) or `db.compact()` (embedded). It:
 
 1. Writes the complete current in-memory state to a **temp snapshot file** — the live snapshot is untouched at this point.
 2. **Moves the existing snapshot** to `backup/<name>.snapshot.bin.<unix_timestamp>.bak` — the old snapshot is never deleted.
