@@ -40,30 +40,6 @@ pub fn ms_to_iso(ms: u64) -> String {
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d + 1, h, m, s)
 }
 
-/// Parses an ISO 8601 string (e.g. "2026-03-04T21:58:00Z") back to Unix milliseconds.
-/// Returns `None` if the string cannot be parsed.
-pub(crate) fn iso_to_ms(iso: &str) -> Option<u64> {
-    // Expected format: "YYYY-MM-DDTHH:MM:SSZ"
-    let b = iso.as_bytes();
-    if b.len() < 20 { return None; }
-    let y: u64 = std::str::from_utf8(&b[0..4]).ok()?.parse().ok()?;
-    let mo: u64 = std::str::from_utf8(&b[5..7]).ok()?.parse().ok()?;
-    let d: u64 = std::str::from_utf8(&b[8..10]).ok()?.parse().ok()?;
-    let h: u64 = std::str::from_utf8(&b[11..13]).ok()?.parse().ok()?;
-    let mi: u64 = std::str::from_utf8(&b[14..16]).ok()?.parse().ok()?;
-    let s: u64 = std::str::from_utf8(&b[17..19]).ok()?.parse().ok()?;
-    // Days since epoch
-    let mut days: u64 = 0;
-    for yr in 1970..y {
-        days += if (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0 { 366 } else { 365 };
-    }
-    let lp = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    let md: [u64; 12] = [31, if lp { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    for i in 0..(mo as usize - 1) { days += md[i]; }
-    days += d - 1;
-    let secs = days * 86400 + h * 3600 + mi * 60 + s;
-    Some(secs * 1_000)
-}
 
 /// Inject `_expiresAt` (absolute Unix ms) if the collection has a TTL default.
 ///
@@ -77,7 +53,7 @@ pub fn apply_ttl(
 ) {
     if let Some(secs) = ttl_defaults.get(collection).map(|v| *v) {
         let expires_at_ms = now_ms() + secs * 1_000;
-        doc.insert("_expiresAt".to_string(), Value::String(ms_to_iso(expires_at_ms)));
+        doc.insert("_expiresAt".to_string(), Value::Number(expires_at_ms.into()));
     }
 }
 
@@ -91,7 +67,7 @@ pub fn apply_ttl(
 /// The caller should invoke `now_ms()` exactly once and pass the result here.
 #[inline]
 pub fn is_expired(doc: &Value, current_time_ms: u64) -> bool {
-    if let Some(expires_ms) = doc.get("_expiresAt").and_then(|v| v.as_str()).and_then(iso_to_ms) {
+    if let Some(expires_ms) = doc.get("_expiresAt").and_then(|v| v.as_u64()) {
         return current_time_ms >= expires_ms;
     }
     false

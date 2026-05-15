@@ -65,7 +65,7 @@ fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Optio
     let v_val           = doc.get("_v").cloned();
     let created_val     = doc.get("_createdAt").cloned();
     let modified_val    = doc.get("_modifiedAt").cloned();
-    let expires_val     = doc.get("_expiresAt").cloned();
+    let expires_val     = doc.get("_expiresAt").and_then(|v| v.as_u64()).map(|ms| Value::String(ttl::ms_to_iso(ms)));
 
     let mut out = if let Some(f) = fields {
         let mut projected = query::project(&doc, f);
