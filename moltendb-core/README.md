@@ -127,14 +127,21 @@ Every document automatically receives the following engine-managed fields. Any f
 |---|---|
 | `_key` | The document's own key — injected on read, never stored inside the document body |
 | `_v` | Version counter, incremented on every write by the engine. Always starts at `1` for new documents. |
-| `_seq` | Monotonic insertion sequence number — strictly increasing within a collection. Assigned at first insert and preserved on overwrites. Used for FIFO eviction when `maxSize` is set. |
-| `_createdAt` | ISO-8601 timestamp set once at first insert and never overwritten. Always returned in every response. |
-| `_modifiedAt` | ISO-8601 timestamp updated on every write. Always returned in every response. |
-| `_expiresAt` | ISO-8601 timestamp when the **collection** expires. This is a **virtual field** — never stored inside documents. Computed from the collection TTL map and injected into every response when the collection has a TTL. |
+| `_seq` | Monotonic insertion sequence number — strictly increasing within a collection. Assigned at first insert and preserved on overwrites. Used for FIFO eviction when `maxSize` is set. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_createdAt` | ISO-8601 timestamp set once at first insert and never overwritten. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_modifiedAt` | ISO-8601 timestamp updated on every write. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_expiresAt` | ISO-8601 timestamp when the **collection** expires. This is a **virtual field** — never stored inside documents. **Opt-in** — only returned when explicitly listed in `fields` (only relevant for TTL collections). |
 
 Attempting to insert or update a document containing any `_`-prefixed field (except `_v` on update) returns `400 Bad Request`.
 
-`_key`, `_v`, `_seq`, `_createdAt`, and `_modifiedAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed. `_expiresAt` is also always returned when the collection has a TTL registered.
+**`_key` and `_v` are always present in every response** — they are protocol primitives and cannot be suppressed by `fields` or `excludedFields`.
+
+`_seq`, `_createdAt`, `_modifiedAt`, and `_expiresAt` are **opt-in** — they are never returned unless explicitly listed in a `fields` projection:
+```rust
+// Only return brand, price, and the creation timestamp
+db.get_filtered("laptops", |_| true, 0, Some(100))
+// then project with fields: ["brand", "price", "_createdAt"]
+```
 
 ---
 
