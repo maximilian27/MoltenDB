@@ -19,95 +19,182 @@ use super::get::{shape_doc, make_comparator, fetch_documents, apply_joins};
 ///   - `offset`           -- results to skip after sort (pagination offset)
 ///   - `_allowed_prefixes`-- internal: restrict results to keys with these prefixes
 pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
-    // -- Validation -------------------------------------------------------
-    if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
-        return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
+    if let Err(e) = validate_get_request(payload, max_body_size, max_keys_per_request) {
+        return e;
     }
-    const ALLOWED: &[&str] = &[
-        "collection", "keys", "where", "fields", "excludedFields", "excluded_fields",
-        "joins", "sort", "count", "offset", "_allowed_prefixes",
-    ];
-    if let Err(e) = validation::validate_allowed_properties(payload, ALLOWED) {
-        return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
+
+    let params = match parse_get_params(db, payload) {
+        Ok(p)  => p,
+        Err(e) => return e,
+    };
+
+    // Fast path: sort + count with no joins / keys / prefix filter.
+    // Uses a bounded heap of capacity (offset + count) so peak RAM is O(offset+count).
+    let no_keys   = payload.get("keys").is_none();
+    let no_joins  = params.joins_req.map(|j| j.is_empty()).unwrap_or(true);
+    let no_prefix = params.allowed_prefixes.map(|p| p.is_empty()).unwrap_or(true);
+
+    if no_keys && no_joins && no_prefix {
+        if let Some(result) = run_fast_sort_path(db, payload, &params) {
+            return result;
+        }
     }
+
+    // Fetch, filter, join.
+    let has_joins = params.joins_req.map(|j| !j.is_empty()).unwrap_or(false);
+    let raw = fetch_documents(db, params.col_name, payload, params.where_clause, has_joins, params.offset, params.count_limit);
+
+    let results = match filter_and_join_docs(db, raw, &params) {
+        Ok(r)  => r,
+        Err(e) => return e,
+    };
+
+    if results.is_empty() {
+        return (404, json!({ "error": "No documents found", "statusCode": 404 }));
+    }
+
+    shape_and_return(results, payload, &params)
+}
+
+// -- Parsed query parameters --------------------------------------------------
+
+struct GetParams<'a> {
+    col_name:         &'a str,
+    where_clause:     Option<&'a Value>,
+    joins_req:        Option<&'a Vec<Value>>,
+    sort_specs:       Option<Vec<Value>>,
+    count_limit:      usize,
+    offset:           usize,
+    fields_req:       Option<&'a Vec<Value>>,
+    excluded_req:     Option<&'a Vec<Value>>,
+    allowed_prefixes: Option<&'a Vec<Value>>,
+    expires_val:      Option<Value>,
+}
+
+// -- Private helpers ----------------------------------------------------------
+
+const ALLOWED: &[&str] = &[
+    "collection", "keys", "where", "fields", "excludedFields", "excluded_fields",
+    "joins", "sort", "count", "offset", "_allowed_prefixes",
+];
+
+/// Validate the raw payload and check for mutually exclusive field options.
+/// Returns `Err((status, body))` on failure.
+fn validate_get_request(payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> Result<(), (u16, Value)> {
+    validation::validate_request(payload, max_body_size, max_keys_per_request)
+        .map_err(|e| (400, json!({ "error": e.to_string(), "statusCode": 400 })))?;
+
+    validation::validate_allowed_properties(payload, ALLOWED)
+        .map_err(|e| (400, json!({ "error": e.to_string(), "statusCode": 400 })))?;
 
     let fields_req   = payload.get("fields").and_then(|f| f.as_array());
     let excluded_req = payload.get("excludedFields")
         .or_else(|| payload.get("excluded_fields"))
         .and_then(|f| f.as_array());
     if fields_req.is_some() && excluded_req.is_some() {
-        return (400, json!({ "error": "'fields' and 'excludedFields' cannot be used together", "statusCode": 400 }));
+        return Err((400, json!({ "error": "'fields' and 'excludedFields' cannot be used together", "statusCode": 400 })));
     }
 
-    // -- Parse query parameters -------------------------------------------
+    Ok(())
+}
+
+/// Parse all query parameters from the payload and perform the collection-level
+/// TTL expiry check. Returns `Err((status, body))` if the collection has expired.
+fn parse_get_params<'a>(db: &engine::Db, payload: &'a Value) -> Result<GetParams<'a>, (u16, Value)> {
+    const DEFAULT_COUNT: usize = 100;
+    const MAX_COUNT: usize = 1_000;
+
     let col_name     = payload["collection"].as_str().unwrap_or("default");
     let where_clause = payload.get("where");
     let joins_req    = payload.get("joins").and_then(|j| j.as_array());
     let sort_specs   = payload.get("sort").and_then(|s| s.as_array()).cloned();
-    const DEFAULT_COUNT: usize = 100;
-    const MAX_COUNT: usize = 1_000;
+    let fields_req   = payload.get("fields").and_then(|f| f.as_array());
+    let excluded_req = payload.get("excludedFields")
+        .or_else(|| payload.get("excluded_fields"))
+        .and_then(|f| f.as_array());
+    let allowed_prefixes = payload.get("_allowed_prefixes").and_then(|p| p.as_array());
+
     if let Some(n) = payload.get("count").and_then(|c| c.as_u64()) {
         if n as usize > MAX_COUNT {
-            return (400, json!({ "error": format!("'count' cannot exceed {MAX_COUNT}"), "statusCode": 400 }));
+            return Err((400, json!({ "error": format!("'count' cannot exceed {MAX_COUNT}"), "statusCode": 400 })));
         }
     }
-    let count_limit: usize = payload.get("count")
+    let count_limit = payload.get("count")
         .and_then(|c| c.as_u64())
         .map(|n| n as usize)
         .unwrap_or(DEFAULT_COUNT);
-    let offset: usize = payload.get("offset").and_then(|c| c.as_u64()).map(|n| n as usize).unwrap_or(0);
+    let offset = payload.get("offset").and_then(|c| c.as_u64()).map(|n| n as usize).unwrap_or(0);
+
     // Capture current time once for TTL expiry checks.
     let query_time = ttl::now_ms();
+
     // Check collection-level TTL expiry -- O(1), not per-document.
     if let Some(exp) = db.get_ttl_expiry(col_name) {
         if ttl::collection_is_expired(exp, query_time) {
-            return (404, json!({ "error": "No documents found", "statusCode": 404 }));
+            return Err((404, json!({ "error": "No documents found", "statusCode": 404 })));
         }
     }
+
     // Compute the virtual _expiresAt value once for the whole request.
-    let expires_val: Option<Value> = db.get_ttl_expiry(col_name)
+    let expires_val = db.get_ttl_expiry(col_name)
         .map(|ms| Value::String(ttl::ms_to_iso(ms)));
-    let allowed_prefixes = payload.get("_allowed_prefixes").and_then(|p| p.as_array());
 
-    // -- Fast path: sort + count with no joins / keys / prefix filter ------
-    // Uses a bounded heap of capacity (offset + count) so peak RAM is O(offset+count).
-    let no_keys   = payload.get("keys").is_none();
-    let no_joins  = joins_req.map(|j| j.is_empty()).unwrap_or(true);
-    let no_prefix = allowed_prefixes.map(|p| p.is_empty()).unwrap_or(true);
+    Ok(GetParams {
+        col_name,
+        where_clause,
+        joins_req,
+        sort_specs,
+        count_limit,
+        offset,
+        fields_req,
+        excluded_req,
+        allowed_prefixes,
+        expires_val,
+    })
+}
 
-    if no_keys && no_joins && no_prefix {
-        if let Some(specs) = sort_specs.clone() {
-            let cap = offset + count_limit;
-            let cmp = make_comparator(specs);
-            let where_clause_owned = where_clause.cloned();
-            let top = db.scan_top_n(
-                col_name,
-                move |doc| where_clause_owned.as_ref()
-                    .map(|c| query::evaluate_where(doc, c).unwrap_or(false))
-                    .unwrap_or(true),
-                cmp,
-                cap,
-            );
-            let array: Vec<Value> = top.into_iter().skip(offset)
-                .filter_map(|(k, doc)| shape_doc(doc, &k, fields_req, excluded_req, &[], expires_val.clone()))
-                .collect();
-            if array.is_empty() {
-                return (404, json!({ "error": "No documents found", "statusCode": 404 }));
-            }
-            return (200, Value::Array(array));
-        }
+/// Fast path: bounded heap sort when there are no joins, no key filter, and no
+/// prefix filter. Returns `Some((status, body))` if the path was taken, `None`
+/// if the caller should fall through to the general path.
+fn run_fast_sort_path(db: &engine::Db, _payload: &Value, params: &GetParams<'_>) -> Option<(u16, Value)> {
+    let specs = params.sort_specs.clone()?;
+    let cap   = params.offset + params.count_limit;
+    let cmp   = make_comparator(specs);
+    let where_clause_owned = params.where_clause.cloned();
+
+    let top = db.scan_top_n(
+        params.col_name,
+        move |doc| where_clause_owned.as_ref()
+            .map(|c| query::evaluate_where(doc, c).unwrap_or(false))
+            .unwrap_or(true),
+        cmp,
+        cap,
+    );
+
+    let array: Vec<Value> = top.into_iter().skip(params.offset)
+        .filter_map(|(k, doc)| shape_doc(doc, &k, params.fields_req, params.excluded_req, &[], params.expires_val.clone()))
+        .collect();
+
+    if array.is_empty() {
+        Some((404, json!({ "error": "No documents found", "statusCode": 404 })))
+    } else {
+        Some((200, Value::Array(array)))
     }
+}
 
-    // -- Fetch documents --------------------------------------------------
-    let has_joins = joins_req.map(|j| !j.is_empty()).unwrap_or(false);
-    let raw = fetch_documents(db, col_name, payload, where_clause, has_joins, offset, count_limit);
-
-    // -- Per-document processing ------------------------------------------
+/// Apply prefix gating, cross-collection joins, and WHERE filtering to the raw
+/// document map. Returns the surviving `(key, doc, join_aliases)` triples, or
+/// `Err((status, body))` if a WHERE evaluation error occurs.
+fn filter_and_join_docs(
+    db: &engine::Db,
+    raw: std::collections::HashMap<String, Value>,
+    params: &GetParams<'_>,
+) -> Result<Vec<(String, Value, Vec<String>)>, (u16, Value)> {
     let mut results: Vec<(String, Value, Vec<String>)> = Vec::with_capacity(raw.len());
 
     for (key, mut doc) in raw {
         // Prefix gatekeeper (used by scoped auth tokens).
-        if let Some(prefixes) = allowed_prefixes {
+        if let Some(prefixes) = params.allowed_prefixes {
             if !prefixes.is_empty() {
                 let allowed = prefixes.iter().filter_map(|p| p.as_str()).any(|p| key.starts_with(p));
                 if !allowed { continue; }
@@ -115,52 +202,58 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         }
 
         // Cross-collection joins.
-        let join_aliases = if let Some(joins) = joins_req {
+        let join_aliases = if let Some(joins) = params.joins_req {
             apply_joins(db, &mut doc, joins)
         } else {
             vec![]
         };
 
         // WHERE filter (re-applied here when joins are present, since joined fields may be tested).
-        if let Some(clause) = where_clause {
+        if let Some(clause) = params.where_clause {
             match query::evaluate_where(&doc, clause) {
                 Ok(true)  => {}
                 Ok(false) => continue,
-                Err(e)    => return (400, json!({ "error": e.to_string(), "statusCode": 400 })),
+                Err(e)    => return Err((400, json!({ "error": e.to_string(), "statusCode": 400 }))),
             }
         }
 
         results.push((key, doc, join_aliases));
     }
 
-    if results.is_empty() {
-        return (404, json!({ "error": "No documents found", "statusCode": 404 }));
-    }
+    Ok(results)
+}
 
+/// Sort, paginate, and shape the final result set. Handles the single-key
+/// shortcut (no array wrapper, no `_key` field) and the general array response.
+fn shape_and_return(
+    mut results: Vec<(String, Value, Vec<String>)>,
+    payload: &Value,
+    params: &GetParams<'_>,
+) -> (u16, Value) {
     // Single-key lookup -- return the document directly (no array wrapper, no _key).
     if let Some(Value::String(_)) = payload.get("keys") {
         let (key, doc, aliases) = results.remove(0);
-        match shape_doc(doc, &key, fields_req, excluded_req, &aliases, expires_val.clone()) {
-            None => return (404, json!({ "error": "No documents found", "statusCode": 404 })),
+        return match shape_doc(doc, &key, params.fields_req, params.excluded_req, &aliases, params.expires_val.clone()) {
+            None => (404, json!({ "error": "No documents found", "statusCode": 404 })),
             Some(mut out) => {
                 if let Some(obj) = out.as_object_mut() { let _ = obj.remove("_key"); }
-                return (200, out);
+                (200, out)
             }
-        }
+        };
     }
 
-    // -- Sort -------------------------------------------------------------
-    if let Some(specs) = sort_specs {
+    // Sort.
+    if let Some(specs) = params.sort_specs.clone() {
         let cmp = make_comparator(specs);
         results.sort_by(|(_, a, _), (_, b, _)| cmp(a, b));
     }
 
-    // -- Pagination -------------------------------------------------------
-    results.truncate(offset + count_limit);
+    // Paginate.
+    results.truncate(params.offset + params.count_limit);
 
-    // -- Shape and return -------------------------------------------------
-    let array: Vec<Value> = results.into_iter().skip(offset)
-        .filter_map(|(k, doc, aliases)| shape_doc(doc, &k, fields_req, excluded_req, &aliases, expires_val.clone()))
+    // Shape and return.
+    let array: Vec<Value> = results.into_iter().skip(params.offset)
+        .filter_map(|(k, doc, aliases)| shape_doc(doc, &k, params.fields_req, params.excluded_req, &aliases, params.expires_val.clone()))
         .collect();
 
     if array.is_empty() {
