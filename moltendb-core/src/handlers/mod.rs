@@ -1,4 +1,5 @@
 
+pub mod get;
 pub mod process_get;
 pub mod process_set;
 pub mod process_update;
@@ -16,4 +17,3 @@ pub use process_snapshot::process_snapshot;
 pub use process_stats::process_stats;
 #[cfg(feature = "schema")]
 pub use process_schema::process_schema;
-

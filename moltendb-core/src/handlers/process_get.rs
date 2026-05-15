@@ -2,91 +2,7 @@ use serde_json::{Value, json};
 use crate::validation;
 use crate::{engine, query};
 use crate::engine::ttl;
-use std::collections::HashMap;
-use std::cmp::Ordering;
-
-/// Compare two optional JSON values for sorting.
-/// Numbers -> numeric, strings -> lexicographic, missing/null -> sorts last.
-fn compare_values(a: Option<&Value>, b: Option<&Value>) -> Ordering {
-    match (a, b) {
-        (None, None)       => Ordering::Equal,
-        (None, Some(_))    => Ordering::Greater,
-        (Some(_), None)    => Ordering::Less,
-        (Some(va), Some(vb)) => {
-            if let (Some(na), Some(nb)) = (va.as_f64(), vb.as_f64()) {
-                return na.partial_cmp(&nb).unwrap_or(Ordering::Equal);
-            }
-            if let (Some(sa), Some(sb)) = (va.as_str(), vb.as_str()) {
-                return sa.cmp(sb);
-            }
-            va.to_string().cmp(&vb.to_string())
-        }
-    }
-}
-
-/// Build a sort comparator from a `sort` spec array.
-/// Each spec is either a plain string field name or `{ "field": "...", "order": "asc"|"desc" }`.
-fn make_comparator(specs: Vec<Value>) -> impl Fn(&Value, &Value) -> Ordering {
-    move |a: &Value, b: &Value| {
-        for spec in &specs {
-            let (field, descending) = if let Some(s) = spec.as_str() {
-                (s.to_string(), false)
-            } else if let Some(obj) = spec.as_object() {
-                let f = obj.get("field").and_then(|f| f.as_str()).unwrap_or("").to_string();
-                let d = obj.get("order").and_then(|o| o.as_str())
-                    .map(|o| o.eq_ignore_ascii_case("desc"))
-                    .unwrap_or(false);
-                (f, d)
-            } else {
-                continue;
-            };
-            if field.is_empty() { continue; }
-            let parts: Vec<&str> = field.split('.').collect();
-            let ord = compare_values(
-                query::get_nested_value(a, &parts).as_ref(),
-                query::get_nested_value(b, &parts).as_ref(),
-            );
-            if ord != Ordering::Equal {
-                return if descending { ord.reverse() } else { ord };
-            }
-        }
-        Ordering::Equal
-    }
-}
-
-/// Apply field projection or exclusion to a document, preserving `_v`, `_createdAt`, `_modifiedAt`, `_expiresAt` and inserting `_key`.
-fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Option<&Vec<Value>>, join_aliases: &[String], expires_val: Option<Value>) -> Option<Value> {
-    let v_val           = doc.get("_v").cloned();
-    let created_val     = doc.get("_createdAt").cloned();
-    let modified_val    = doc.get("_modifiedAt").cloned();
-
-    let mut out = if let Some(f) = fields {
-        let mut projected = query::project(&doc, f);
-        // Re-attach any joined sub-documents that were embedded before projection.
-        if let (Some(src), Some(dst)) = (doc.as_object(), projected.as_object_mut()) {
-            for alias in join_aliases {
-                if let Some(v) = src.get(alias) {
-                    dst.insert(alias.clone(), v.clone());
-                }
-            }
-        }
-        projected
-    } else if let Some(ex) = excluded {
-        query::exclude(&doc, ex)
-    } else {
-        doc
-    };
-
-    if let Some(obj) = out.as_object_mut() {
-        if let Some(v) = v_val           { obj.insert("_v".to_string(), v); }
-        if let Some(v) = created_val     { obj.insert("_createdAt".to_string(), v); }
-        if let Some(v) = modified_val    { obj.insert("_modifiedAt".to_string(), v); }
-        // _expiresAt is a virtual field -- inject it if the collection has a TTL.
-        if let Some(v) = expires_val     { obj.insert("_expiresAt".to_string(), v); }
-        obj.insert("_key".to_string(), Value::String(key.to_string()));
-    }
-    Some(out)
-}
+use super::get::{shape_doc, make_comparator, fetch_documents, apply_joins};
 
 /// Handle a GET (query) request.
 ///
@@ -96,9 +12,10 @@ fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Optio
 ///   - `where`            -- filter object; operators: $eq $ne $gt $gte $lt $lte $contains $in $nin $or $and
 ///   - `fields`           -- GraphQL-style inclusion list (dot-notation supported)
 ///   - `excludedFields`   -- exclusion list (mutually exclusive with `fields`)
+///   - `excluded_fields`  -- snake_case alias for `excludedFields`
 ///   - `joins`            -- cross-collection joins: [{ "<alias>": { "from": "<col>", "on": "<fk_field>", "fields": [...] } }]
 ///   - `sort`             -- sort specs: [{ "field": "price", "order": "asc"|"desc" }]
-///   - `count`            -- max results after sort (pagination limit)
+///   - `count`            -- max results after sort (pagination limit; default 100, max 1000)
 ///   - `offset`           -- results to skip after sort (pagination offset)
 ///   - `_allowed_prefixes`-- internal: restrict results to keys with these prefixes
 pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
@@ -107,7 +24,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
     const ALLOWED: &[&str] = &[
-        "collection", "keys", "where", "fields", "excludedFields",
+        "collection", "keys", "where", "fields", "excludedFields", "excluded_fields",
         "joins", "sort", "count", "offset", "_allowed_prefixes",
     ];
     if let Err(e) = validation::validate_allowed_properties(payload, ALLOWED) {
@@ -115,7 +32,9 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     }
 
     let fields_req   = payload.get("fields").and_then(|f| f.as_array());
-    let excluded_req = payload.get("excludedFields").and_then(|f| f.as_array());
+    let excluded_req = payload.get("excludedFields")
+        .or_else(|| payload.get("excluded_fields"))
+        .and_then(|f| f.as_array());
     if fields_req.is_some() && excluded_req.is_some() {
         return (400, json!({ "error": "'fields' and 'excludedFields' cannot be used together", "statusCode": 400 }));
     }
@@ -140,7 +59,6 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     // Capture current time once for TTL expiry checks.
     let query_time = ttl::now_ms();
     // Check collection-level TTL expiry -- O(1), not per-document.
-    // If the collection has expired, treat it as empty.
     if let Some(exp) = db.get_ttl_expiry(col_name) {
         if ttl::collection_is_expired(exp, query_time) {
             return (404, json!({ "error": "No documents found", "statusCode": 404 }));
@@ -152,11 +70,10 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     let allowed_prefixes = payload.get("_allowed_prefixes").and_then(|p| p.as_array());
 
     // -- Fast path: sort + count with no joins / keys / prefix filter ------
-    // Use a bounded heap of capacity (offset + count) so peak RAM is O(offset+count)
-    // rather than O(collection size).
-    let no_keys    = payload.get("keys").is_none();
-    let no_joins   = joins_req.map(|j| j.is_empty()).unwrap_or(true);
-    let no_prefix  = allowed_prefixes.map(|p| p.is_empty()).unwrap_or(true);
+    // Uses a bounded heap of capacity (offset + count) so peak RAM is O(offset+count).
+    let no_keys   = payload.get("keys").is_none();
+    let no_joins  = joins_req.map(|j| j.is_empty()).unwrap_or(true);
+    let no_prefix = allowed_prefixes.map(|p| p.is_empty()).unwrap_or(true);
 
     if no_keys && no_joins && no_prefix {
         if let Some(specs) = sort_specs.clone() {
@@ -182,23 +99,8 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     }
 
     // -- Fetch documents --------------------------------------------------
-    let raw: HashMap<String, Value> = match payload.get("keys") {
-        Some(Value::String(k)) => db.get(col_name, vec![k.clone()]),
-        Some(Value::Array(arr)) => {
-            let ks = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
-            db.get(col_name, ks)
-        }
-        _ => {
-            // Full scan -- apply WHERE early when there are no joins (avoids materialising filtered-out docs).
-            if let Some(clause) = where_clause
-                && joins_req.map(|j| j.is_empty()).unwrap_or(true) {
-                    let clause = clause.clone();
-                    db.get_filtered(col_name, move |doc| query::evaluate_where(doc, &clause).unwrap_or(false), 0, Some(offset + count_limit))
-                } else {
-                    db.get_all(col_name)
-                }
-        }
-    };
+    let has_joins = joins_req.map(|j| !j.is_empty()).unwrap_or(false);
+    let raw = fetch_documents(db, col_name, payload, where_clause, has_joins, offset, count_limit);
 
     // -- Per-document processing ------------------------------------------
     let mut results: Vec<(String, Value, Vec<String>)> = Vec::with_capacity(raw.len());
@@ -212,38 +114,12 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             }
         }
 
-        // Cross-collection joins -- embed related document under the alias field.
-        let mut join_aliases: Vec<String> = Vec::new();
-        if let Some(joins) = joins_req {
-            for join_spec in joins {
-                let Some(obj) = join_spec.as_object() else { continue };
-                let Some((alias, inner)) = obj.iter().find_map(|(k, v)| {
-                    v.as_object().filter(|o| o.contains_key("from")).map(|o| (k.clone(), o))
-                }) else { continue };
-
-                let from     = inner.get("from").and_then(|f| f.as_str()).unwrap_or("");
-                let on       = inner.get("on").and_then(|f| f.as_str()).unwrap_or("");
-                let j_fields = inner.get("fields").and_then(|f| f.as_array());
-
-                // Resolve the foreign key value (supports dot-notation).
-                let fk_val = on.split('.').fold(Some(&doc as &Value), |cur, part| {
-                    cur.and_then(|v| v.get(part))
-                }).and_then(|v| v.as_str()).map(|s| s.to_string());
-
-                if let Some(fk) = fk_val
-                    && let Some(related) = db.get(from, vec![fk.clone()]).remove(&fk) {
-                        let embedded = if let Some(jf) = j_fields {
-                            query::project(&related, jf)
-                        } else {
-                            related
-                        };
-                        if let Some(doc_obj) = doc.as_object_mut() {
-                            doc_obj.insert(alias.clone(), embedded);
-                        }
-                        join_aliases.push(alias);
-                    }
-            }
-        }
+        // Cross-collection joins.
+        let join_aliases = if let Some(joins) = joins_req {
+            apply_joins(db, &mut doc, joins)
+        } else {
+            vec![]
+        };
 
         // WHERE filter (re-applied here when joins are present, since joined fields may be tested).
         if let Some(clause) = where_clause {
@@ -267,7 +143,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         match shape_doc(doc, &key, fields_req, excluded_req, &aliases, expires_val.clone()) {
             None => return (404, json!({ "error": "No documents found", "statusCode": 404 })),
             Some(mut out) => {
-                if let Some(obj) = out.as_object_mut() { obj.remove("_key"); }
+                if let Some(obj) = out.as_object_mut() { let _ = obj.remove("_key"); }
                 return (200, out);
             }
         }
