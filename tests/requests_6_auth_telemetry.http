@@ -206,7 +206,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzc1Njg2MjksInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdLCJqdGkiOiJlOGFkMzM4NS1lNDhkLTQ1ZmQtOGUwNi00N2Y5MTRlM2IzOGYifQ.Vo-IzSDCWFkGEbYcnn4xzITPVa4qJP4HGqn794HAvNo
+@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzg4MzY1OTAsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdLCJqdGkiOiI1YmE1NWYyOS0zY2ExLTRlMTYtYmFmMC1hOWNkOWNiNzdmZDgifQ.FFCqibQOqVPYIu-vr0ue2CvbTogLWS9W8Ms-Kb67ujc
 
 ### ✅ Fetch lp1 — in scope
 GET http://localhost:1538/collections/laptops/docs/lp1
