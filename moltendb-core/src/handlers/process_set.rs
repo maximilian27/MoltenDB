@@ -57,7 +57,7 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
 ///     Keys are auto-generated as UUIDv7 strings. Returns the generated IDs.
 pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     // Only "collection" and "data" are valid for a set/insert request.
-    const SET_ALLOWED: &[&str] = &["collection", "data"];
+    const SET_ALLOWED: &[&str] = &["collection", "data", "ttl"];
     if let Err(e) = validation::validate_allowed_properties(payload, SET_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
@@ -66,6 +66,15 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     }
 
     let col = payload["collection"].as_str().unwrap_or("default");
+
+    // If a `ttl` is provided on the set request, register it as the collection-level default.
+    // This is a convenience shortcut -- equivalent to calling POST /schema with just a `ttl`.
+    if let Some(ttl_val) = payload.get("ttl") {
+        match ttl_val.as_u64() {
+            Some(secs) => db.set_ttl_default(col, secs),
+            None => return (400, json!({ "error": "'ttl' must be a non-negative integer (seconds)", "statusCode": 400 })),
+        }
+    }
 
     match payload.get("data") {
         // -- Object map format -----------------------------------------------

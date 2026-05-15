@@ -58,7 +58,7 @@ fn synthetic_entry(i: usize) -> Value {
 }
 
 fn main() {
-    let total = 1000_000usize;
+    let total = 100_000usize;
     let batch_size = 10_000usize;
     let batches = total / batch_size;
 
@@ -93,7 +93,7 @@ fn main() {
     .expect("write stress_keys.json");
 
     println!("Generated {} entries across {} batches (TTL collection).", total, batches);
-    println!("  Register a collection TTL first: POST /schema {{ \"collection\": \"stress\", \"ttl\": 300 }}");
+    println!("  Register a collection TTL first: POST /schema {{ \"collection\": \"stress\", \"ttl\": 60 }}");
     println!("  -> tests/stress_data.json");
     println!("  -> tests/stress_keys.json");
 }
