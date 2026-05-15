@@ -279,6 +279,16 @@ impl Db {
         self.state.iter().map(|r| r.key().clone()).collect()
     }
 
+    /// Returns the number of documents in a collection, or `None` if it doesn't exist.
+    pub fn collection_count(&self, collection: &str) -> Option<usize> {
+        self.state.get(collection).map(|m| m.len())
+    }
+
+    /// Returns a map of collection name -> document count for all collections.
+    pub fn all_collection_counts(&self) -> Vec<(String, usize)> {
+        self.state.iter().map(|r| (r.key().to_string(), r.value().len())).collect()
+    }
+
     /// Returns all (collection, expires_at_ms) pairs from the TTL expiry map.
     /// Used by the TTL sweep task on startup to pre-populate its heap.
     pub fn all_ttl_expiries(&self) -> Vec<(String, u64)> {

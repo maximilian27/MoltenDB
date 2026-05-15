@@ -11,6 +11,9 @@
 
 * **`count` defaults to 100, max 10000** — `/get` and `/delete` (bulk `where` mode) now default to returning/deleting at most 100 documents when `count` is not supplied. Supplying a value greater than 1000 returns a `400 Bad Request` error. This prevents accidental full-collection scans on large datasets.
 
+### Features
+* **`POST /stats` and `GET /stats` endpoints** -- returns document counts per collection. `POST /stats` with `{ "collection": "name" }` returns stats for a single collection; omitting `collection` (or using `GET /stats`) returns counts for all collections plus a `total`. TTL-aware: expired collections report `count: 0` and `expired: true` with their `expiresAt` timestamp. Both methods are available on the HTTP server and the WASM module (`action: "stats"`).
+
 ### Features (continued)
 * **TTL eviction (collection-level)** — collections can now expire automatically via a TTL registered on `POST /schema` or inline on `POST /set` with a `"ttl"` field (seconds). The expiry clock resets to `now + ttl_secs` at the end of every insert batch — so the clock starts when the last write commits, not when the schema was registered. On expiry the **entire collection is dropped** in one O(1) call. `_expiresAt` is a **virtual field** — never stored inside documents, computed from the collection TTL map and injected into every response. The background sweep task uses an event-driven min-heap with one entry per collection (not per document), sleeping until the next collection expiry. Zero CPU when idle.
 * **`/schema` accepts `ttl` without requiring `schema`** — `POST /schema` now accepts `"ttl"` independently of `"schema"`, allowing collection-level TTL defaults to be set on collections that have no JSON Schema validation.

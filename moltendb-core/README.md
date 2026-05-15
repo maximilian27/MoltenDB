@@ -192,6 +192,34 @@ This works identically in the HTTP server, the WASM browser module, and when emb
 
 ---
 
+## Collection Stats
+
+`process_stats` returns document counts per collection. TTL-aware: expired collections report `count: 0` and `expired: true`.
+
+```rust
+// All collections
+let (code, body) = process_stats(&db, &json!({}));
+
+// Single collection
+let (code, body) = process_stats(&db, &json!({ "collection": "laptops" }));
+```
+
+**All collections response:**
+```json
+{
+  "collections": {
+    "laptops": { "count": 42381 },
+    "sessions": { "count": 1200, "expiresAt": "2026-05-15T15:00:00Z" },
+    "expired_cache": { "count": 0, "expired": true, "expiresAt": "2026-05-15T07:00:00Z" }
+  },
+  "total": 43581
+}
+```
+
+Counts are O(1) atomic reads (`DashMap::len()`) — no document scanning. On the HTTP server both `POST /stats` and `GET /stats` are available. On the WASM module use `action: "stats"`.
+
+---
+
 ## Module overview
 
 | Module | Responsibility |

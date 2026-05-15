@@ -781,6 +781,42 @@ See `src/ws_test/websocket-test.html` for an interactive tester.
 
 ---
 
+## Collection Stats
+
+Returns document counts per collection. Both `POST` and `GET` are supported. TTL-aware: expired collections report `count: 0` and `expired: true`.
+
+```http
+GET /stats
+Authorization: Bearer <token>
+```
+
+```http
+POST /stats
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{ "collection": "laptops" }
+```
+
+**All collections response:**
+```json
+{
+  "collections": {
+    "laptops": { "count": 42381 },
+    "sessions": { "count": 1200, "expiresAt": "2026-05-15T15:00:00Z" },
+    "expired_cache": { "count": 0, "expired": true, "expiresAt": "2026-05-15T07:00:00Z" }
+  },
+  "total": 43581
+}
+```
+
+**Single collection response:**
+```json
+{ "collection": "laptops", "count": 42381 }
+```
+
+> **Note:** Counts are O(1) atomic reads from the in-memory DashMap — no document scanning. On TTL collections the count may include a small number of not-yet-evicted documents; expired collections are reported accurately as `count: 0`.
+
 ## Telemetry
 
 ### Health check

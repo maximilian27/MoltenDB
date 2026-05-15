@@ -1,0 +1,214 @@
+### --- STEP 1: Login -------------------------------------------------------
+### Run this first. Copy the token from the response and paste it into the
+### @token variable below (or replace the Bearer values in each request).
+POST http://localhost:1538/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin123"
+}
+
+### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
+### Run §1, §2, §3 in order to populate the three collections used by all
+### subsequent examples. The laptops collection references memory and display
+### collections via foreign keys — this enables the join examples below.
+
+### §1. Seed the `memory` collection
+### Each document describes a RAM module. Laptops reference these via `memory_id`.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "memory",
+  "data": {
+    "mem1": { "capacity_gb": 8,  "type": "LPDDR5", "speed_mhz": 4266, "upgradeable": false },
+    "mem2": { "capacity_gb": 16, "type": "LPDDR5", "speed_mhz": 4266, "upgradeable": false },
+    "mem3": { "capacity_gb": 32, "type": "DDR5",   "speed_mhz": 5600, "upgradeable": true  },
+    "mem4": { "capacity_gb": 64, "type": "DDR5",   "speed_mhz": 5600, "upgradeable": true  },
+    "mem5": { "capacity_gb": 36, "type": "Unified", "speed_mhz": 6400, "upgradeable": false }
+  }
+}
+
+### §2. Seed the `display` collection
+### Each document describes a screen. Laptops reference these via `display_id`.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "display",
+  "ttl": 300,
+  "data": {
+    "dsp1": { "size_inch": 13.3, "resolution": "2560x1600", "panel": "IPS",  "refresh_hz": 60,  "touchscreen": false, "hdr": false },
+    "dsp2": { "size_inch": 14.0, "resolution": "2880x1800", "panel": "OLED", "refresh_hz": 90,  "touchscreen": false, "hdr": true  },
+    "dsp3": { "size_inch": 15.6, "resolution": "1920x1080", "panel": "IPS",  "refresh_hz": 144, "touchscreen": false, "hdr": false },
+    "dsp4": { "size_inch": 16.2, "resolution": "3456x2234", "panel": "Mini-LED", "refresh_hz": 120, "touchscreen": false, "hdr": true },
+    "dsp5": { "size_inch": 14.0, "resolution": "2560x1600", "panel": "IPS",  "refresh_hz": 165, "touchscreen": true,  "hdr": false }
+  }
+}
+
+### §3. Seed the `laptops` collection
+### Each laptop has nested specs AND foreign keys to memory + display collections.
+### This single collection is used for all query examples below.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "data": {
+    "lp1": {
+      "brand": "Lenovo",
+      "model": "ThinkPad X1 Carbon",
+      "price": 1499,
+      "in_stock": true,
+      "memory_id": "mem2",
+      "display_id": "dsp2",
+      "tags": ["business", "ultrabook", "lightweight"],
+      "specs": {
+        "cpu": { "brand": "Intel", "cores": 12, "ghz": 3.5 },
+        "battery_wh": 57,
+        "weight_kg": 1.12
+      }
+    },
+    "lp2": {
+      "brand": "Apple",
+      "model": "MacBook Pro 16",
+      "price": 3499,
+      "in_stock": true,
+      "memory_id": "mem5",
+      "display_id": "dsp4",
+      "tags": ["creative", "professional", "macos"],
+      "specs": {
+        "cpu": { "brand": "Apple", "cores": 12, "ghz": 4.05 },
+        "battery_wh": 100,
+        "weight_kg": 2.15
+      }
+    },
+    "lp3": {
+      "brand": "Asus",
+      "model": "ROG Zephyrus G14",
+      "price": 1699,
+      "in_stock": true,
+      "memory_id": "mem3",
+      "display_id": "dsp5",
+      "tags": ["gaming", "amd", "portable"],
+      "specs": {
+        "cpu": { "brand": "AMD", "cores": 8, "ghz": 4.9 },
+        "battery_wh": 76,
+        "weight_kg": 1.65
+      }
+    },
+    "lp4": {
+      "brand": "Dell",
+      "model": "XPS 15",
+      "price": 1899,
+      "in_stock": false,
+      "memory_id": "mem3",
+      "display_id": "dsp4",
+      "tags": ["creative", "windows", "4k"],
+      "specs": {
+        "cpu": { "brand": "Intel", "cores": 14, "ghz": 3.8 },
+        "battery_wh": 86,
+        "weight_kg": 1.86
+      }
+    },
+    "lp5": {
+      "brand": "Razer",
+      "model": "Blade 15",
+      "price": 2499,
+      "in_stock": true,
+      "memory_id": "mem4",
+      "display_id": "dsp3",
+      "tags": ["gaming", "windows", "rgb"],
+      "specs": {
+        "cpu": { "brand": "Intel", "cores": 14, "ghz": 4.1 },
+        "battery_wh": 80,
+        "weight_kg": 2.01
+      }
+    },
+    "lp6": {
+      "brand": "Framework",
+      "model": "Laptop 13",
+      "price": 849,
+      "in_stock": true,
+      "memory_id": "mem1",
+      "display_id": "dsp1",
+      "tags": ["modular", "linux", "budget"],
+      "specs": {
+        "cpu": { "brand": "Intel", "cores": 10, "ghz": 3.3 },
+        "battery_wh": 55,
+        "weight_kg": 1.3
+      }
+    }
+  }
+}
+
+
+### Set your token here after login:
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODkzMjU5MCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImUxYWNkNmJhLTdkYWQtNDJhYy04OTRkLWZiZDk0YzBmNzRmMyJ9.F_G_ypDszqNrtcc4QWnPF0Tnv5PsO6iPxsYU0ifovD8
+
+###############################################################################
+### /stats -- Collection document counts
+###############################################################################
+
+### §1. GET /stats -- all collections (no body required)
+GET http://localhost:1538/stats
+Authorization: Bearer {{token}}
+
+###
+
+### §2. POST /stats -- all collections (empty body)
+POST http://localhost:1538/stats
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{}
+
+###
+
+### §3. POST /stats -- single collection
+POST http://localhost:1538/stats
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops"
+}
+
+###
+
+### §4. POST /stats -- single collection with TTL (shows expiresAt)
+POST http://localhost:1538/stats
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "display"
+}
+
+###
+
+### §5. POST /stats -- collection that does not exist (returns 404)
+POST http://localhost:1538/stats
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "nonexistent_collection"
+}
+
+###
+
+### §6. POST /stats -- expired TTL collection (returns count: 0, expired: true)
+### First register a collection with a very short TTL via /schema, insert a doc,
+### wait for it to expire, then call stats to see the expired state.
+POST http://localhost:1538/stats
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "display"
+}

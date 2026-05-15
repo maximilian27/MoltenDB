@@ -201,6 +201,9 @@ impl WorkerDb {
             // Truncate and close the OPFS file so the JS side can removeEntry().
             // Works from any tab — followers route this through the leader automatically.
             "clear_opfs" => self.handle_clear_opfs(),
+            // Return document counts per collection (or a specific collection).
+            // Equivalent to POST /stats or GET /stats on the server.
+            "stats"    => self.handle_stats(&payload),
             // Unknown action — return an error instead of panicking.
             _ => Err(JsValue::from_str(&format!("Unknown action: {}", action))),
         }?;
@@ -282,6 +285,16 @@ impl WorkerDb {
     ///   { "collection": "laptops", "where": { "in_stock": { "$eq": false } } }        — bulk filter delete
     fn handle_delete(&self, request: &Value) -> Result<JsValue, JsValue> {
         let (code, mut body): (u16, Value) = handlers::process_delete::process_delete(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
+        if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
+        if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
+        serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Return document counts per collection. Equivalent to POST /stats or GET /stats on the server.
+    ///   {}                                  -- all collections
+    ///   { "collection": "laptops" }         -- single collection
+    fn handle_stats(&self, request: &Value) -> Result<JsValue, JsValue> {
+        let (code, mut body): (u16, Value) = handlers::process_stats(&self.db, request);
         if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
         if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
         serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
