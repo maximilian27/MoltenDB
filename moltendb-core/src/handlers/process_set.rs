@@ -57,7 +57,7 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
 ///     Keys are auto-generated as UUIDv7 strings. Returns the generated IDs.
 pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     // Only "collection" and "data" are valid for a set/insert request.
-    const SET_ALLOWED: &[&str] = &["collection", "data", "ttl"];
+    const SET_ALLOWED: &[&str] = &["collection", "data", "ttl", "maxSize"];
     if let Err(e) = validation::validate_allowed_properties(payload, SET_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
@@ -73,6 +73,15 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         match ttl_val.as_u64() {
             Some(secs) => db.set_ttl_default(col, secs),
             None => return (400, json!({ "error": "'ttl' must be a non-negative integer (seconds)", "statusCode": 400 })),
+        }
+    }
+
+    // If a `maxSize` is provided on the set request, register it as the collection-level cap.
+    // This is a convenience shortcut -- equivalent to calling POST /schema with just a `maxSize`.
+    if let Some(max_val) = payload.get("maxSize") {
+        match max_val.as_u64() {
+            Some(max) if max > 0 => db.set_max_size(col, max as usize),
+            _ => return (400, json!({ "error": "'maxSize' must be a positive integer", "statusCode": 400 })),
         }
     }
 

@@ -127,13 +127,14 @@ Every document automatically receives the following engine-managed fields. Any f
 |---|---|
 | `_key` | The document's own key — injected on read, never stored inside the document body |
 | `_v` | Version counter, incremented on every write by the engine. Always starts at `1` for new documents. |
+| `_seq` | Monotonic insertion sequence number — strictly increasing within a collection. Assigned at first insert and preserved on overwrites. Used for FIFO eviction when `maxSize` is set. |
 | `_createdAt` | ISO-8601 timestamp set once at first insert and never overwritten. Always returned in every response. |
 | `_modifiedAt` | ISO-8601 timestamp updated on every write. Always returned in every response. |
 | `_expiresAt` | ISO-8601 timestamp when the **collection** expires. This is a **virtual field** — never stored inside documents. Computed from the collection TTL map and injected into every response when the collection has a TTL. |
 
 Attempting to insert or update a document containing any `_`-prefixed field (except `_v` on update) returns `400 Bad Request`.
 
-`_key`, `_v`, `_createdAt`, and `_modifiedAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed. `_expiresAt` is also always returned when the collection has a TTL registered.
+`_key`, `_v`, `_seq`, `_createdAt`, and `_modifiedAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed. `_expiresAt` is also always returned when the collection has a TTL registered.
 
 ---
 
@@ -164,6 +165,28 @@ handlers::process_set::process_set(&db, &payload, 10 * 1024 * 1024, 1000);
 - **Lazy** — `process_get` checks the collection expiry once per request (O(1)) and returns `404` immediately if expired.
 - **Eager** (server only) — `ttl_sweep` uses an event-driven min-heap with **one entry per collection**, wakes exactly when the next collection expires, and calls `Db::delete_collection`. Zero CPU when idle.
 - **WASM** — lazy eviction only (no background thread in the browser).
+
+---
+
+## Capped Collections (`maxSize`)
+
+Collections can be capped to a maximum document count. When the collection exceeds `maxSize` after an insert batch, the **oldest documents** (lowest `_seq`) are evicted automatically — keeping exactly `maxSize` documents at all times.
+
+```rust
+// Via /schema
+let payload = json!({ "collection": "recent_events", "maxSize": 100 });
+handlers::process_schema::process_schema(&db, &payload, 10 * 1024 * 1024, 1000);
+
+// Inline on /set (registers cap and inserts in one call)
+let payload = json!({ "collection": "top5", "maxSize": 5, "data": { "s1": { "score": 9800 } } });
+handlers::process_set::process_set(&db, &payload, 10 * 1024 * 1024, 1000);
+```
+
+- Eviction is **FIFO** — the document with the lowest `_seq` is always evicted first.
+- Overwrites preserve the original `_seq`, so a document's position in the eviction queue is fixed at first insert.
+- `maxSize` is reported in `process_stats` responses.
+- `maxSize` can be combined with `ttl` on the same collection.
+- Works identically on native, WASM, and embedded usage.
 
 ---
 

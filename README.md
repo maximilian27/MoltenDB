@@ -403,13 +403,14 @@ Every document automatically receives the following engine-managed fields — cl
 |---|---|
 | `_key` | The document's own key (injected on read, never stored) |
 | `_v` | Version counter — incremented on every write by the engine. Always starts at `1` for new documents. |
+| `_seq` | Monotonic insertion sequence number — strictly increasing within a collection. Assigned at first insert and preserved on overwrites. Used for FIFO eviction when `maxSize` is set. |
 | `_createdAt` | ISO-8601 timestamp set once at first insert, never overwritten. Always returned in every response. |
 | `_modifiedAt` | ISO-8601 timestamp updated on every write. Always returned in every response. |
 | `_expiresAt` | ISO-8601 timestamp when the **collection** expires. This is a **virtual field** — never stored inside documents. Computed from the collection TTL map and injected into every response when the collection has a TTL. |
 
 Attempting to insert or update a document that contains any field starting with `_` (except `_v` on update) returns `400 Bad Request`.
 
-`_key`, `_v`, `_createdAt`, and `_modifiedAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed. `_expiresAt` is also always returned when the collection has a TTL registered.
+`_key`, `_v`, `_seq`, `_createdAt`, and `_modifiedAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed. `_expiresAt` is also always returned when the collection has a TTL registered.
 
 ### TTL (Time-to-Live)
 
@@ -465,6 +466,27 @@ Response includes `_expiresAt` on every document:
   { "_key": "item_2", "value": 99, "_expiresAt": "2026-05-15T08:00:00Z", "_v": 1, ... }
 ]
 ```
+
+### Capped Collections (`maxSize`)
+
+Collections can be capped to a maximum document count. When the collection exceeds `maxSize` after an insert batch, the **oldest documents** (lowest `_seq`) are evicted automatically — keeping exactly `maxSize` documents at all times.
+
+Set via `/schema` (no JSON schema required) or inline on `/set`:
+
+```json
+POST /schema
+{ "collection": "recent_events", "maxSize": 100 }
+```
+
+```json
+POST /set
+{ "collection": "top5_scores", "maxSize": 5, "data": { "s1": { "score": 9800 } } }
+```
+
+- Eviction is **FIFO** — the document with the lowest `_seq` is always evicted first.
+- Overwrites preserve the original `_seq`, so a document's position in the eviction queue is fixed at first insert.
+- `maxSize` is reported in `POST /stats` and `GET /stats` responses.
+- `maxSize` can be combined with `ttl` on the same collection.
 
 **Example — manual cleanup pattern for per-document expiry (e.g. password resets):**
 

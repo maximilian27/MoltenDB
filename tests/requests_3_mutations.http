@@ -408,3 +408,76 @@ Authorization: Bearer {{token}}
   "where": {}
 }
 
+### §65. maxSize -- register a capped collection (max 5 documents) via /schema
+POST http://localhost:1538/schema
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "recent_events",
+  "maxSize": 5
+}
+
+### §66. maxSize -- insert 3 documents into the capped collection
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "recent_events",
+  "data": {
+    "evt_001": { "type": "login",  "user": "alice" },
+    "evt_002": { "type": "view",   "user": "bob" },
+    "evt_003": { "type": "logout", "user": "alice" }
+  }
+}
+
+### §67. maxSize -- insert 4 more documents (oldest 2 will be evicted, keeping only 5)
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "recent_events",
+  "data": {
+    "evt_004": { "type": "login",  "user": "carol" },
+    "evt_005": { "type": "view",   "user": "carol" },
+    "evt_006": { "type": "purchase", "user": "carol" },
+    "evt_007": { "type": "logout", "user": "carol" }
+  }
+}
+
+### §68. maxSize -- inline on /set (register cap and insert in one request)
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "top5_scores",
+  "maxSize": 5,
+  "data": {
+    "score_001": { "player": "alice", "score": 9800 },
+    "score_002": { "player": "bob",   "score": 8700 },
+    "score_003": { "player": "carol", "score": 7600 }
+  }
+}
+
+### §6. maxSize -- verify collection count stays at maxSize via /get
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "recent_events"
+}
+
+
+### §69. maxSize -- verify collection count stays at maxSize via /stats
+POST http://localhost:1538/stats
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "recent_events"
+}
+

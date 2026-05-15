@@ -49,6 +49,8 @@ impl Db {
         let schemas = Arc::new(DashMap::new());
         let ttl_defaults = Arc::new(DashMap::new());
         let ttl_expiry = Arc::new(DashMap::new());
+        let seq_counters = Arc::new(DashMap::new());
+        let max_sizes = Arc::new(DashMap::new());
 
         // Ensure the parent directory exists (skipped in in-memory mode — no file is created).
         if !in_memory
@@ -105,6 +107,8 @@ impl Db {
             schemas,
             ttl_defaults,
             ttl_expiry,
+            seq_counters,
+            max_sizes,
             post_backup_script,
             io_fault: io_fault_arc,
             #[cfg(not(target_arch = "wasm32"))]

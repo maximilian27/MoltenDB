@@ -1,7 +1,7 @@
 use serde_json::Value;
 use crate::query;
 
-/// Apply field projection or exclusion to a document, preserving `_v`, `_createdAt`,
+/// Apply field projection or exclusion to a document, preserving `_v`, `_seq`, `_createdAt`,
 /// `_modifiedAt`, `_expiresAt` and inserting `_key`.
 ///
 /// Returns `Some(shaped_doc)`. The caller may remove `_key` for single-key responses.
@@ -14,6 +14,7 @@ pub fn shape_doc(
     expires_val: Option<Value>,
 ) -> Option<Value> {
     let v_val        = doc.get("_v").cloned();
+    let seq_val      = doc.get("_seq").cloned();
     let created_val  = doc.get("_createdAt").cloned();
     let modified_val = doc.get("_modifiedAt").cloned();
 
@@ -36,6 +37,7 @@ pub fn shape_doc(
 
     if let Some(obj) = out.as_object_mut() {
         if let Some(v) = v_val        { obj.insert("_v".to_string(), v); }
+        if let Some(v) = seq_val      { obj.insert("_seq".to_string(), v); }
         if let Some(v) = created_val  { obj.insert("_createdAt".to_string(), v); }
         if let Some(v) = modified_val { obj.insert("_modifiedAt".to_string(), v); }
         // _expiresAt is a virtual field -- inject it if the collection has a TTL.

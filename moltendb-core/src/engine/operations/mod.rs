@@ -30,7 +30,7 @@ mod recover;
 pub use read::{get, get_all, get_filtered, scan_top_n};
 pub use insert::{insert, InsertParams};
 pub use update::{update, UpdateParams};
-pub use delete::{delete, delete_filtered, delete_collection};
+pub use delete::{delete, delete_filtered, delete_collection, evict_oldest};
 pub use compact::compact;
 #[cfg(not(target_arch = "wasm32"))]
 pub use recover::recover_to;

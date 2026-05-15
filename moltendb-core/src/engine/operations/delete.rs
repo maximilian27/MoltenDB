@@ -129,6 +129,50 @@ pub fn delete_filtered(
     Ok(count)
 }
 
+/// Evict the `n` oldest documents from a collection by `_seq` (lowest values first).
+///
+/// Used by the `maxSize` cap — after an insert batch pushes the collection over
+/// its limit, this removes exactly `n` documents to bring it back to `maxSize`.
+/// If the collection has fewer than `n` documents, all are removed.
+/// Errors are silently ignored (best-effort eviction).
+pub fn evict_oldest(
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    storage: &Arc<dyn StorageBackend>,
+    tx: &tokio::sync::broadcast::Sender<String>,
+    collection: &str,
+    n: usize,
+) {
+    #[inline]
+    fn decode(bytes: &[u8]) -> Option<Value> {
+        rmp_serde::from_slice(bytes).ok()
+    }
+
+    let col = match state.get(collection) {
+        Some(c) => c,
+        None => return,
+    };
+
+    // Collect (seq, key) pairs, then sort ascending by seq to find the oldest.
+    let mut entries: Vec<(u64, String)> = col
+        .iter()
+        .filter_map(|e| {
+            let v = decode(e.value())?;
+            let seq = v.get("_seq").and_then(|s| s.as_u64()).unwrap_or(u64::MAX);
+            Some((seq, e.key().clone()))
+        })
+        .collect();
+
+    entries.sort_unstable_by_key(|(seq, _)| *seq);
+    entries.truncate(n);
+
+    let keys: Vec<String> = entries.into_iter().map(|(_, k)| k).collect();
+    if keys.is_empty() {
+        return;
+    }
+    drop(col); // release the read guard before calling delete
+    let _ = delete(state, storage, tx, collection, keys);
+}
+
 /// Drop an entire collection — removes all documents and its indexes.
 ///
 /// This is an irreversible operation. A DROP LogEntry is written to the log

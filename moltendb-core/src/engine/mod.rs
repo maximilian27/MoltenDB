@@ -47,7 +47,7 @@ use serde_json::Value;
 #[allow(unused_imports)]
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
 /// The central database handle. Cheap to clone — all clones share the same state.
@@ -101,6 +101,16 @@ pub struct Db {
     /// Checked once per GET request (not per document) for O(1) expiry.
     /// `_expiresAt` is a virtual field derived from this map -- never stored in docs.
     pub ttl_expiry: Arc<DashMap<String, u64>>,
+
+    /// Per-collection monotonic sequence counters.
+    /// Each document inserted into a collection gets a unique, strictly-increasing
+    /// `_seq` value. Used for FIFO eviction when `maxSize` is set.
+    pub seq_counters: Arc<DashMap<String, AtomicU64>>,
+
+    /// Per-collection maximum document count.
+    /// When a collection exceeds this limit after an insert batch, the oldest
+    /// documents (lowest `_seq`) are evicted to bring it back to `maxSize`.
+    pub max_sizes: Arc<DashMap<String, usize>>,
 
     /// Optional shell command to execute after a successful backup.
     /// Supports the {SNAPSHOT_PATH} placeholder.
@@ -191,9 +201,18 @@ impl Db {
             storage: &self.storage,
             tx: &self.tx,
             #[cfg(feature = "schema")] schemas: &self.schemas,
+            seq_counters: &self.seq_counters,
             collection,
             items,
         })?;
+        // Evict oldest documents if the collection exceeds maxSize.
+        if let Some(max) = self.max_sizes.get(collection).map(|v| *v) {
+            let current = self.state.get(collection).map(|m| m.len()).unwrap_or(0);
+            if current > max {
+                let overflow = current - max;
+                operations::evict_oldest(&self.state, &self.storage, &self.tx, collection, overflow);
+            }
+        }
         // Reset collection expiry AFTER the batch commits -- TTL clock starts
         // when the last write of the batch finishes, not when the schema was set.
         if let Some(secs) = self.ttl_defaults.get(collection).map(|v| *v) {
@@ -272,6 +291,19 @@ impl Db {
             &self.tx,
             collection,
         )
+    }
+
+    /// Returns the next sequence number for a collection (atomic fetch-and-add).
+    pub fn next_seq(&self, collection: &str) -> u64 {
+        self.seq_counters
+            .entry(collection.to_string())
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Set the maximum document count for a collection.
+    pub fn set_max_size(&self, collection: &str, max: usize) {
+        self.max_sizes.insert(collection.to_string(), max);
     }
 
     /// Returns the names of all collections currently in the state.
