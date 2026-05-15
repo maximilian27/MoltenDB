@@ -189,7 +189,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             if let Some(clause) = where_clause
                 && joins_req.map(|j| j.is_empty()).unwrap_or(true) {
                     let clause = clause.clone();
-                    db.get_filtered(col_name, move |doc| query::evaluate_where(doc, &clause).unwrap_or(false), 0, None)
+                    db.get_filtered(col_name, move |doc| query::evaluate_where(doc, &clause).unwrap_or(false), 0, Some(offset + count_limit))
                 } else {
                     db.get_all(col_name)
                 }
