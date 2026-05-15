@@ -40,6 +40,7 @@ impl Db {
         let (tx, _rx) = broadcast::channel(1000);
         #[cfg(feature = "schema")]
         let schemas = Arc::new(DashMap::new());
+        let ttl_defaults = Arc::new(DashMap::new());
 
         // Choose storage backend: pure RAM (no OPFS) or OPFS file.
         // When in_memory = true, OpfsStorage is never opened — no file is created
@@ -79,6 +80,7 @@ impl Db {
             max_keys_per_request,
             #[cfg(feature = "schema")]
             schemas,
+            ttl_defaults,
             post_backup_script,
             io_fault: Arc::new(AtomicBool::new(false)),
         })

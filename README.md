@@ -405,10 +405,27 @@ Every document automatically receives the following engine-managed fields — cl
 | `_v` | Version counter — incremented on every write by the engine. Always starts at `1` for new documents. |
 | `_createdAt` | ISO-8601 timestamp set once at first insert, never overwritten. Always returned in every response. |
 | `_modifiedAt` | ISO-8601 timestamp updated on every write. Always returned in every response. |
+| `_expiresAt` | Absolute Unix timestamp (ms) when the document expires. Set by the engine when the collection has a TTL default. Always returned in every response when present. |
 
-Attempting to insert or update a document that contains any field starting with `_` returns `400 Bad Request`.
+Attempting to insert or update a document that contains any field starting with `_` (except `_v` on update) returns `400 Bad Request`.
 
-`_key`, `_v`, `_createdAt`, and `_modifiedAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed.
+`_key`, `_v`, `_createdAt`, `_modifiedAt`, and `_expiresAt` are **always present in every response** — they are re-attached after any `fields` or `excludedFields` projection and cannot be suppressed.
+
+### TTL (Time-to-Live)
+
+Documents can expire automatically via a **collection-level TTL default** set through `/schema` (no JSON schema required):
+
+```json
+POST /schema
+{ "collection": "cache", "ttl": 300 }
+```
+
+Every document inserted or updated in that collection automatically receives `_expiresAt` (absolute Unix ms), calculated from the time of the write. TTL is managed entirely by the engine — clients cannot set `_expiresAt` directly.
+
+**Eviction strategy:**
+- **Lazy eviction on read** — expired documents are silently dropped at read time and treated as not found.
+- **Background sweep** (server only) — an event-driven min-heap task wakes exactly when the next document expires and calls `delete_filtered`. Zero CPU usage when no TTL documents exist.
+- **WASM** — lazy eviction only (no background thread in the browser).
 
 ### Query
 

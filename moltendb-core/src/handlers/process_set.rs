@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 
 fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
-    // Only objects can have an `extends` block — pass everything else through unchanged.
+    // Only objects can have an `extends` block -- pass everything else through unchanged.
     let obj = match doc.as_object() {
         Some(o) => o,
         None => return doc,
@@ -19,12 +19,12 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
     };
 
     // Clone the document into a mutable map and remove the `extends` key.
-    // The stored document must never contain `extends` — it is a directive,
+    // The stored document must never contain `extends` -- it is a directive,
     // not a data field.
     let mut result = obj.clone();
     result.remove("extends");
 
-    // For each alias → "collection.key" reference, fetch the referenced document
+    // For each alias -> "collection.key" reference, fetch the referenced document
     // and embed it under the alias key.
     for (alias, ref_val) in &extends_map {
         if let Some(ref_str) = ref_val.as_str() {
@@ -34,7 +34,7 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
                 let ref_collection = &ref_str[..dot_pos];  // e.g. "memory"
                 let ref_key        = &ref_str[dot_pos + 1..]; // e.g. "mem4"
 
-                // O(1) hash-map lookup — no scanning, no joins at query time.
+                // O(1) hash-map lookup -- no scanning, no joins at query time.
                 if let Some(referenced_doc) = db.get(ref_collection, vec![ref_key.to_string()]).remove(ref_key) {
                     // Embed the full referenced document under the alias key.
                     result.insert(alias.clone(), referenced_doc);
@@ -68,7 +68,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     let col = payload["collection"].as_str().unwrap_or("default");
 
     match payload.get("data") {
-        // ── Object map format ─────────────────────────────────────────────────
+        // -- Object map format -----------------------------------------------
         // { "data": { "u1": { "name": "Alice" }, "u2": { "name": "Bob" } } }
         Some(Value::Object(data_map)) => {
             // Collect all key-value pairs into a Vec for batch insert.
@@ -88,14 +88,14 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                     (200, json!({ "status": "ok", "count": data_map.len() }))
                 },
                 Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
-                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable — storage fault", "details": msg, "statusCode": 503 })),
+                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable -- storage fault", "details": msg, "statusCode": 503 })),
                 #[cfg(feature = "schema")]
                 Err(engine::DbError::SchemaValidationError(msg)) => (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))
             }
         },
 
-        // ── Array format ──────────────────────────────────────────────────────
+        // -- Array format ----------------------------------------------------
         // { "data": [ { "name": "Alice" }, { "name": "Bob" } ] }
         // Auto-generates UUIDv7 keys for each document.
         Some(Value::Array(data_arr)) => {
@@ -103,7 +103,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             let mut generated_ids = Vec::new();
 
             for item in data_arr {
-                // UUIDv7 is time-ordered — documents inserted together will have
+                // UUIDv7 is time-ordered -- documents inserted together will have
                 // adjacent keys, which is good for range scans.
                 let id = Uuid::now_v7().to_string();
                 generated_ids.push(id.clone());
@@ -127,7 +127,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                     }))
                 },
                 Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
-                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable — storage fault", "details": msg, "statusCode": 503 })),
+                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable -- storage fault", "details": msg, "statusCode": 503 })),
                 #[cfg(feature = "schema")]
                 Err(engine::DbError::SchemaValidationError(msg)) => (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))

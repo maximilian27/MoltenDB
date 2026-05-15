@@ -23,6 +23,7 @@ mod insert;
 mod update;
 mod delete;
 mod compact;
+pub mod ttl;
 #[cfg(not(target_arch = "wasm32"))]
 mod recover;
 

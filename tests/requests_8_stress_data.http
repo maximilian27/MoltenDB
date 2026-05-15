@@ -28,7 +28,7 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "stress",
-  "keys": "stress_000000"
+  "keys": "stress_000060"
 }
 
 ### §1b. Fetch a mid-range document

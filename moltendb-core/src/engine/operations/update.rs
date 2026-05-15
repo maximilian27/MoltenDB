@@ -1,6 +1,6 @@
-// ─── operations/update.rs ─────────────────────────────────────────────────────
+// --- operations/update.rs ---------------------------------------------------
 // Update operation: update (partial patch).
-// ─────────────────────────────────────────────────────────────────────────────
+// ----------------------------------------------------------------------------
 
 use dashmap::DashMap;
 use serde_json::{json, Value};
@@ -27,14 +27,14 @@ pub struct UpdateParams<'a> {
 
 /// Partially update (merge) a single document with new field values.
 ///
-/// This is a "patch" operation — only the fields present in `updates` are
+/// This is a "patch" operation -- only the fields present in `updates` are
 /// changed; all other fields in the existing document are preserved.
 ///
 /// Returns `Ok(true)` if the document was found and updated,
 /// `Ok(false)` if the document doesn't exist (no-op).
 ///
 /// Example: document { name: "Alice", role: "user" } + update { role: "admin" }
-///          → result: { name: "Alice", role: "admin" }
+///          -> result: { name: "Alice", role: "admin" }
 pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
     let UpdateParams {
         state,
@@ -60,7 +60,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
             let mut doc = doc;
 
             // Step 1: Merge the update fields into the existing document.
-            // Only top-level fields are merged — nested objects are replaced,
+            // Only top-level fields are merged -- nested objects are replaced,
             // not recursively merged.
             if let Some(update_obj) = updates.as_object() {
                 // If the caller provides a "_v" field in the update, it acts as a guard.
@@ -68,20 +68,20 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
                 let existing_v = doc.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
                 if let Some(guard_v) = update_obj.get("_v").and_then(|v| v.as_u64())
                     && guard_v != existing_v {
-                        debug!("⚡ Conflict error: {}/{} update guard _v={} != stored _v={}", collection, key, guard_v, existing_v);
+                        debug!("Conflict error: {}/{} update guard _v={} != stored _v={}", collection, key, guard_v, existing_v);
                         return Err(DbError::Conflict);
                     }
 
                 if let Some(doc_obj) = doc.as_object_mut() {
                     for (k, v) in update_obj {
-                        // _v and createdAt are managed exclusively by the engine.
-                        // Callers cannot set them directly — silently skip if present.
+                        // _v and _createdAt are managed exclusively by the engine.
+                        // Callers cannot set them directly -- silently skip if present.
                         if k == "_v" || k == "_createdAt" { continue; }
                         doc_obj.insert(k.clone(), v.clone());
                     }
                     // Bump the version counter on every update.
                     doc_obj.insert("_v".to_string(), serde_json::json!(existing_v + 1));
-                    // Stamp the modification time. createdAt is already in the
+                    // Stamp the modification time. _createdAt is already in the
                     // document and is intentionally left untouched.
                     doc_obj.insert("_modifiedAt".to_string(), serde_json::json!(now_iso()));
                 }
@@ -116,15 +116,17 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
 
             // Step 7: Broadcast a lean change event to WebSocket subscribers.
             let new_v = new_value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-            let _ = tx.send(
-                json!({
-                    "event": "change",
-                    "collection": collection,
-                    "key": key,
-                    "new_v": new_v
-                })
-                .to_string(),
-            );
+            let expires_at_ms = new_value.get("_expiresAt").and_then(|v| v.as_u64());
+            let mut event = json!({
+                "event": "change",
+                "collection": collection,
+                "key": key,
+                "new_v": new_v
+            });
+            if let Some(exp) = expires_at_ms {
+                event["expires_at_ms"] = json!(exp);
+            }
+            let _ = tx.send(event.to_string());
             return Ok(true); // document was found and updated
         }
 
@@ -138,5 +140,5 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
         Value::Null,
     ))?;
 
-    Ok(false) // document not found — no-op
+    Ok(false) // document not found -- no-op
 }

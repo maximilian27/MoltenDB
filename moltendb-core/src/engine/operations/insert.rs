@@ -105,15 +105,17 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         // Step 4: Broadcast a lean change event to WebSocket subscribers.
         let new_v = value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-        let _ = tx.send(
-            json!({
-                "event": "change",
-                "collection": collection,
-                "key": key,
-                "new_v": new_v
-            })
-            .to_string(),
-        );
+        let expires_at_ms = value.get("_expiresAt").and_then(|v| v.as_u64());
+        let mut event = json!({
+            "event": "change",
+            "collection": collection,
+            "key": key,
+            "new_v": new_v
+        });
+        if let Some(exp) = expires_at_ms {
+            event["expires_at_ms"] = json!(exp);
+        }
+        let _ = tx.send(event.to_string());
     }
 
     // TX_COMMIT: Successfully complete the transaction.

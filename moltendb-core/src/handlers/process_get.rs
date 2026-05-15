@@ -1,11 +1,12 @@
 use serde_json::{Value, json};
 use crate::validation;
 use crate::{engine, query};
+use crate::engine::ttl;
 use std::collections::HashMap;
 use std::cmp::Ordering;
 
 /// Compare two optional JSON values for sorting.
-/// Numbers → numeric, strings → lexicographic, missing/null → sorts last.
+/// Numbers -> numeric, strings -> lexicographic, missing/null -> sorts last.
 fn compare_values(a: Option<&Value>, b: Option<&Value>) -> Ordering {
     match (a, b) {
         (None, None)       => Ordering::Equal,
@@ -53,11 +54,18 @@ fn make_comparator(specs: Vec<Value>) -> impl Fn(&Value, &Value) -> Ordering {
     }
 }
 
-/// Apply field projection or exclusion to a document, preserving `_v`, `_createdAt`, `_modifiedAt` and inserting `_key`.
-fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Option<&Vec<Value>>, join_aliases: &[String]) -> Value {
+/// Apply field projection or exclusion to a document, preserving `_v`, `_createdAt`, `_modifiedAt`, `_expiresAt` and inserting `_key`.
+/// Returns `None` if the document has expired (lazy TTL eviction).
+fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Option<&Vec<Value>>, join_aliases: &[String], current_time_ms: u64) -> Option<Value> {
+    // Lazy TTL eviction -- treat expired documents as not found.
+    if ttl::is_expired(&doc, current_time_ms) {
+        return None;
+    }
+
     let v_val           = doc.get("_v").cloned();
     let created_val     = doc.get("_createdAt").cloned();
     let modified_val    = doc.get("_modifiedAt").cloned();
+    let expires_val     = doc.get("_expiresAt").cloned();
 
     let mut out = if let Some(f) = fields {
         let mut projected = query::project(&doc, f);
@@ -80,26 +88,27 @@ fn shape_doc(doc: Value, key: &str, fields: Option<&Vec<Value>>, excluded: Optio
         if let Some(v) = v_val           { obj.insert("_v".to_string(), v); }
         if let Some(v) = created_val     { obj.insert("_createdAt".to_string(), v); }
         if let Some(v) = modified_val    { obj.insert("_modifiedAt".to_string(), v); }
+        if let Some(v) = expires_val     { obj.insert("_expiresAt".to_string(), v); }
         obj.insert("_key".to_string(), Value::String(key.to_string()));
     }
-    out
+    Some(out)
 }
 
 /// Handle a GET (query) request.
 ///
 /// Supported parameters:
-///   - `collection`       — target collection (default: "default")
-///   - `keys`             — single key (string) or batch (string[])
-///   - `where`            — filter object; operators: $eq $ne $gt $gte $lt $lte $contains $in $nin $or $and
-///   - `fields`           — GraphQL-style inclusion list (dot-notation supported)
-///   - `excludedFields`   — exclusion list (mutually exclusive with `fields`)
-///   - `joins`            — cross-collection joins: [{ "<alias>": { "from": "<col>", "on": "<fk_field>", "fields": [...] } }]
-///   - `sort`             — sort specs: [{ "field": "price", "order": "asc"|"desc" }]
-///   - `count`            — max results after sort (pagination limit)
-///   - `offset`           — results to skip after sort (pagination offset)
-///   - `_allowed_prefixes`— internal: restrict results to keys with these prefixes
+///   - `collection`       -- target collection (default: "default")
+///   - `keys`             -- single key (string) or batch (string[])
+///   - `where`            -- filter object; operators: $eq $ne $gt $gte $lt $lte $contains $in $nin $or $and
+///   - `fields`           -- GraphQL-style inclusion list (dot-notation supported)
+///   - `excludedFields`   -- exclusion list (mutually exclusive with `fields`)
+///   - `joins`            -- cross-collection joins: [{ "<alias>": { "from": "<col>", "on": "<fk_field>", "fields": [...] } }]
+///   - `sort`             -- sort specs: [{ "field": "price", "order": "asc"|"desc" }]
+///   - `count`            -- max results after sort (pagination limit)
+///   - `offset`           -- results to skip after sort (pagination offset)
+///   - `_allowed_prefixes`-- internal: restrict results to keys with these prefixes
 pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
-    // ── Validation ────────────────────────────────────────────────────────────
+    // -- Validation -------------------------------------------------------
     if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
@@ -117,16 +126,18 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         return (400, json!({ "error": "'fields' and 'excludedFields' cannot be used together", "statusCode": 400 }));
     }
 
-    // ── Parse query parameters ────────────────────────────────────────────────
+    // -- Parse query parameters -------------------------------------------
     let col_name     = payload["collection"].as_str().unwrap_or("default");
     let where_clause = payload.get("where");
     let joins_req    = payload.get("joins").and_then(|j| j.as_array());
     let sort_specs   = payload.get("sort").and_then(|s| s.as_array()).cloned();
     let count_limit: Option<usize> = payload.get("count").and_then(|c| c.as_u64()).map(|n| n as usize);
     let offset: usize = payload.get("offset").and_then(|c| c.as_u64()).map(|n| n as usize).unwrap_or(0);
+    // Capture current time once for TTL expiry checks -- avoids syscall-per-doc in parallel scans.
+    let query_time = ttl::now_ms();
     let allowed_prefixes = payload.get("_allowed_prefixes").and_then(|p| p.as_array());
 
-    // ── Fast path: sort + count with no joins / keys / prefix filter ──────────
+    // -- Fast path: sort + count with no joins / keys / prefix filter ------
     // Use a bounded heap of capacity (offset + count) so peak RAM is O(offset+count)
     // rather than O(collection size).
     let no_keys    = payload.get("keys").is_none();
@@ -149,14 +160,14 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             if top.is_empty() {
                 return (404, json!({ "error": "No documents found", "statusCode": 404 }));
             }
-            let array: Vec<Value> = top.into_iter().skip(offset).map(|(k, doc)| {
-                shape_doc(doc, &k, fields_req, excluded_req, &[])
-            }).collect();
+            let array: Vec<Value> = top.into_iter().skip(offset)
+                .filter_map(|(k, doc)| shape_doc(doc, &k, fields_req, excluded_req, &[], query_time))
+                .collect();
             return (200, Value::Array(array));
         }
     }
 
-    // ── Fetch documents ───────────────────────────────────────────────────────
+    // -- Fetch documents --------------------------------------------------
     let raw: HashMap<String, Value> = match payload.get("keys") {
         Some(Value::String(k)) => db.get(col_name, vec![k.clone()]),
         Some(Value::Array(arr)) => {
@@ -164,7 +175,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             db.get(col_name, ks)
         }
         _ => {
-            // Full scan — apply WHERE early when there are no joins (avoids materialising filtered-out docs).
+            // Full scan -- apply WHERE early when there are no joins (avoids materialising filtered-out docs).
             if let Some(clause) = where_clause
                 && joins_req.map(|j| j.is_empty()).unwrap_or(true) {
                     let clause = clause.clone();
@@ -175,7 +186,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         }
     };
 
-    // ── Per-document processing ───────────────────────────────────────────────
+    // -- Per-document processing ------------------------------------------
     let mut results: Vec<(String, Value, Vec<String>)> = Vec::with_capacity(raw.len());
 
     for (key, mut doc) in raw {
@@ -187,7 +198,7 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             }
         }
 
-        // Cross-collection joins — embed related document under the alias field.
+        // Cross-collection joins -- embed related document under the alias field.
         let mut join_aliases: Vec<String> = Vec::new();
         if let Some(joins) = joins_req {
             for join_spec in joins {
@@ -236,29 +247,37 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
         return (404, json!({ "error": "No documents found", "statusCode": 404 }));
     }
 
-    // Single-key lookup — return the document directly (no array wrapper, no _key).
+    // Single-key lookup -- return the document directly (no array wrapper, no _key).
     if let Some(Value::String(_)) = payload.get("keys") {
         let (key, doc, aliases) = results.remove(0);
-        let mut out = shape_doc(doc, &key, fields_req, excluded_req, &aliases);
-        if let Some(obj) = out.as_object_mut() { obj.remove("_key"); }
-        return (200, out);
+        match shape_doc(doc, &key, fields_req, excluded_req, &aliases, query_time) {
+            None => return (404, json!({ "error": "No documents found", "statusCode": 404 })),
+            Some(mut out) => {
+                if let Some(obj) = out.as_object_mut() { obj.remove("_key"); }
+                return (200, out);
+            }
+        }
     }
 
-    // ── Sort ──────────────────────────────────────────────────────────────────
+    // -- Sort -------------------------------------------------------------
     if let Some(specs) = sort_specs {
         let cmp = make_comparator(specs);
         results.sort_by(|(_, a, _), (_, b, _)| cmp(a, b));
     }
 
-    // ── Pagination ────────────────────────────────────────────────────────────
+    // -- Pagination -------------------------------------------------------
     if let Some(limit) = count_limit {
         results.truncate(offset + limit);
     }
 
-    // ── Shape and return ──────────────────────────────────────────────────────
-    let array: Vec<Value> = results.into_iter().skip(offset).map(|(k, doc, aliases)| {
-        shape_doc(doc, &k, fields_req, excluded_req, &aliases)
-    }).collect();
+    // -- Shape and return -------------------------------------------------
+    let array: Vec<Value> = results.into_iter().skip(offset)
+        .filter_map(|(k, doc, aliases)| shape_doc(doc, &k, fields_req, excluded_req, &aliases, query_time))
+        .collect();
+
+    if array.is_empty() {
+        return (404, json!({ "error": "No documents found", "statusCode": 404 }));
+    }
 
     (200, Value::Array(array))
 }

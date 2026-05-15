@@ -25,6 +25,7 @@ use moltendb_auth as auth; // JWT authentication, user store, auth middleware
 mod rate_limit;       // Per-IP sliding-window rate limiter
 mod route_handlers;   // HTTP route handlers (one per API endpoint)
 mod server;           // TLS config loading and graceful shutdown signal
+mod ttl_sweep;        // Background TTL eviction sweep (event-driven min-heap)
 mod ws;               // WebSocket upgrade handler and per-connection logic
 
 // Re-export handlers into scope for use in the router below.
@@ -455,6 +456,11 @@ async fn main() {
     // Initialize the rate limiter with the configured limits.
     let rate_limiter = rate_limit::RateLimiter::new(rate_limit_requests as usize, rate_limit_window);
     info!("🚦 Rate limiting: {} requests per {} seconds", rate_limit_requests, rate_limit_window);
+
+    // Spawn the background TTL eviction sweep task.
+    // Uses an event-driven min-heap — sleeps until the next expiry, zero CPU when idle.
+    ttl_sweep::spawn(db.clone());
+    info!("🕐 TTL eviction sweep started");
 
     // Spawn a background task to periodically clean up stale rate-limit entries.
     // Without this, the rate limiter's DashMap would grow forever as new IPs connect.

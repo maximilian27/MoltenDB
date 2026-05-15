@@ -9,8 +9,12 @@
 * **Reserved `_`-prefix field enforcement** — the handler layer now rejects any insert (`/set`) or update (`/update`) document that contains a field whose name starts with `_`, returning `400 Bad Request` with a descriptive error. This applies universally to every collection, with or without a JSON Schema registered, at `O(1)` cost per document.
 * **`_createdAt` and `_modifiedAt` always returned** — both timestamp fields are now re-attached after field projection in `shape_doc`, so they appear in every response regardless of `fields` or `excludedFields` — consistent with how `_v` and `_key` are handled.
 
+### Features (continued)
+* **TTL eviction** — documents can now expire automatically via a collection-level TTL default registered via `POST /schema` with a `"ttl"` field. The engine injects `_expiresAt` (absolute Unix ms) into every document on insert or update, calculated from the time of the write. Expired documents are evicted lazily on read (`shape_doc`) and eagerly by a background sweep task in the server (event-driven min-heap — sleeps until the next expiry, zero CPU when idle). `_expiresAt` is always returned in responses alongside `_key`, `_v`, `_createdAt`, and `_modifiedAt`. TTL is collection-level only — per-document `_ttl` is not supported.
+* **`/schema` accepts `ttl` without requiring `schema`** — `POST /schema` now accepts `"ttl"` independently of `"schema"`, allowing collection-level TTL defaults to be set on collections that have no JSON Schema validation.
+
 ### Documentation
-* Updated root `README.md` and `moltendb-core/README.md` with a **Reserved fields** table documenting `_key`, `_v`, `_createdAt`, and `_modifiedAt`, the `_`-prefix enforcement rule, and the always-returned guarantee for all four fields.
+* Updated root `README.md` and `moltendb-core/README.md` with a **Reserved fields** table documenting `_key`, `_v`, `_createdAt`, `_modifiedAt`, and `_expiresAt`, the `_`-prefix enforcement rule, and the always-returned guarantee for all five fields. Added TTL documentation covering collection-level TTL via `/schema` and the background sweep strategy.
 
 ---
 

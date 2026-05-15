@@ -1,0 +1,94 @@
+### --- §0. Login ---
+POST http://localhost:1538/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin123"
+}
+### Paste the token from the response here:
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODg1NzU0OCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI2NGE1NWI0LTU3ZTAtNDQzNy1hYzQwLTAwNWRiOTRlZTBkMiJ9.4BY0sIyEYKt4CdsQsRhfmbCW-UdW9fiOWURp4scVQFE
+
+### §1. TTL -- set a collection-level default TTL via /schema (no JSON schema required)
+### All documents inserted into "cache" will automatically expire in 300 seconds.
+### _expiresAt is injected by the engine and always returned in every response.
+POST http://localhost:1538/schema
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "cache",
+  "ttl": 60
+}
+
+### §2. TTL -- combine collection-level TTL with a JSON schema
+POST http://localhost:1538/schema
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "sessions",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "userId": { "type": "string" },
+      "token":  { "type": "string" }
+    },
+    "required": ["userId", "token"]
+  },
+  "ttl": 1800
+}
+
+### §3. TTL -- insert documents into a TTL collection (engine injects _expiresAt automatically)
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "sessions",
+  "data": {
+    "sess_abc": {
+      "userId": "u1",
+      "token": "xyz123"
+    },
+    "sess_def": {
+      "userId": "u2",
+      "token": "abc456"
+    }
+  }
+}
+
+### §4. TTL -- insert documents into the cache collection (all expire in 300 seconds)
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "cache",
+  "data": {
+    "hot_item":  { "value": 42 },
+    "warm_item": { "value": 99 }
+  },
+  "ttl": 30
+}
+
+### §5. TTL -- verify _expiresAt is present and returned on read
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "sessions",
+  "keys": "sess_abc"
+}
+
+### §6. TTL -- check that expired docs are gone after their TTL elapses
+### (wait for the TTL to pass, then run this)
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "cache",
+  "keys": ["hot_item", "warm_item"]
+}
