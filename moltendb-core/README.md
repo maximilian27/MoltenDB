@@ -139,23 +139,26 @@ Attempting to insert or update a document containing any `_`-prefixed field (exc
 
 ## TTL (Time-to-Live)
 
-Collections can expire automatically via a **collection-level TTL**. Set it via `process_schema` (no JSON schema required) or inline on `process_set`:
+MoltenDB supports **collection-level TTL** — an entire collection expires and is dropped automatically after a configurable idle period. Set it via `process_schema` (no JSON schema required) or inline on `process_set`:
 
 ```rust
-// Via /schema
+// Via /schema (no JSON schema required)
 let payload = json!({ "collection": "cache", "ttl": 300 });
 handlers::process_schema::process_schema(&db, &payload, 10 * 1024 * 1024, 1000);
 
-// Inline on /set (shortcut)
+// Inline on /set (shortcut — registers TTL and inserts in one call)
 let payload = json!({ "collection": "cache", "data": { "k": { "value": 1 } }, "ttl": 300 });
 handlers::process_set::process_set(&db, &payload, 10 * 1024 * 1024, 1000);
 ```
 
 **How it works:**
-- The expiry clock resets to `now + ttl_secs` at the end of every insert batch — so the clock starts when the **last write commits**, not when the schema was registered.
-- On expiry the **entire collection is dropped** in one O(1) `delete_collection` call.
-- `_expiresAt` is a **virtual field** — never stored inside documents. It is computed from `Db::ttl_expiry` and injected into every response.
-- TTL is **immutable by design** — changing the TTL requires dropping and recreating the collection.
+- The expiry clock resets to `now + ttl_secs` at the end of **every insert batch** — so the clock measures idle time since the last write, not time since schema registration.
+- On expiry the **entire collection is dropped** in one O(1) `Db::delete_collection` call — no per-document iteration.
+- `_expiresAt` is a **virtual field** — never stored inside documents. It is computed from `Db::ttl_expiry` and injected into every response when the collection has a TTL.
+- TTL is **immutable by design** — once set, the TTL value cannot be changed without dropping and recreating the collection.
+- `/update` calls do **not** reset the expiry clock — only `/set` (insert) does.
+
+> **Design decision — sliding-window expiry:** The TTL clock resets on every insert, not on every access. A collection that receives a steady stream of writes will never expire — it only drops after `ttl_secs` of complete write inactivity. This makes MoltenDB TTL ideal for **ephemeral caches, analytics buffers, and temporary working sets**. It is **not** designed for per-document expiry (OTPs, password-reset tokens, session invalidation) — for those, store your own `expires_at` field in the document and use `delete_filtered` with a time-based predicate to clean up expired entries.
 
 **Eviction:**
 - **Lazy** — `process_get` checks the collection expiry once per request (O(1)) and returns `404` immediately if expired.

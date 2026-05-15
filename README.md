@@ -413,7 +413,7 @@ Attempting to insert or update a document that contains any field starting with 
 
 ### TTL (Time-to-Live)
 
-Collections can expire automatically via a **collection-level TTL** set through `/schema` (no JSON schema required) or inline on `/set`:
+MoltenDB supports **collection-level TTL** — an entire collection expires and is dropped automatically after a configurable idle period. TTL is set via `/schema` (no JSON schema required) or inline on `/set`:
 
 ```json
 POST /schema
@@ -426,15 +426,65 @@ POST /set
 ```
 
 **How it works:**
-- The expiry clock resets to `now + ttl_secs` at the end of every insert batch — so the clock starts when the **last write commits**, not when the schema was registered.
-- On expiry the **entire collection is dropped** in one O(1) call.
-- `_expiresAt` is a **virtual field** — never stored inside documents. It is computed from the collection TTL map and injected into every response.
-- TTL is **immutable by design** — changing the TTL requires dropping and recreating the collection. This prevents silent retroactive changes to existing data.
+- The expiry clock resets to `now + ttl_secs` at the end of **every insert batch** — so the clock measures idle time since the last write, not time since schema registration.
+- On expiry the **entire collection is dropped** in one O(1) `delete_collection` call — no per-document iteration.
+- `_expiresAt` is a **virtual field** — never stored inside documents. It is computed from the collection TTL map and injected into every response when the collection has a TTL.
+- TTL is **immutable by design** — once set, the TTL value cannot be changed without dropping and recreating the collection. This prevents silent retroactive changes to existing data.
+- `/update` calls do **not** reset the expiry clock — only `/set` (insert) does.
+
+> **Design decision — sliding-window expiry:** The TTL clock resets on every insert, not on every access. This means a collection that receives a steady stream of writes will never expire — it only drops after `ttl_secs` of complete write inactivity. This makes MoltenDB TTL ideal for **ephemeral caches, analytics buffers, and temporary working sets** where the collection as a whole should outlive active use. It is **not** designed for per-document expiry use cases such as OTPs, password-reset tokens, or session invalidation — for those, store your own `expires_at` field in the document and use `POST /delete` with a `where` clause to clean up expired entries.
 
 **Eviction strategy:**
 - **Lazy eviction on read** — if the collection has expired, reads return `404` immediately without scanning any documents.
 - **Background sweep** (server only) — an event-driven min-heap with one entry per collection wakes exactly when the next collection expires and drops it. Zero CPU usage when no TTL collections exist.
 - **WASM** — lazy eviction only (no background thread in the browser).
+
+**Example — cache collection that expires 5 minutes after the last insert:**
+
+```json
+POST /schema
+{ "collection": "hot_cache", "ttl": 300 }
+```
+
+```json
+POST /set
+{
+  "collection": "hot_cache",
+  "data": {
+    "item_1": { "value": 42 },
+    "item_2": { "value": 99 }
+  }
+}
+```
+
+Response includes `_expiresAt` on every document:
+
+```json
+[
+  { "_key": "item_1", "value": 42, "_expiresAt": "2026-05-15T08:00:00Z", "_v": 1, ... },
+  { "_key": "item_2", "value": 99, "_expiresAt": "2026-05-15T08:00:00Z", "_v": 1, ... }
+]
+```
+
+**Example — manual cleanup pattern for per-document expiry (e.g. password resets):**
+
+```json
+POST /set
+{
+  "collection": "password_resets",
+  "data": {
+    "token_abc": { "userId": "u1", "email": "a@b.com", "expires_at": 1747240200000 }
+  }
+}
+```
+
+```json
+POST /delete
+{
+  "collection": "password_resets",
+  "where": { "expires_at": { "$lt": 1747240200000 } }
+}
+```
 
 ### Query
 
@@ -454,17 +504,17 @@ Authorization: Bearer <token>
 
 **All query properties:**
 
-| Property | Type | Description                                                                                                                                |
-|---|---|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `collection` | string | **Required.** The collection to query.                                                                                                     |
-| `keys` | string \| string[] | Fetch one or more documents by key. Returns the document directly for a single string; returns an array for an array of keys.              |
-| `where` | object | Filter documents. All conditions at the top level are ANDed together.                                                                      |
-| `fields` | string[] | **GraphQL-style field selection.** Return only these fields. Dot-notation selects nested fields. Mutually exclusive with `excludedFields`. |
-| `excludedFields` | string[] | Return everything *except* these fields. Mutually exclusive with `fields`.                                                                 |
-| `joins` | object[] | Cross-collection joins. Each element is `{ "<name>": { "from": "<collection>", "on": "<foreign_key_field>", "fields": [...] } }`.          |
-| `sort` | object[] | Sort results. Each spec is `{ "field": "<name>", "order": "asc" \| "desc" }`. Multiple specs applied in priority order.                    |
-| `count` | number | Maximum number of results to return (applied after filtering and sorting). **Defaults to `100` if not supplied. Values above `1000` return a `400` error.**          |
-| `offset` | number | Number of results to skip (for stable pagination, applied after sorting).                                                                  |
+| Property | Type | Description                                                                                                                                                 |
+|---|---|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `collection` | string | **Required.** The collection to query.                                                                                                                      |
+| `keys` | string \| string[] | Fetch one or more documents by key. Returns the document directly for a single string; returns an array for an array of keys.                               |
+| `where` | object | Filter documents. All conditions at the top level are ANDed together.                                                                                       |
+| `fields` | string[] | **GraphQL-style field selection.** Return only these fields. Dot-notation selects nested fields. Mutually exclusive with `excludedFields`.                  |
+| `excludedFields` | string[] | Return everything *except* these fields. Mutually exclusive with `fields`.                                                                                  |
+| `joins` | object[] | Cross-collection joins. Each element is `{ "<name>": { "from": "<collection>", "on": "<foreign_key_field>", "fields": [...] } }`.                           |
+| `sort` | object[] | Sort results. Each spec is `{ "field": "<name>", "order": "asc" \| "desc" }`. Multiple specs applied in priority order.                                     |
+| `count` | number | Maximum number of results to return (applied after filtering and sorting). **Defaults to `100` if not supplied. Values above `1000` return a `400` error.** |
+| `offset` | number | Number of results to skip (for stable pagination, applied after sorting).                                                                                   |
 
 > **Response shape:** All multi-document queries return a **JSON array** where each element includes a `_key` field with the document ID. The only exception is a single-key lookup (`"keys": "lp2"`) which returns the document directly.
 

@@ -9,7 +9,7 @@
 * **Reserved `_`-prefix field enforcement** — the handler layer now rejects any insert (`/set`) or update (`/update`) document that contains a field whose name starts with `_`, returning `400 Bad Request` with a descriptive error. This applies universally to every collection, with or without a JSON Schema registered, at `O(1)` cost per document.
 * **`_createdAt` and `_modifiedAt` always returned** — both timestamp fields are now re-attached after field projection in `shape_doc`, so they appear in every response regardless of `fields` or `excludedFields` — consistent with how `_v` and `_key` are handled.
 
-* **`count` defaults to 100, max 1000** — `/get` and `/delete` (bulk `where` mode) now default to returning/deleting at most 100 documents when `count` is not supplied. Supplying a value greater than 1000 returns a `400 Bad Request` error. This prevents accidental full-collection scans on large datasets.
+* **`count` defaults to 100, max 10000** — `/get` and `/delete` (bulk `where` mode) now default to returning/deleting at most 100 documents when `count` is not supplied. Supplying a value greater than 1000 returns a `400 Bad Request` error. This prevents accidental full-collection scans on large datasets.
 
 ### Features (continued)
 * **TTL eviction (collection-level)** — collections can now expire automatically via a TTL registered on `POST /schema` or inline on `POST /set` with a `"ttl"` field (seconds). The expiry clock resets to `now + ttl_secs` at the end of every insert batch — so the clock starts when the last write commits, not when the schema was registered. On expiry the **entire collection is dropped** in one O(1) call. `_expiresAt` is a **virtual field** — never stored inside documents, computed from the collection TTL map and injected into every response. The background sweep task uses an event-driven min-heap with one entry per collection (not per document), sleeping until the next collection expiry. Zero CPU when idle.
@@ -17,6 +17,8 @@
 
 ### Documentation
 * Updated root `README.md` and `moltendb-core/README.md` with a **Reserved fields** table documenting `_key`, `_v`, `_createdAt`, `_modifiedAt`, and `_expiresAt`, the `_`-prefix enforcement rule, and the always-returned guarantee for all five fields. Added TTL documentation covering collection-level TTL via `/schema`, the virtual `_expiresAt` field, and the background sweep strategy.
+* Expanded TTL documentation in both READMEs with a **sliding-window expiry design decision callout** — explicitly documenting that the TTL clock resets on every insert (not every access), that `/update` does not reset the clock, and that collection-level TTL is intentionally designed for ephemeral caches and analytics buffers rather than per-document expiry use cases (OTPs, reset tokens, session invalidation). Added a manual per-document expiry pattern using `POST /delete` with a `where` clause as the recommended alternative for security-sensitive expiry.
+* Expanded `tests/requests_9_ttl.http` with new examples: §7 demonstrating that `/update` does not reset the TTL clock, §8 showing `where` queries on TTL collections, and §10a/§10b showing the manual per-document expiry pattern for use cases not suited to collection-level TTL.
 
 ---
 
