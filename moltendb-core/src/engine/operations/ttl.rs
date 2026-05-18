@@ -11,7 +11,7 @@
 // It is computed on read from the collection expiry map and returned to
 // clients in the same ISO 8601 format as `_createdAt` / `_modifiedAt`.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 /// Returns the current Unix timestamp in milliseconds.
 pub fn now_ms() -> u64 {

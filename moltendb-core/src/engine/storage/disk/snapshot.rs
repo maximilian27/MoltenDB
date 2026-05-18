@@ -24,7 +24,7 @@ use std::fs::{File, OpenOptions};
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::io::{BufWriter, Read, Write};
-use std::time::SystemTime;
+use web_time::SystemTime;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
