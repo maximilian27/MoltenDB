@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODY2NTU5OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjhhNTQ3ZmVmLTE1YzEtNGZjMy05ODUwLTJjYThiYWMxODg5NSJ9.pKudQ3ZuxD4g02egE99A9bv5DQnzVk88SjKhTBCLlDw
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTIwMTU5Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjJmMDg1YmYzLTIwYWItNGEwMi1hMDA1LWI1M2Q0Njc2NTk1MyJ9.YjVujD4kND4QE9H6XPjP6xGDn1Y5t3YlfBr9nojZ6S4
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
@@ -206,7 +206,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzc1Njg2MjksInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdLCJqdGkiOiJlOGFkMzM4NS1lNDhkLTQ1ZmQtOGUwNi00N2Y5MTRlM2IzOGYifQ.Vo-IzSDCWFkGEbYcnn4xzITPVa4qJP4HGqn794HAvNo
+@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzg4MzY1OTAsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdLCJqdGkiOiI1YmE1NWYyOS0zY2ExLTRlMTYtYmFmMC1hOWNkOWNiNzdmZDgifQ.FFCqibQOqVPYIu-vr0ue2CvbTogLWS9W8Ms-Kb67ujc
 
 ### ✅ Fetch lp1 — in scope
 GET http://localhost:1538/collections/laptops/docs/lp1

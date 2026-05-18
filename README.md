@@ -83,7 +83,7 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "1.0.0-rc2"
+moltendb-core = "1.0.0-rc3"
 ```
 
 ```rust
@@ -246,7 +246,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc2"
+moltendb-core = "1.0.0-rc3"
 ```
 
 ### Download Pre-built Binaries
@@ -397,7 +397,121 @@ Pass `data` as an **array** to auto-generate UUIDv7 keys:
 
 Returns `{ "statusCode": 200, "status": "ok", "count": 1 }`.
 
-Every document automatically receives `_v` (version counter), `createdAt`, and `modifiedAt` fields managed by the engine.
+Every document automatically receives the following engine-managed fields — clients cannot set any field whose name starts with `_`:
+
+| Field | Description |
+|---|---|
+| `_key` | The document's own key (injected on read, never stored) |
+| `_v` | Version counter — incremented on every write by the engine. Always starts at `1` for new documents. |
+| `_seq` | Monotonic insertion sequence number — strictly increasing within a collection. Assigned at first insert and preserved on overwrites. Used for FIFO eviction when `maxSize` is set. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_createdAt` | ISO-8601 timestamp set once at first insert, never overwritten. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_modifiedAt` | ISO-8601 timestamp updated on every write. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_expiresAt` | ISO-8601 timestamp when the **collection** expires. This is a **virtual field** — never stored inside documents. **Opt-in** — only returned when explicitly listed in `fields` (only relevant for TTL collections). |
+
+Attempting to insert or update a document that contains any field starting with `_` (except `_v` on update) returns `400 Bad Request`.
+
+**`_key` and `_v` are always present in every response** — they are protocol primitives and cannot be suppressed by `fields` or `excludedFields`.
+
+`_seq`, `_createdAt`, `_modifiedAt`, and `_expiresAt` are **opt-in** — they are never returned unless explicitly listed in a `fields` projection:
+```json
+{ "collection": "laptops", "fields": ["brand", "price", "_createdAt", "_modifiedAt"] }
+```
+
+### TTL (Time-to-Live)
+
+MoltenDB supports **collection-level TTL** — an entire collection expires and is dropped automatically after a configurable idle period. TTL is set via `/schema` (no JSON schema required) or inline on `/set`:
+
+```json
+POST /schema
+{ "collection": "cache", "ttl": 300 }
+```
+
+```json
+POST /set
+{ "collection": "cache", "data": { "k": { "value": 1 } }, "ttl": 300 }
+```
+
+**How it works:**
+- The expiry clock resets to `now + ttl_secs` at the end of **every insert batch** — so the clock measures idle time since the last write, not time since schema registration.
+- On expiry the **entire collection is dropped** in one O(1) `delete_collection` call — no per-document iteration.
+- `_expiresAt` is a **virtual field** — never stored inside documents. It is computed from the collection TTL map and injected into every response when the collection has a TTL.
+- TTL is **immutable by design** — once set, the TTL value cannot be changed without dropping and recreating the collection. This prevents silent retroactive changes to existing data.
+- `/update` calls do **not** reset the expiry clock — only `/set` (insert) does.
+
+> **Design decision — sliding-window expiry:** The TTL clock resets on every insert, not on every access. This means a collection that receives a steady stream of writes will never expire — it only drops after `ttl_secs` of complete write inactivity. This makes MoltenDB TTL ideal for **ephemeral caches, analytics buffers, and temporary working sets** where the collection as a whole should outlive active use. It is **not** designed for per-document expiry use cases such as OTPs, password-reset tokens, or session invalidation — for those, store your own `expires_at` field in the document and use `POST /delete` with a `where` clause to clean up expired entries.
+
+**Eviction strategy:**
+- **Lazy eviction on read** — if the collection has expired, reads return `404` immediately without scanning any documents.
+- **Background sweep** (server only) — an event-driven min-heap with one entry per collection wakes exactly when the next collection expires and drops it. Zero CPU usage when no TTL collections exist.
+- **WASM** — lazy eviction only (no background thread in the browser).
+
+**Example — cache collection that expires 5 minutes after the last insert:**
+
+```json
+POST /schema
+{ "collection": "hot_cache", "ttl": 300 }
+```
+
+```json
+POST /set
+{
+  "collection": "hot_cache",
+  "data": {
+    "item_1": { "value": 42 },
+    "item_2": { "value": 99 }
+  }
+}
+```
+
+Response includes `_expiresAt` on every document:
+
+```json
+[
+  { "_key": "item_1", "value": 42, "_expiresAt": "2026-05-15T08:00:00Z", "_v": 1, ... },
+  { "_key": "item_2", "value": 99, "_expiresAt": "2026-05-15T08:00:00Z", "_v": 1, ... }
+]
+```
+
+### Capped Collections (`maxSize`)
+
+Collections can be capped to a maximum document count. When the collection exceeds `maxSize` after an insert batch, the **oldest documents** (lowest `_seq`) are evicted automatically — keeping exactly `maxSize` documents at all times.
+
+Set via `/schema` (no JSON schema required) or inline on `/set`:
+
+```json
+POST /schema
+{ "collection": "recent_events", "maxSize": 100 }
+```
+
+```json
+POST /set
+{ "collection": "top5_scores", "maxSize": 5, "data": { "s1": { "score": 9800 } } }
+```
+
+- Eviction is **FIFO** — the document with the lowest `_seq` is always evicted first.
+- Overwrites preserve the original `_seq`, so a document's position in the eviction queue is fixed at first insert.
+- `maxSize` is reported in `POST /stats` and `GET /stats` responses.
+- `maxSize` can be combined with `ttl` on the same collection.
+
+**Example — manual cleanup pattern for per-document expiry (e.g. password resets):**
+
+```json
+POST /set
+{
+  "collection": "password_resets",
+  "data": {
+    "token_abc": { "userId": "u1", "email": "a@b.com", "expires_at": 1747240200000 }
+  }
+}
+```
+
+```json
+POST /delete
+{
+  "collection": "password_resets",
+  "where": { "expires_at": { "$lt": 1747240200000 } }
+}
+```
 
 ### Query
 
@@ -417,17 +531,17 @@ Authorization: Bearer <token>
 
 **All query properties:**
 
-| Property | Type | Description                                                                                                                                |
-|---|---|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `collection` | string | **Required.** The collection to query.                                                                                                     |
-| `keys` | string \| string[] | Fetch one or more documents by key. Returns the document directly for a single string; returns an array for an array of keys.              |
-| `where` | object | Filter documents. All conditions at the top level are ANDed together.                                                                      |
-| `fields` | string[] | **GraphQL-style field selection.** Return only these fields. Dot-notation selects nested fields. Mutually exclusive with `excludedFields`. |
-| `excludedFields` | string[] | Return everything *except* these fields. Mutually exclusive with `fields`.                                                                 |
-| `joins` | object[] | Cross-collection joins. Each element is `{ "<name>": { "from": "<collection>", "on": "<foreign_key_field>", "fields": [...] } }`.          |
-| `sort` | object[] | Sort results. Each spec is `{ "field": "<name>", "order": "asc" \| "desc" }`. Multiple specs applied in priority order.                    |
-| `count` | number | Maximum number of results to return (applied after filtering and sorting).                                                                 |
-| `offset` | number | Number of results to skip (for stable pagination, applied after sorting).                                                                  |
+| Property | Type | Description                                                                                                                                                 |
+|---|---|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `collection` | string | **Required.** The collection to query.                                                                                                                      |
+| `keys` | string \| string[] | Fetch one or more documents by key. Returns the document directly for a single string; returns an array for an array of keys.                               |
+| `where` | object | Filter documents. All conditions at the top level are ANDed together.                                                                                       |
+| `fields` | string[] | **GraphQL-style field selection.** Return only these fields. Dot-notation selects nested fields. Mutually exclusive with `excludedFields`.                  |
+| `excludedFields` | string[] | Return everything *except* these fields. Mutually exclusive with `fields`.                                                                                  |
+| `joins` | object[] | Cross-collection joins. Each element is `{ "<name>": { "from": "<collection>", "on": "<foreign_key_field>", "fields": [...] } }`.                           |
+| `sort` | object[] | Sort results. Each spec is `{ "field": "<name>", "order": "asc" \| "desc" }`. Multiple specs applied in priority order.                                     |
+| `count` | number | Maximum number of results to return (applied after filtering and sorting). **Defaults to `100` if not supplied. Values above `1000` return a `400` error.** |
+| `offset` | number | Number of results to skip (for stable pagination, applied after sorting).                                                                                   |
 
 > **Response shape:** All multi-document queries return a **JSON array** where each element includes a `_key` field with the document ID. The only exception is a single-key lookup (`"keys": "lp2"`) which returns the document directly.
 
@@ -572,7 +686,7 @@ Authorization: Bearer <token>
 }
 ```
 
-Only the fields in `data` are changed. All other fields are preserved. `_v` is incremented automatically; `createdAt` cannot be overwritten.
+Only the fields in `data` are changed. All other fields are preserved. `_v` is incremented automatically; `_createdAt` cannot be overwritten.
 
 ### Delete
 
@@ -584,6 +698,13 @@ Authorization: Bearer <token>
 { "collection": "laptops", "keys": "lp6" }              // single key
 { "collection": "laptops", "keys": ["lp4", "lp5"] }     // batch
 { "collection": "laptops", "drop": true }               // drop entire collection
+{ "collection": "laptops", "where": { "in_stock": { "$eq": false } } }  // bulk delete by filter
+```
+
+The `where` clause supports every filter operator available in `/get` — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains`, `$in`, `$nin`, `$and`, `$or`. An optional `count` property limits how many documents are deleted (**default `100`**, max `1000`). The response includes the count of deleted documents:
+
+```json
+{ "status": "ok", "deleted": 42 }
 ```
 
 ### Paginated collection fetch
@@ -686,6 +807,42 @@ wss://localhost:1538/ws
 See `src/ws_test/websocket-test.html` for an interactive tester.
 
 ---
+
+## Collection Stats
+
+Returns document counts per collection. Both `POST` and `GET` are supported. TTL-aware: expired collections report `count: 0` and `expired: true`.
+
+```http
+GET /stats
+Authorization: Bearer <token>
+```
+
+```http
+POST /stats
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{ "collection": "laptops" }
+```
+
+**All collections response:**
+```json
+{
+  "collections": {
+    "laptops": { "count": 42381 },
+    "sessions": { "count": 1200, "expiresAt": "2026-05-15T15:00:00Z" },
+    "expired_cache": { "count": 0, "expired": true, "expiresAt": "2026-05-15T07:00:00Z" }
+  },
+  "total": 43581
+}
+```
+
+**Single collection response:**
+```json
+{ "collection": "laptops", "count": 42381 }
+```
+
+> **Note:** Counts are O(1) atomic reads from the in-memory DashMap — no document scanning. On TTL collections the count may include a small number of not-yet-evicted documents; expired collections are reported accurately as `count: 0`.
 
 ## Telemetry
 

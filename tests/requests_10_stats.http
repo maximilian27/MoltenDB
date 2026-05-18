@@ -1,7 +1,6 @@
-﻿### ─── STEP 1: Login ──────────────────────────────────────────────────────────
+### --- STEP 1: Login -------------------------------------------------------
 ### Run this first. Copy the token from the response and paste it into the
 ### @token variable below (or replace the Bearer values in each request).
-
 POST http://localhost:1538/login
 Content-Type: application/json
 
@@ -9,10 +8,6 @@ Content-Type: application/json
   "username": "admin",
   "password": "admin123"
 }
-
-### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTIwMTU5Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjJmMDg1YmYzLTIwYWItNGEwMi1hMDA1LWI1M2Q0Njc2NTk1MyJ9.YjVujD4kND4QE9H6XPjP6xGDn1Y5t3YlfBr9nojZ6S4
-
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
@@ -44,6 +39,7 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "display",
+  "ttl": 300,
   "data": {
     "dsp1": { "size_inch": 13.3, "resolution": "2560x1600", "panel": "IPS",  "refresh_hz": 60,  "touchscreen": false, "hdr": false },
     "dsp2": { "size_inch": 14.0, "resolution": "2880x1800", "panel": "OLED", "refresh_hz": 90,  "touchscreen": false, "hdr": true  },
@@ -151,121 +147,68 @@ Authorization: Bearer {{token}}
 }
 
 
-### ─── JOINS ───────────────────────────────────────────────────────────────────
+### Set your token here after login:
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTIwMTU5Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjJmMDg1YmYzLTIwYWItNGEwMi1hMDA1LWI1M2Q0Njc2NTk1MyJ9.YjVujD4kND4QE9H6XPjP6xGDn1Y5t3YlfBr9nojZ6S4
 
-### §29. Join laptops → memory — embed full memory spec for each laptop
-POST http://localhost:1538/get
+###############################################################################
+### /stats -- Collection document counts
+###############################################################################
+
+### §1. GET /stats -- all collections (no body required)
+GET http://localhost:1538/stats
+Authorization: Bearer {{token}}
+
+###
+
+### §2. POST /stats -- all collections (empty body)
+POST http://localhost:1538/stats
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{}
+
+###
+
+### §3. POST /stats -- single collection
+POST http://localhost:1538/stats
 Content-Type: application/json
 Authorization: Bearer {{token}}
 
 {
-  "collection": "laptops",
-  "fields": ["brand", "model", "price"],
-  "joins": [
-    { "ram": { "from": "memory", "on": "memory_id" } }
-  ]
+  "collection": "laptops"
 }
 
-### §30. Join laptops → display — embed only refresh_hz and panel type
-POST http://localhost:1538/get
+###
+
+### §4. POST /stats -- single collection with TTL (shows expiresAt)
+POST http://localhost:1538/stats
 Content-Type: application/json
 Authorization: Bearer {{token}}
 
 {
-  "collection": "laptops",
-  "fields": ["brand", "model"],
-  "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz", "panel", "size_inch"] } }
-  ]
+  "collection": "display"
 }
 
-### §31. Double join — embed both memory and display in one query
-POST http://localhost:1538/get
+###
+
+### §5. POST /stats -- collection that does not exist (returns 404)
+POST http://localhost:1538/stats
 Content-Type: application/json
 Authorization: Bearer {{token}}
 
 {
-  "collection": "laptops",
-  "fields": ["brand", "model", "price"],
-  "joins": [
-    { "ram":    { "from": "memory",  "on": "memory_id",  "fields": ["capacity_gb", "type"] } },
-    { "screen": { "from": "display", "on": "display_id", "fields": ["size_inch", "refresh_hz", "panel"] } }
-  ]
+  "collection": "nonexistent_collection"
 }
 
-### §32. Join + WHERE on main collection — only in-stock laptops with their display info
-POST http://localhost:1538/get
+###
+
+### §6. POST /stats -- expired TTL collection (returns count: 0, expired: true)
+### First register a collection with a very short TTL via /schema, insert a doc,
+### wait for it to expire, then call stats to see the expired state.
+POST http://localhost:1538/stats
 Content-Type: application/json
 Authorization: Bearer {{token}}
 
 {
-  "collection": "laptops",
-  "fields": ["brand", "model", "price"],
-  "where": { "in_stock": true },
-  "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz", "panel", "hdr"] } }
-  ]
+  "collection": "display"
 }
-
-### §33. Join + WHERE on joined field — laptops with an OLED or Mini-LED display
-POST http://localhost:1538/get
-Content-Type: application/json
-Authorization: Bearer {{token}}
-
-{
-  "collection": "laptops",
-  "fields": ["brand", "model", "price"],
-  "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["panel", "refresh_hz", "hdr"] } }
-  ],
-  "where": {
-    "screen.panel": { "$in": ["OLED", "Mini-LED"] }
-  }
-}
-
-### §34. Join + WHERE on joined field — laptops with 120Hz+ display
-POST http://localhost:1538/get
-Content-Type: application/json
-Authorization: Bearer {{token}}
-
-{
-  "collection": "laptops",
-  "fields": ["brand", "model", "price"],
-  "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz", "panel"] } }
-  ],
-  "where": {
-    "screen.refresh_hz": { "$gte": 120 }
-  }
-}
-
-### §35. Join + WHERE on joined field — laptops with upgradeable RAM
-POST http://localhost:1538/get
-Content-Type: application/json
-Authorization: Bearer {{token}}
-
-{
-  "collection": "laptops",
-  "fields": ["brand", "model", "price"],
-  "joins": [
-    { "ram": { "from": "memory", "on": "memory_id", "fields": ["capacity_gb", "type", "upgradeable"] } }
-  ],
-  "where": {
-    "ram.upgradeable": true
-  }
-}
-
-### §36. Join + sort — all laptops sorted by display refresh rate descending
-POST http://localhost:1538/get
-Content-Type: application/json
-Authorization: Bearer {{token}}
-
-{
-  "collection": "laptops",
-  "fields": ["brand", "model", "price"],
-  "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz", "panel"] } }
-  ],
-  "sort": [{ "field": "screen.refresh_hz", "order": "desc" }]
-}
-

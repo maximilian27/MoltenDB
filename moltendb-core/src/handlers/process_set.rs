@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 
 fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
-    // Only objects can have an `extends` block — pass everything else through unchanged.
+    // Only objects can have an `extends` block -- pass everything else through unchanged.
     let obj = match doc.as_object() {
         Some(o) => o,
         None => return doc,
@@ -19,12 +19,12 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
     };
 
     // Clone the document into a mutable map and remove the `extends` key.
-    // The stored document must never contain `extends` — it is a directive,
+    // The stored document must never contain `extends` -- it is a directive,
     // not a data field.
     let mut result = obj.clone();
     result.remove("extends");
 
-    // For each alias → "collection.key" reference, fetch the referenced document
+    // For each alias -> "collection.key" reference, fetch the referenced document
     // and embed it under the alias key.
     for (alias, ref_val) in &extends_map {
         if let Some(ref_str) = ref_val.as_str() {
@@ -34,7 +34,7 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
                 let ref_collection = &ref_str[..dot_pos];  // e.g. "memory"
                 let ref_key        = &ref_str[dot_pos + 1..]; // e.g. "mem4"
 
-                // O(1) hash-map lookup — no scanning, no joins at query time.
+                // O(1) hash-map lookup -- no scanning, no joins at query time.
                 if let Some(referenced_doc) = db.get(ref_collection, vec![ref_key.to_string()]).remove(ref_key) {
                     // Embed the full referenced document under the alias key.
                     result.insert(alias.clone(), referenced_doc);
@@ -57,7 +57,7 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
 ///     Keys are auto-generated as UUIDv7 strings. Returns the generated IDs.
 pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     // Only "collection" and "data" are valid for a set/insert request.
-    const SET_ALLOWED: &[&str] = &["collection", "data"];
+    const SET_ALLOWED: &[&str] = &["collection", "data", "ttl", "maxSize"];
     if let Err(e) = validation::validate_allowed_properties(payload, SET_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
@@ -67,14 +67,37 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
 
     let col = payload["collection"].as_str().unwrap_or("default");
 
+    // If a `ttl` is provided on the set request, register it as the collection-level default.
+    // This is a convenience shortcut -- equivalent to calling POST /schema with just a `ttl`.
+    if let Some(ttl_val) = payload.get("ttl") {
+        match ttl_val.as_u64() {
+            Some(secs) => db.set_ttl_default(col, secs),
+            None => return (400, json!({ "error": "'ttl' must be a non-negative integer (seconds)", "statusCode": 400 })),
+        }
+    }
+
+    // If a `maxSize` is provided on the set request, register it as the collection-level cap.
+    // This is a convenience shortcut -- equivalent to calling POST /schema with just a `maxSize`.
+    if let Some(max_val) = payload.get("maxSize") {
+        match max_val.as_u64() {
+            Some(max) if max > 0 => db.set_max_size(col, max as usize),
+            _ => return (400, json!({ "error": "'maxSize' must be a positive integer", "statusCode": 400 })),
+        }
+    }
+
     match payload.get("data") {
-        // ── Object map format ─────────────────────────────────────────────────
+        // -- Object map format -----------------------------------------------
         // { "data": { "u1": { "name": "Alice" }, "u2": { "name": "Bob" } } }
         Some(Value::Object(data_map)) => {
             // Collect all key-value pairs into a Vec for batch insert.
             let mut items = Vec::new();
             for (k, v) in data_map {
                 let resolved = resolve_extends(v.clone(), db);
+                if let Some(obj) = resolved.as_object() {
+                    if obj.keys().any(|k| k.starts_with('_')) {
+                        return (400, json!({ "error": "Fields starting with '_' are reserved for internal use and cannot be set by the client.", "statusCode": 400 }));
+                    }
+                }
                 items.push((k.clone(), resolved));
             }
 
@@ -83,14 +106,14 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                     (200, json!({ "status": "ok", "count": data_map.len() }))
                 },
                 Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
-                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable — storage fault", "details": msg, "statusCode": 503 })),
+                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable -- storage fault", "details": msg, "statusCode": 503 })),
                 #[cfg(feature = "schema")]
                 Err(engine::DbError::SchemaValidationError(msg)) => (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))
             }
         },
 
-        // ── Array format ──────────────────────────────────────────────────────
+        // -- Array format ----------------------------------------------------
         // { "data": [ { "name": "Alice" }, { "name": "Bob" } ] }
         // Auto-generates UUIDv7 keys for each document.
         Some(Value::Array(data_arr)) => {
@@ -98,13 +121,18 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
             let mut generated_ids = Vec::new();
 
             for item in data_arr {
-                // UUIDv7 is time-ordered — documents inserted together will have
+                // UUIDv7 is time-ordered -- documents inserted together will have
                 // adjacent keys, which is good for range scans.
                 let id = Uuid::now_v7().to_string();
                 generated_ids.push(id.clone());
                 // resolve_extends() handles the `extends` block for auto-keyed
                 // documents exactly the same as for named-key documents.
                 let resolved = resolve_extends(item.clone(), db);
+                if let Some(obj) = resolved.as_object() {
+                    if obj.keys().any(|k| k.starts_with('_')) {
+                        return (400, json!({ "error": "Fields starting with '_' are reserved for internal use and cannot be set by the client.", "statusCode": 400 }));
+                    }
+                }
                 items.push((id, resolved));
             }
 
@@ -117,7 +145,7 @@ pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
                     }))
                 },
                 Err(engine::DbError::Conflict) => (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
-                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable — storage fault", "details": msg, "statusCode": 503 })),
+                Err(engine::DbError::StorageFault(msg)) => (503, json!({ "error": "Service unavailable -- storage fault", "details": msg, "statusCode": 503 })),
                 #[cfg(feature = "schema")]
                 Err(engine::DbError::SchemaValidationError(msg)) => (400, json!({ "error": msg, "statusCode": 400 })),
                 Err(e) => (500, json!({ "error": "Database write failed", "details": e.to_string(), "statusCode": 500 }))

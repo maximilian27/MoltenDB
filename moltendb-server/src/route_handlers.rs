@@ -275,6 +275,26 @@ pub async fn handle_snapshot(
     (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
 }
 
+/// POST /stats — return document counts per collection.
+/// GET  /stats — same, no body required (returns all collections).
+/// Requires: read scope or admin.
+pub async fn handle_stats_post(
+    State((db, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    Extension(_claims): Extension<auth::Claims>,
+    Json(payload): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    let (code, body) = handlers::process_stats(&db, &payload);
+    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+}
+
+pub async fn handle_stats_get(
+    State((db, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    Extension(_claims): Extension<auth::Claims>,
+) -> (StatusCode, Json<Value>) {
+    let (code, body) = handlers::process_stats(&db, &serde_json::Value::Object(Default::default()));
+    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+}
+
 /// GET /collections/{collection}/docs/{key} — fetch a single document by key.
 ///
 /// RESTful convenience endpoint. Equivalent to:

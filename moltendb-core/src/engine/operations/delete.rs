@@ -1,5 +1,5 @@
 // ─── operations/delete.rs ─────────────────────────────────────────────────────
-// Delete operations: delete, delete_collection.
+// Delete operations: delete, delete_filtered, delete_collection.
 // ─────────────────────────────────────────────────────────────────────────────
 
 use dashmap::DashMap;
@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use super::super::StorageBackend;
 use super::super::types::{DbError, LogEntry};
+
 
 /// Delete one or more documents from a collection in a single call.
 ///
@@ -64,6 +65,112 @@ pub fn delete(
     ))?;
 
     Ok(())
+}
+
+/// Scan a collection with a predicate and delete all matching documents.
+///
+/// Mirrors `get_filtered` on the read side — uses a parallel scan on native
+/// targets to collect matching keys, then deletes them in a single transaction.
+/// If `count_limit` is `Some(n)`, at most `n` documents are deleted.
+/// Returns the number of documents deleted.
+pub fn delete_filtered(
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    storage: &Arc<dyn StorageBackend>,
+    tx: &tokio::sync::broadcast::Sender<String>,
+    collection: &str,
+    predicate: impl Fn(&Value) -> bool + Sync,
+    count_limit: Option<usize>,
+) -> Result<usize, DbError> {
+    #[inline]
+    fn decode(bytes: &[u8]) -> Option<Value> {
+        rmp_serde::from_slice(bytes).ok()
+    }
+
+    let keys: Vec<String> = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            match state.get(collection) {
+                Some(col) => col
+                    .par_iter()
+                    .filter_map(|entry| {
+                        let v = decode(entry.value())?;
+                        if predicate(&v) { Some(entry.key().clone()) } else { None }
+                    })
+                    .collect(),
+                None => return Ok(0),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            match state.get(collection) {
+                Some(col) => col
+                    .iter()
+                    .filter_map(|entry| {
+                        let v = decode(entry.value())?;
+                        if predicate(&v) { Some(entry.key().clone()) } else { None }
+                    })
+                    .collect(),
+                None => return Ok(0),
+            }
+        }
+    };
+
+    let mut keys = keys;
+    if let Some(limit) = count_limit {
+        keys.truncate(limit);
+    }
+
+    let count = keys.len();
+    if count == 0 {
+        return Ok(0);
+    }
+    delete(state, storage, tx, collection, keys)?;
+    Ok(count)
+}
+
+/// Evict the `n` oldest documents from a collection by `_seq` (lowest values first).
+///
+/// Used by the `maxSize` cap — after an insert batch pushes the collection over
+/// its limit, this removes exactly `n` documents to bring it back to `maxSize`.
+/// If the collection has fewer than `n` documents, all are removed.
+/// Errors are silently ignored (best-effort eviction).
+pub fn evict_oldest(
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    storage: &Arc<dyn StorageBackend>,
+    tx: &tokio::sync::broadcast::Sender<String>,
+    collection: &str,
+    n: usize,
+) {
+    #[inline]
+    fn decode(bytes: &[u8]) -> Option<Value> {
+        rmp_serde::from_slice(bytes).ok()
+    }
+
+    let col = match state.get(collection) {
+        Some(c) => c,
+        None => return,
+    };
+
+    // Collect (seq, key) pairs, then sort ascending by seq to find the oldest.
+    let mut entries: Vec<(u64, String)> = col
+        .iter()
+        .filter_map(|e| {
+            let v = decode(e.value())?;
+            let seq = v.get("_seq").and_then(|s| s.as_u64()).unwrap_or(u64::MAX);
+            Some((seq, e.key().clone()))
+        })
+        .collect();
+
+    entries.sort_unstable_by_key(|(seq, _)| *seq);
+    entries.truncate(n);
+
+    let keys: Vec<String> = entries.into_iter().map(|(_, k)| k).collect();
+    if keys.is_empty() {
+        return;
+    }
+    drop(col); // release the read guard before calling delete
+    let _ = delete(state, storage, tx, collection, keys);
 }
 
 /// Drop an entire collection — removes all documents and its indexes.

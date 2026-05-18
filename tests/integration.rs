@@ -566,8 +566,8 @@ fn test_versioning_fields_present() {
     seed(&db);
     let r = get(&db, json!({ "collection": "laptops", "keys": "lp1" }));
     assert!(r.get("_v").is_some());
-    assert!(r.get("createdAt").is_some());
-    assert!(r.get("modifiedAt").is_some());
+    assert!(r.get("_createdAt").is_some());
+    assert!(r.get("_modifiedAt").is_some());
     assert_eq!(r["_v"], 1);
 }
 

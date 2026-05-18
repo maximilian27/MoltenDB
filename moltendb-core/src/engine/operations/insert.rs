@@ -5,6 +5,7 @@
 use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use super::common::now_iso;
 use super::super::StorageBackend;
 use super::super::types::{DbError, LogEntry};
@@ -19,6 +20,7 @@ pub struct InsertParams<'a> {
     pub tx: &'a tokio::sync::broadcast::Sender<String>,
     #[cfg(feature = "schema")]
     pub schemas: &'a DashMap<String, Arc<(Value, jsonschema::Validator)>>,
+    pub seq_counters: &'a DashMap<String, AtomicU64>,
     pub collection: &'a str,
     pub items: Vec<(String, Value)>,
 }
@@ -42,6 +44,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         tx,
         #[cfg(feature = "schema")]
         schemas,
+        seq_counters,
         collection,
         items,
     } = params;
@@ -60,27 +63,30 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
     for (key, mut value) in items {
         let now = now_iso();
-        
+
+        // Assign a monotonic sequence number for this document.
+        // New docs get a fresh seq; overwrites preserve the existing seq.
+        let seq = {
+            let counter = seq_counters
+                .entry(collection.to_string())
+                .or_insert_with(|| AtomicU64::new(0));
+            counter.fetch_add(1, Ordering::Relaxed)
+        };
+
         // Decode existing MsgPack bytes → Value for versioning check.
         let existing_val: Option<Value> = col.get(&key).and_then(|b| rmp_serde::from_slice::<Value>(&b).ok());
 
         if let Some(existing) = existing_val {
-            // ... (existing logic) ...
             let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-            let incoming_v = value.get("_v").and_then(|v| v.as_u64());
-
-            if let Some(iv) = incoming_v
-                && iv <= existing_v {
-                    tracing::debug!("⚡ Conflict error: {}/{} incoming _v={} <= stored _v={}", collection, key, iv, existing_v);
-                    return Err(DbError::Conflict);
-                }
-
-            let orig_created = existing.get("createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string();
+            let orig_created = existing.get("_createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string();
+            // Preserve the original _seq so overwritten docs keep their insertion order.
+            let orig_seq = existing.get("_seq").and_then(|v| v.as_u64()).unwrap_or(seq);
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("_v".to_string(), serde_json::json!(new_v));
-                obj.insert("createdAt".to_string(), serde_json::json!(orig_created));
-                obj.insert("modifiedAt".to_string(), serde_json::json!(now));
+                obj.insert("_createdAt".to_string(), serde_json::json!(orig_created));
+                obj.insert("_modifiedAt".to_string(), serde_json::json!(now));
+                obj.insert("_seq".to_string(), serde_json::json!(orig_seq));
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
@@ -88,11 +94,10 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             crate::engine::schema::validate_document(schemas, collection, &value)?;
 
         } else if let Some(obj) = value.as_object_mut() {
-            if obj.get("_v").is_none() {
-                obj.insert("_v".to_string(), serde_json::json!(1u64));
-            }
-            obj.insert("createdAt".to_string(), serde_json::json!(now.clone()));
-            obj.insert("modifiedAt".to_string(), serde_json::json!(now));
+            obj.insert("_v".to_string(), serde_json::json!(1u64));
+            obj.insert("_createdAt".to_string(), serde_json::json!(now.clone()));
+            obj.insert("_modifiedAt".to_string(), serde_json::json!(now));
+            obj.insert("_seq".to_string(), serde_json::json!(seq));
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]
@@ -115,15 +120,17 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         // Step 4: Broadcast a lean change event to WebSocket subscribers.
         let new_v = value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-        let _ = tx.send(
-            json!({
-                "event": "change",
-                "collection": collection,
-                "key": key,
-                "new_v": new_v
-            })
-            .to_string(),
-        );
+        let expires_at_ms = value.get("_expiresAt").and_then(|v| v.as_u64());
+        let mut event = json!({
+            "event": "change",
+            "collection": collection,
+            "key": key,
+            "new_v": new_v
+        });
+        if let Some(exp) = expires_at_ms {
+            event["expires_at_ms"] = json!(exp);
+        }
+        let _ = tx.send(event.to_string());
     }
 
     // TX_COMMIT: Successfully complete the transaction.

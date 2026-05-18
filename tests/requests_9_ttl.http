@@ -1,0 +1,199 @@
+### --- §0. Login ---
+POST http://localhost:1538/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin123"
+}
+### Paste the token from the response here:
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTIwMTU5Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjJmMDg1YmYzLTIwYWItNGEwMi1hMDA1LWI1M2Q0Njc2NTk1MyJ9.YjVujD4kND4QE9H6XPjP6xGDn1Y5t3YlfBr9nojZ6S4
+
+###
+### ============================================================
+### COLLECTION-LEVEL TTL
+###
+### MoltenDB TTL operates at the collection level -- the entire
+### collection is dropped in one O(1) call when the TTL elapses.
+###
+### SLIDING-WINDOW EXPIRY: the clock resets to (now + ttl_secs)
+### at the end of every /set batch. A collection that keeps
+### receiving inserts will never expire -- it only drops after
+### ttl_secs of complete write inactivity.
+###
+### /update does NOT reset the clock. Only /set does.
+###
+### TTL is immutable -- once set it cannot be changed without
+### dropping and recreating the collection.
+###
+### _expiresAt is a VIRTUAL field -- never stored in documents,
+### computed from the collection TTL map and injected into every
+### response. It is always returned when a TTL is registered.
+### ============================================================
+
+### §1. Register a collection-level TTL via /schema (no JSON schema required)
+### The "cache" collection will be dropped 60 seconds after the last insert batch.
+POST http://localhost:1538/schema
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "cache",
+  "ttl": 60
+}
+
+### §2. Combine a collection-level TTL with a JSON schema
+### The "sessions" collection expires 1800 seconds after the last insert batch.
+### Both ttl and schema are optional -- either or both can be provided.
+POST http://localhost:1538/schema
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "sessions",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "userId": { "type": "string" },
+      "token":  { "type": "string" }
+    },
+    "required": ["userId", "token"]
+  },
+  "ttl": 1800
+}
+
+### §3. Insert documents into a TTL collection
+### The expiry clock resets to (now + 1800s) when this batch commits.
+### Every document in the response will include "_expiresAt" (ISO 8601).
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "sessions",
+  "data": {
+    "sess_abc": {
+      "userId": "u1",
+      "token": "xyz123"
+    },
+    "sess_def": {
+      "userId": "u2",
+      "token": "abc456"
+    }
+  }
+}
+
+### §4. Register TTL inline on /set (shortcut -- no separate /schema call needed)
+### Registers the TTL for the collection AND inserts documents in one request.
+### The expiry clock resets to (now + 30s) when this batch commits.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "cache",
+  "data": {
+    "hot_item":  { "value": 42 },
+    "warm_item": { "value": 99 }
+  },
+  "ttl": 30
+}
+
+### §5. Read a document -- _expiresAt is always returned as a virtual field
+### Response includes "_expiresAt": "2026-..." computed from the collection TTL map.
+### _expiresAt cannot be suppressed via fields or excludedFields.
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "sessions",
+  "keys": "sess_abc"
+}
+
+### §6. Inserting more documents resets the expiry clock from now
+### After this insert, the collection expires 1800s from THIS moment -- not from §3.
+### This is the sliding-window behaviour: active collections stay alive.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "sessions",
+  "data": {
+    "sess_xyz": {
+      "userId": "u3",
+      "token": "def789"
+    }
+  }
+}
+
+### §7. Updating a document does NOT reset the expiry clock
+### /update mutates existing documents but does not count as "activity"
+### for TTL purposes -- the clock is unchanged after this call.
+POST http://localhost:1538/update
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "sessions",
+  "data": {
+    "sess_abc": { "token": "refreshed_token" }
+  }
+}
+
+### §8. Query with where -- _expiresAt is present on every result
+### All standard where operators work normally on TTL collections.
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "sessions",
+  "where": { "userId": { "$eq": "u1" } },
+  "fields": ["userId", "token"]
+}
+
+### §9. Check that the entire collection is gone after the TTL elapses
+### Wait for the TTL to pass, then run this -- expects 404 "No documents found".
+### The entire collection is dropped in one O(1) call, not document by document.
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "cache",
+  "keys": ["hot_item", "warm_item"]
+}
+
+### §10. Manual per-document expiry pattern (for OTPs, reset tokens, etc.)
+### MoltenDB TTL is collection-level and not suitable for per-document expiry.
+### For use cases like password resets or OTPs, store your own expiry timestamp
+### in the document and use POST /delete with a where clause to clean up.
+
+### §10a. Insert a document with a custom expiry timestamp (Unix ms)
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "password_resets",
+  "data": {
+    "token_abc": {
+      "userId": "u1",
+      "email": "user@example.com",
+      "expires_at": 1747240200000
+    }
+  }
+}
+
+### §10b. Clean up expired entries -- delete all docs where expires_at is in the past
+### Replace the value with Date.now() (Unix ms) from your client before sending.
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "password_resets",
+  "where": { "expires_at": { "$lt": 1747240200000 } }
+}

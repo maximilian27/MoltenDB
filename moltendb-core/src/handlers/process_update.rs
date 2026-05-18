@@ -23,9 +23,17 @@ pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize, ma
     if let Some(data_map) = payload.get("data").and_then(|v| v.as_object()) {
         let mut updated_count = 0;
         for (k, v) in data_map {
-            match db.update(col, k, v.clone()) {
+            let mut v = v.clone();
+            if let Some(obj) = v.as_object_mut() {
+                // _v is allowed as an optimistic-lock guard on update.
+                // All other _-prefixed fields are reserved and cannot be set by the client.
+                if obj.keys().any(|k| k.starts_with('_') && k != "_v") {
+                    return (400, json!({ "error": "Fields starting with '_' are reserved for internal use and cannot be set by the client.", "statusCode": 400 }));
+                }
+            }
+            match db.update(col, k, v) {
                 Ok(true)  => updated_count += 1,  // Document found and updated
-                Ok(false) => {},                   // Document not found — skip
+                Ok(false) => {},                   // Document not found -- skip
                 Err(engine::DbError::Conflict) => return (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
                 #[cfg(feature = "schema")]
                 Err(engine::DbError::SchemaValidationError(msg)) => return (400, json!({ "error": msg, "statusCode": 400 })),

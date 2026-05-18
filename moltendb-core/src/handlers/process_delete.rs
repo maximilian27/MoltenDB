@@ -1,19 +1,21 @@
 use serde_json::{Value, json};
 use crate::validation;
 use crate::engine;
+use crate::query;
 
 /// Handle a DELETE request.
 ///
-/// Three modes:
-///   - Single key:  { "collection": "users", "keys": "u1" }
-///   - Batch keys:  { "collection": "users", "keys": ["u1", "u2"] }
-///   - Drop all:    { "collection": "users", "drop": true }
+/// Four modes:
+///   - Single key:    { "collection": "users", "keys": "u1" }
+///   - Batch keys:    { "collection": "users", "keys": ["u1", "u2"] }
+///   - WHERE filter:  { "collection": "users", "where": { "role": { "$eq": "guest" } } }
+///   - Drop all:      { "collection": "users", "drop": true }
 pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
-    // Only "collection", "keys", and "drop" are valid for a delete request.
-    const DELETE_ALLOWED: &[&str] = &["collection", "keys", "drop"];
+    // Only "collection", "keys", "where", "count", and "drop" are valid for a delete request.
+    const DELETE_ALLOWED: &[&str] = &["collection", "keys", "where", "count", "drop"];
     if let Err(e) = validation::validate_allowed_properties(payload, DELETE_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
@@ -25,6 +27,25 @@ pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize, ma
         return match db.delete_collection(col) {
             Ok(_)  => (200, json!({ "status": "ok", "dropped": true })),
             Err(e) => (500, json!({ "error": "Failed to drop collection", "details": e.to_string(), "statusCode": 500 }))
+        };
+    }
+
+    // WHERE-based bulk delete — scan with predicate, delete all matches.
+    if let Some(clause) = payload.get("where").cloned() {
+        const DEFAULT_COUNT: usize = 100;
+        const MAX_COUNT: usize = 1_000;
+        if let Some(n) = payload.get("count").and_then(|c| c.as_u64()) {
+            if n as usize > MAX_COUNT {
+                return (400, json!({ "error": format!("'count' cannot exceed {MAX_COUNT}"), "statusCode": 400 }));
+            }
+        }
+        let count_limit = Some(payload.get("count")
+            .and_then(|c| c.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(DEFAULT_COUNT));
+        return match db.delete_filtered(col, move |doc| query::evaluate_where(doc, &clause).unwrap_or(false), count_limit) {
+            Ok(count) => (200, json!({ "status": "ok", "deleted": count })),
+            Err(e)    => (500, json!({ "error": "Failed to delete", "details": e.to_string(), "statusCode": 500 }))
         };
     }
 
@@ -49,7 +70,7 @@ pub fn process_delete(db: &engine::Db, payload: &Value, max_body_size: usize, ma
                 Err(e) => (500, json!({ "error": "Failed to delete batch", "details": e.to_string(), "statusCode": 500 }))
             }
         },
-        // Neither keys nor drop:true — invalid request.
-        _ => (400, json!({ "error": "Missing 'keys' (string or array) or 'drop': true", "statusCode": 400 }))
+        // Neither keys, where, nor drop:true — invalid request.
+        _ => (400, json!({ "error": "Missing 'keys' (string or array), 'where', or 'drop': true", "statusCode": 400 }))
     }
 }
