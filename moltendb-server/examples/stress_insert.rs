@@ -12,8 +12,16 @@
 ///
 /// Run `cargo run --example generate_stress_data` first to produce
 /// `tests/stress_data.json`.
+///
+/// Edit the TTL constant below to register a collection-level TTL before inserting.
+/// Set it to None to skip TTL registration.
+
 use serde_json::Value;
 use std::time::Instant;
+
+/// TTL in seconds to register on the collection before inserting.
+/// Set to None to insert without a TTL.
+const TTL: Option<u64> = Some(120);
 
 fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -95,6 +103,29 @@ fn main() {
         "Inserting {} docs in {} safe chunks (max {} docs/req) …",
         total_docs, total_batches, chunk_size
     );
+
+    // -- Register TTL on the collection before inserting (if requested).
+    if let Some(secs) = TTL {
+        // Derive the collection name from the first batch.
+        let col = safe_batches
+            .first()
+            .and_then(|b| b["collection"].as_str())
+            .unwrap_or("stress");
+        println!("Registering TTL of {}s on collection '{}'…", secs, col);
+        let resp: Value = client
+            .post(format!("{}/schema", base_url))
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({ "collection": col, "ttl": secs }))
+            .send()
+            .expect("schema/ttl request")
+            .json()
+            .expect("schema/ttl response JSON");
+        if resp["error"].is_null() {
+            println!("TTL registered OK.");
+        } else {
+            eprintln!("TTL registration warning: {}", resp);
+        }
+    }
 
     // ── 3. Insert batches ─────────────────────────────────────────────────────
     let overall = Instant::now();

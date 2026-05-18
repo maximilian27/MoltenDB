@@ -25,13 +25,14 @@ use moltendb_auth as auth; // JWT authentication, user store, auth middleware
 mod rate_limit;       // Per-IP sliding-window rate limiter
 mod route_handlers;   // HTTP route handlers (one per API endpoint)
 mod server;           // TLS config loading and graceful shutdown signal
+mod ttl_sweep;        // Background TTL eviction sweep (event-driven min-heap)
 mod ws;               // WebSocket upgrade handler and per-connection logic
 
 // Re-export handlers into scope for use in the router below.
 use route_handlers::{
     handle_delegate, handle_delete, handle_get, handle_health, handle_login, handle_metrics,
     handle_rest_get, handle_rest_get_collection, handle_revoke, handle_set, handle_snapshot,
-    handle_update,
+    handle_stats_get, handle_stats_post, handle_update,
 };
 use ws::ws_handler;
 
@@ -456,6 +457,11 @@ async fn main() {
     let rate_limiter = rate_limit::RateLimiter::new(rate_limit_requests as usize, rate_limit_window);
     info!("🚦 Rate limiting: {} requests per {} seconds", rate_limit_requests, rate_limit_window);
 
+    // Spawn the background TTL eviction sweep task.
+    // Uses an event-driven min-heap — sleeps until the next expiry, zero CPU when idle.
+    ttl_sweep::spawn(db.clone());
+    info!("🕐 TTL eviction sweep started");
+
     // Spawn a background task to periodically clean up stale rate-limit entries.
     // Without this, the rate limiter's DashMap would grow forever as new IPs connect.
     let cleanup_limiter = rate_limiter.clone();
@@ -478,6 +484,7 @@ async fn main() {
         .route("/delete", post(handle_delete))     // Delete documents or drop collection
         .route("/snapshot", post(handle_snapshot))   // Take a snapshot on demand
         .route("/get", post(handle_get))           // Query documents (with WHERE, fields, joins, etc.)
+        .route("/stats", post(handle_stats_post).get(handle_stats_get)) // Collection stats
         .route("/collections/{collection}", get(handle_rest_get_collection))       // GET all docs (paginated)
         .route("/collections/{collection}/docs/{key}", get(handle_rest_get))       // GET single doc
         .route("/auth/delegate", post(handle_delegate))                            // Mint scoped tokens (admin only)

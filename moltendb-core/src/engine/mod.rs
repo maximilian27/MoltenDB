@@ -28,6 +28,7 @@ mod config;     // DbConfig struct
 #[cfg(feature = "schema")]
 mod schema;     // JSON Schema validation
 mod operations; // get, get_all, insert, update, delete, etc.
+pub use operations::ttl;
 mod open;       // Db::open() — native constructor
 mod open_wasm;  // Db::open_wasm() — WASM constructor
 
@@ -46,7 +47,7 @@ use serde_json::Value;
 #[allow(unused_imports)]
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
 /// The central database handle. Cheap to clone — all clones share the same state.
@@ -89,6 +90,27 @@ pub struct Db {
     /// Key: collection name → Value: (Original JSON, Compiled Validator).
     #[cfg(feature = "schema")]
     pub schemas: Arc<DashMap<String, Arc<(Value, jsonschema::Validator)>>>,
+
+    /// Per-collection TTL defaults in seconds.
+    /// When a TTL is registered for a collection, every insert batch resets
+    /// the collection's absolute expiry to `now + ttl_secs`.
+    pub ttl_defaults: Arc<DashMap<String, u64>>,
+
+    /// Per-collection absolute expiry timestamps (Unix ms).
+    /// Set to `now_ms() + ttl_secs` at the end of every insert batch.
+    /// Checked once per GET request (not per document) for O(1) expiry.
+    /// `_expiresAt` is a virtual field derived from this map -- never stored in docs.
+    pub ttl_expiry: Arc<DashMap<String, u64>>,
+
+    /// Per-collection monotonic sequence counters.
+    /// Each document inserted into a collection gets a unique, strictly-increasing
+    /// `_seq` value. Used for FIFO eviction when `maxSize` is set.
+    pub seq_counters: Arc<DashMap<String, AtomicU64>>,
+
+    /// Per-collection maximum document count.
+    /// When a collection exceeds this limit after an insert batch, the oldest
+    /// documents (lowest `_seq`) are evicted to bring it back to `maxSize`.
+    pub max_sizes: Arc<DashMap<String, usize>>,
 
     /// Optional shell command to execute after a successful backup.
     /// Supports the {SNAPSHOT_PATH} placeholder.
@@ -166,6 +188,8 @@ impl Db {
 
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
+    /// If the collection has a TTL default, the collection expiry is reset
+    /// to `now + ttl_secs` after the batch commits.
     pub fn insert(&self, collection: &str, items: Vec<(String, Value)>) -> Result<(), DbError> {
         if self.io_fault.load(Ordering::Relaxed) {
             return Err(DbError::StorageFault(
@@ -177,9 +201,31 @@ impl Db {
             storage: &self.storage,
             tx: &self.tx,
             #[cfg(feature = "schema")] schemas: &self.schemas,
+            seq_counters: &self.seq_counters,
             collection,
             items,
         })?;
+        // Evict oldest documents if the collection exceeds maxSize.
+        if let Some(max) = self.max_sizes.get(collection).map(|v| *v) {
+            let current = self.state.get(collection).map(|m| m.len()).unwrap_or(0);
+            if current > max {
+                let overflow = current - max;
+                operations::evict_oldest(&self.state, &self.storage, &self.tx, collection, overflow);
+            }
+        }
+        // Reset collection expiry AFTER the batch commits -- TTL clock starts
+        // when the last write of the batch finishes, not when the schema was set.
+        if let Some(secs) = self.ttl_defaults.get(collection).map(|v| *v) {
+            let expires_at = operations::ttl::now_ms() + secs * 1_000;
+            self.ttl_expiry.insert(collection.to_string(), expires_at);
+            // Broadcast the new expiry so the sweep task can update its heap.
+            let event = serde_json::json!({
+                "event": "ttl_expiry",
+                "collection": collection,
+                "expires_at_ms": expires_at
+            });
+            let _ = self.tx.send(event.to_string());
+        }
         Ok(())
     }
 
@@ -202,6 +248,23 @@ impl Db {
         })?;
 
         Ok(updated)
+    }
+
+    /// Scan a collection with a predicate and delete all matching documents.
+    /// Mirrors `get_filtered` on the read side. If `count_limit` is `Some(n)`, at most `n`
+    /// documents are deleted. Returns the number of documents deleted.
+    pub fn delete_filtered(
+        &self,
+        collection: &str,
+        predicate: impl Fn(&Value) -> bool + Sync,
+        count_limit: Option<usize>,
+    ) -> Result<usize, DbError> {
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
+        operations::delete_filtered(&self.state, &self.storage, &self.tx, collection, predicate, count_limit)
     }
 
     /// Delete one or more documents by key. Pass a single key to delete one document.
@@ -228,6 +291,56 @@ impl Db {
             &self.tx,
             collection,
         )
+    }
+
+    /// Returns the next sequence number for a collection (atomic fetch-and-add).
+    pub fn next_seq(&self, collection: &str) -> u64 {
+        self.seq_counters
+            .entry(collection.to_string())
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Set the maximum document count for a collection.
+    pub fn set_max_size(&self, collection: &str, max: usize) {
+        self.max_sizes.insert(collection.to_string(), max);
+    }
+
+    /// Returns the names of all collections currently in the state.
+    pub fn state_collections(&self) -> Vec<Arc<str>> {
+        self.state.iter().map(|r| r.key().clone()).collect()
+    }
+
+    /// Returns the number of documents in a collection, or `None` if it doesn't exist.
+    pub fn collection_count(&self, collection: &str) -> Option<usize> {
+        self.state.get(collection).map(|m| m.len())
+    }
+
+    /// Returns a map of collection name -> document count for all collections.
+    pub fn all_collection_counts(&self) -> Vec<(String, usize)> {
+        self.state.iter().map(|r| (r.key().to_string(), r.value().len())).collect()
+    }
+
+    /// Returns all (collection, expires_at_ms) pairs from the TTL expiry map.
+    /// Used by the TTL sweep task on startup to pre-populate its heap.
+    pub fn all_ttl_expiries(&self) -> Vec<(String, u64)> {
+        self.ttl_expiry.iter().map(|r| (r.key().clone(), *r.value())).collect()
+    }
+
+    /// Returns the absolute expiry timestamp (Unix ms) for a collection, if any.
+    pub fn get_ttl_expiry(&self, collection: &str) -> Option<u64> {
+        self.ttl_expiry.get(collection).map(|v| *v)
+    }
+
+    /// Set a default TTL (in seconds) for a collection.
+    /// Pass `0` to remove the TTL for the collection.
+    pub fn set_ttl_default(&self, collection: &str, ttl_secs: u64) {
+        if ttl_secs == 0 {
+            self.ttl_defaults.remove(collection);
+            self.ttl_expiry.remove(collection);
+        } else {
+            self.ttl_defaults.insert(collection.to_string(), ttl_secs);
+        }
     }
 
     /// Register a JSON schema for a collection.

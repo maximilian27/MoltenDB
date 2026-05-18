@@ -18,7 +18,7 @@ Content-Type: application/json
   "password": "admin123"
 }
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3ODY2NTU5OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjhhNTQ3ZmVmLTE1YzEtNGZjMy05ODUwLTJjYThiYWMxODg5NSJ9.pKudQ3ZuxD4g02egE99A9bv5DQnzVk88SjKhTBCLlDw
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTIwMTU5Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjJmMDg1YmYzLTIwYWItNGEwMi1hMDA1LWI1M2Q0Njc2NTk1MyJ9.YjVujD4kND4QE9H6XPjP6xGDn1Y5t3YlfBr9nojZ6S4
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document
@@ -28,7 +28,7 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "stress",
-  "keys": "stress_000000"
+  "keys": "stress_000060"
 }
 
 ### §1b. Fetch a mid-range document
@@ -92,7 +92,7 @@ Authorization: Bearer {{token}}
 {
   "collection": "stress",
   "keys": ["stress_000000", "stress_000001"],
-  "excluded_fields": ["price", "tags"]
+  "excludedFields": ["price", "tags"]
 }
 
 ### ─── §3. WHERE — simple filters ─────────────────────────────────────────────
@@ -352,7 +352,7 @@ Authorization: Bearer {{token}}
   "collection": "stress",
   "fields": ["brand", "model", "price"],
   "sort": [{ "field": "price", "order": "asc" }],
-  "count": 10
+  "count": 1000
 }
 
 ### §6b. Page 2 of cheapest items (skip 10, take 10)
