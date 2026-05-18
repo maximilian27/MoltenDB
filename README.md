@@ -83,7 +83,7 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "1.0.0-rc2"
+moltendb-core = "1.0.0-rc3"
 ```
 
 ```rust
@@ -246,7 +246,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc2"
+moltendb-core = "1.0.0-rc3"
 ```
 
 ### Download Pre-built Binaries
