@@ -230,6 +230,13 @@ impl Db {
         if let Some(secs) = self.ttl_defaults.get(collection).map(|v| *v) {
             let expires_at = operations::ttl::now_ms() + secs * 1_000;
             self.ttl_expiry.insert(collection.to_string(), expires_at);
+            // Persist the expiry to the WAL so it survives restarts.
+            let _ = self.storage.write_entry(&crate::engine::types::LogEntry::new(
+                "TTL_EXPIRY".to_string(),
+                collection.to_string(),
+                expires_at.to_string(),
+                serde_json::Value::Null,
+            ));
             // Broadcast the new expiry so the sweep task can update its heap.
             let event = serde_json::json!({
                 "event": "ttl_expiry",

@@ -68,6 +68,7 @@ impl Db {
                 &*wrapped,
                 &state,
                 #[cfg(feature = "schema")] &schemas,
+                &ttl_expiry,
             )?;
 
             wrapped
