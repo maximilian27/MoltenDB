@@ -1661,6 +1661,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "regex",
+ "rmp",
  "rmp-serde",
  "serde",
  "serde_json",

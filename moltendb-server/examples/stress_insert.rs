@@ -21,7 +21,7 @@ use std::time::Instant;
 
 /// TTL in seconds to register on the collection before inserting.
 /// Set to None to insert without a TTL.
-const TTL: Option<u64> = Some(120);
+const TTL: Option<u64> = None;
 
 fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())

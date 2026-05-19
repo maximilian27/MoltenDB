@@ -26,10 +26,37 @@ pub fn fetch_documents(
             // Full scan -- apply WHERE early when there are no joins (avoids materialising filtered-out docs).
             if let Some(clause) = where_clause {
                 if !has_joins {
+                    // Extract simple $eq condition for binary evaluation
+                    let mut simple_match = None;
+                    if let Some(obj) = clause.as_object() {
+                        if obj.len() == 1 {
+                            let (k, v) = obj.iter().next().unwrap();
+                            if !k.starts_with('$') {
+                                if let Some(v_str) = v.as_str() {
+                                    simple_match = Some((k.clone(), v_str.to_string()));
+                                }
+                            }
+                        }
+                    }
+
                     let clause = clause.clone();
                     return db.get_filtered(
                         col_name,
-                        move |doc| query::evaluate_where(doc, &clause).unwrap_or(false),
+                        move |doc_bytes| {
+                            if let Some((ref k, ref v)) = simple_match {
+                                if query::evaluate_binary_predicate(doc_bytes, k, v) {
+                                    return true;
+                                }
+                                return false;
+                            }
+                            
+                            // fallback
+                            let doc: Value = match rmp_serde::from_slice(doc_bytes) {
+                                Ok(d) => d,
+                                Err(_) => return false,
+                            };
+                            query::evaluate_where(&doc, &clause).unwrap_or(false)
+                        },
                         0,
                         Some(offset + count_limit),
                     );

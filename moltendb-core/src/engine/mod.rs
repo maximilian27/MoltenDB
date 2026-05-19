@@ -160,7 +160,7 @@ impl Db {
     pub fn get_filtered(
         &self,
         collection: &str,
-        predicate: impl Fn(&Value) -> bool + Sync,
+        predicate: impl Fn(&[u8]) -> bool + Sync + Send,
         offset: usize,
         limit: Option<usize>,
     ) -> HashMap<String, Value> {

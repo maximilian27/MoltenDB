@@ -54,7 +54,7 @@ pub fn get_filtered(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
     collection: &str,
-    predicate: impl Fn(&Value) -> bool + Sync,
+    predicate: impl Fn(&[u8]) -> bool + Sync + Send,
     offset: usize,
     limit: Option<usize>,
 ) -> HashMap<String, Value> {
@@ -64,8 +64,8 @@ pub fn get_filtered(
             Some(col) => col
                 .par_iter()
                 .filter_map(|entry| {
-                    let v = decode(entry.value())?;
-                    if predicate(&v) {
+                    if predicate(entry.value()) {
+                        let v = decode(entry.value())?;
                         Some((entry.key().clone(), v))
                     } else {
                         None
@@ -92,11 +92,11 @@ pub fn get_filtered(
         let mut skipped = 0usize;
         if let Some(col) = state.get(collection) {
             for entry in col.iter() {
+                if !predicate(entry.value()) { continue; }
                 let v = match decode(entry.value()) {
                     Some(v) => v,
                     None => continue,
                 };
-                if !predicate(&v) { continue; }
                 if skipped < offset { skipped += 1; continue; }
                 results.insert(entry.key().clone(), v);
                 if let Some(lim) = limit && results.len() >= lim {
