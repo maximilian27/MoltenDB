@@ -196,6 +196,18 @@ impl Db {
                 "Background disk I/O failed. System is in read-only mode.".into(),
             ));
         }
+        // If the collection has expired, physically evict all its documents before
+        // inserting. Without this, re-inserted documents inherit the old _v counter
+        // (e.g. _v:2 instead of _v:1) because insert.rs finds the stale docs in memory.
+        // We also write a DROP entry to the WAL so the eviction is durable — without
+        // this, a restart before compaction would replay the old INSERT entries and
+        // restore the stale documents, causing the same _v counter bug after reload.
+        if let Some(exp) = self.ttl_expiry.get(collection).map(|v| *v) {
+            if operations::ttl::collection_is_expired(exp, operations::ttl::now_ms()) {
+                let _ = operations::delete_collection(&self.state, &self.storage, &self.tx, collection);
+                self.ttl_expiry.remove(collection);
+            }
+        }
         operations::insert(operations::InsertParams {
             state: &self.state,
             storage: &self.storage,

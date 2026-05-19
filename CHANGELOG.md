@@ -1,3 +1,12 @@
+# [1.0.0-rc4] (May 19, 2026)
+
+### Bug Fixes
+* **WASM: `time not implemented on this platform` panic** -- replaced `std::time::SystemTime` with `web_time::SystemTime` in `engine/operations/ttl.rs` and `engine/storage/disk/snapshot.rs`. Both files were using the standard library time API which panics unconditionally on `wasm32` targets. `web_time` was already a dependency of `moltendb-core`.
+* **TTL expiry: re-inserted documents incorrectly received `_v: 2` instead of `_v: 1`** -- TTL expiry used lazy eviction (documents hidden on read but never removed from the `DashMap`). When the same keys were re-inserted after expiry, `insert.rs` found the stale documents in memory and incremented their `_v` counter. Fixed in `db.insert()` (`engine/mod.rs`): before calling `operations::insert`, the engine now checks whether the target collection has expired and, if so, physically evicts it via `operations::delete_collection()`.
+* **TTL eviction is now durable across restarts** -- the previous fix cleared expired documents from memory but left the old `INSERT` entries in the WAL. A process restart before compaction would replay those entries and restore the stale documents, causing the `_v` counter bug to reappear. The eviction now calls `operations::delete_collection()` which writes a `TX_BEGIN → DROP → TX_COMMIT` sequence to the WAL before removing the collection from memory, so the eviction survives WAL replay.
+
+---
+
 # [1.0.0-rc3] (May 12, 2026)
 
 ### Breaking Changes
