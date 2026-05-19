@@ -164,46 +164,49 @@ impl OpfsStorage {
 /// Implement the StorageBackend trait for OPFS-based storage.
 impl StorageBackend for OpfsStorage {
     fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
-        // Read all file data while holding the mutex, then release the lock
-        // before invoking the callback. This prevents a recursive mutex deadlock:
-        // the callback (apply_entry) would acquire the same mutex, causing a panic.
-        let data = {
+        let size = {
             let handle = self.handle.lock().expect("db handle mutex poisoned");
-
-            // Get the file size to know how many bytes to read.
-            let size = handle.get_size().map_err(|_| DbError::WriteError)? as usize;
-
-            // If the file is empty (first run), return early before allocating.
-            if size == 0 { return Ok(0); }
-
-            // Allocate a buffer exactly the size of the file.
-            let mut buf = vec![0u8; size];
-
-            // Set the read position to the beginning of the file.
-            let opts = web_sys::FileSystemReadWriteOptions::new();
-            opts.set_at(0.0);
-
-            // Read the entire file into the buffer in one call.
-            handle
-                .read_with_u8_array_and_options(&mut buf, &opts)
-                .map_err(|_| DbError::WriteError)?;
-
-            buf
-            // Mutex guard is dropped here — lock released before calling f().
+            handle.get_size().map_err(|_| DbError::WriteError)? as usize
         };
+        if size == 0 { return Ok(0); }
 
-        // Convert bytes to a string. from_utf8_lossy replaces invalid UTF-8
-        // sequences with the replacement character instead of returning an error.
-        let data_str = String::from_utf8_lossy(&data);
-
+        let chunk_size = 64 * 1024; // 64KB
+        let mut offset = 0;
         let mut count = 0u64;
-        for line in data_str.lines() {
-            let length = line.len() as u32;
-            if let Ok(entry) = serde_json::from_str::<LogEntry>(line) {
-                if let ControlFlow::Break(_) = f(entry, length) {
+        let mut remaining = Vec::new();
+
+        while offset < size {
+            let to_read = (size - offset).min(chunk_size);
+            let mut chunk = vec![0u8; to_read];
+            {
+                let handle = self.handle.lock().expect("db handle mutex poisoned");
+                let opts = web_sys::FileSystemReadWriteOptions::new();
+                opts.set_at(offset as f64);
+                handle.read_with_u8_array_and_options(&mut chunk, &opts).map_err(|_| DbError::WriteError)?;
+            }
+            offset += to_read;
+            remaining.extend_from_slice(&chunk);
+
+            while remaining.len() >= 4 {
+                let mut len_bytes = [0u8; 4];
+                len_bytes.copy_from_slice(&remaining[0..4]);
+                let msg_len = u32::from_le_bytes(len_bytes) as usize;
+
+                if remaining.len() < 4 + msg_len {
+                    // Need more data for this message
                     break;
                 }
-                count += 1;
+
+                let entry_data = &remaining[4..4 + msg_len];
+                if let Ok(entry) = rmp_serde::from_slice::<LogEntry>(entry_data) {
+                    if let ControlFlow::Break(_) = f(entry, msg_len as u32) {
+                        return Ok(count); // Break out completely
+                    }
+                    count += 1;
+                }
+
+                // Remove the processed message from the buffer
+                remaining.drain(0..4 + msg_len);
             }
         }
         Ok(count)
@@ -215,9 +218,10 @@ impl StorageBackend for OpfsStorage {
     /// are written at the current end of the file (append semantics).
     /// flush() is called after every write to ensure the data is durable.
     fn write_entry(&self, entry: &LogEntry) -> Result<(), DbError> {
-        // Serialize the entry to a JSON string and append a newline.
-        let mut json_line = serde_json::to_string(entry)?;
-        json_line.push('\n');
+        // Serialize the entry to MessagePack and prefix with length.
+        let mut encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let mut bytes = (encoded.len() as u32).to_le_bytes().to_vec();
+        bytes.append(&mut encoded);
 
         // Acquire the Mutex to get exclusive access to the file handle.
         let handle = self.handle.lock().expect("db handle mutex poisoned");
@@ -230,8 +234,6 @@ impl StorageBackend for OpfsStorage {
         let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(size);
 
-        // Convert the string to bytes and write them.
-        let mut bytes = json_line.into_bytes();
         handle
             .write_with_u8_array_and_options(&mut bytes, &opts)
             .map_err(|_| DbError::WriteError)?;
@@ -251,34 +253,12 @@ impl StorageBackend for OpfsStorage {
     /// and split by newlines. Each line is parsed as a JSON LogEntry.
     /// Lines that fail to parse are silently skipped.
     fn read_log(&self) -> Result<Vec<LogEntry>, DbError> {
-        let handle = self.handle.lock().expect("db handle mutex poisoned");
-
-        // Get the file size to know how many bytes to read.
-        let size = handle.get_size().map_err(|_| DbError::WriteError)? as usize;
-
-        // If the file is empty (first run), return an empty Vec immediately.
-        if size == 0 { return Ok(Vec::new()); }
-
-        // Allocate a buffer exactly the size of the file.
-        let mut buf = vec![0u8; size];
-
-        // Set the read position to the beginning of the file.
-        let opts = web_sys::FileSystemReadWriteOptions::new();
-        opts.set_at(0.0);
-
-        // Read the entire file into the buffer in one call.
-        handle
-            .read_with_u8_array_and_options(&mut buf, &opts)
-            .map_err(|_| DbError::WriteError)?;
-
-        // Convert bytes to a string. from_utf8_lossy replaces invalid UTF-8
-        // sequences with the replacement character instead of returning an error.
-        let data_str = String::from_utf8_lossy(&buf);
-
-        // Split by newlines, parse each line as JSON, skip failures.
-        Ok(data_str.lines()
-            .filter_map(|line| serde_json::from_str::<LogEntry>(line).ok())
-            .collect())
+        let mut entries = Vec::new();
+        self.stream_log_into(&mut |entry, _| {
+            entries.push(entry);
+            ControlFlow::Continue(())
+        })?;
+        Ok(entries)
     }
 
     /// Truncate the OPFS file to 0 bytes and close the sync handle.
@@ -305,20 +285,22 @@ impl OpfsStorage {
         // truncate_with_f64(0.0) sets the file size to 0.
         handle.truncate_with_f64(0.0).map_err(|_| DbError::WriteError)?;
 
-        // Build the new file content: one JSON line per entry.
-        let mut all_data = String::new();
+        // Build the new file content: length-prefixed MessagePack.
+        let mut all_bytes = Vec::new();
         for entry in entries {
-            all_data.push_str(&serde_json::to_string(&entry)?);
-            all_data.push('\n');
+            if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
+                let mut len_bytes = (encoded.len() as u32).to_le_bytes().to_vec();
+                all_bytes.append(&mut len_bytes);
+                all_bytes.append(&mut encoded);
+            }
         }
 
         // Write all the compacted entries starting at byte 0.
-        let mut bytes = all_data.into_bytes();
         let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(0.0);
 
         handle
-            .write_with_u8_array_and_options(&mut bytes, &opts)
+            .write_with_u8_array_and_options(&mut all_bytes, &opts)
             .map_err(|_| DbError::WriteError)?;
 
         // Flush to ensure the compacted data is persisted.
