@@ -268,42 +268,141 @@ impl StorageBackend for OpfsStorage {
         self.truncate_and_close()
     }
 
+    #[cfg(not(feature = "schema"))]
+    fn compact_from_maps(
+        &self,
+        state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
+        _hook: Option<String>,
+    ) -> Result<(), DbError> {
+        self.do_compact(state)
+    }
 
+    #[cfg(feature = "schema")]
+    fn compact_from_maps(
+        &self,
+        state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
+        schemas: &dashmap::DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
+        _hook: Option<String>,
+    ) -> Result<(), DbError> {
+        self.do_compact(state, Some(schemas))
+    }
 }
 
 impl OpfsStorage {
     /// Compact the OPFS file by truncating it and rewriting only current state.
-    ///
-    /// Unlike the native disk backend, we don't need a temp file + rename here
-    /// because the OPFS handle is exclusive to this worker — no other process
-    /// can be reading or writing the file concurrently.
-    #[allow(dead_code)]
-    pub fn compact(&self, entries: Vec<LogEntry>) -> Result<(), DbError> {
+    /// Uses chunked writes to avoid memory spikes (OOM).
+    #[cfg(not(feature = "schema"))]
+    fn do_compact(
+        &self,
+        state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
+    ) -> Result<(), DbError> {
         let handle = self.handle.lock().expect("db handle mutex poisoned");
 
-        // Truncate the file to 0 bytes — this erases all existing content.
-        // truncate_with_f64(0.0) sets the file size to 0.
+        // Truncate the file to 0 bytes — erases existing content.
         handle.truncate_with_f64(0.0).map_err(|_| DbError::WriteError)?;
 
-        // Build the new file content: length-prefixed MessagePack.
-        let mut all_bytes = Vec::new();
-        for entry in entries {
-            if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
-                let mut len_bytes = (encoded.len() as u32).to_le_bytes().to_vec();
-                all_bytes.append(&mut len_bytes);
-                all_bytes.append(&mut encoded);
+        let mut offset = 0.0;
+        let mut buffer = Vec::new();
+        let chunk_size = 64 * 1024; // 64KB
+
+        let mut write_buffer = |buf: &mut Vec<u8>| -> Result<(), DbError> {
+            if buf.is_empty() { return Ok(()); }
+            let opts = web_sys::FileSystemReadWriteOptions::new();
+            opts.set_at(offset);
+            handle.write_with_u8_array_and_options(buf, &opts).map_err(|_| DbError::WriteError)?;
+            offset += buf.len() as f64;
+            buf.clear();
+            Ok(())
+        };
+
+        // Write documents
+        for col_ref in state.iter() {
+            let col_name = col_ref.key().clone();
+            for item_ref in col_ref.value().iter() {
+                if let Ok(value) = rmp_serde::from_slice::<serde_json::Value>(item_ref.value()) {
+                    let entry = LogEntry::new("INSERT".to_string(), col_name.to_string(), item_ref.key().clone(), value);
+                    if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
+                        buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+                        buffer.append(&mut encoded);
+                        
+                        if buffer.len() >= chunk_size {
+                            write_buffer(&mut buffer)?;
+                        }
+                    }
+                }
             }
         }
 
-        // Write all the compacted entries starting at byte 0.
-        let opts = web_sys::FileSystemReadWriteOptions::new();
-        opts.set_at(0.0);
+        // Flush remaining buffer
+        write_buffer(&mut buffer)?;
 
-        handle
-            .write_with_u8_array_and_options(&mut all_bytes, &opts)
-            .map_err(|_| DbError::WriteError)?;
+        handle.flush().map_err(|_| DbError::WriteError)?;
+        Ok(())
+    }
 
-        // Flush to ensure the compacted data is persisted.
+    #[cfg(feature = "schema")]
+    fn do_compact(
+        &self,
+        state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
+        schemas: Option<&dashmap::DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>>,
+    ) -> Result<(), DbError> {
+        let handle = self.handle.lock().expect("db handle mutex poisoned");
+
+        // Truncate the file to 0 bytes — erases existing content.
+        handle.truncate_with_f64(0.0).map_err(|_| DbError::WriteError)?;
+
+        let mut offset = 0.0;
+        let mut buffer = Vec::new();
+        let chunk_size = 64 * 1024; // 64KB
+
+        let mut write_buffer = |buf: &mut Vec<u8>| -> Result<(), DbError> {
+            if buf.is_empty() { return Ok(()); }
+            let opts = web_sys::FileSystemReadWriteOptions::new();
+            opts.set_at(offset);
+            handle.write_with_u8_array_and_options(buf, &opts).map_err(|_| DbError::WriteError)?;
+            offset += buf.len() as f64;
+            buf.clear();
+            Ok(())
+        };
+
+        // Write documents
+        for col_ref in state.iter() {
+            let col_name = col_ref.key().clone();
+            for item_ref in col_ref.value().iter() {
+                if let Ok(value) = rmp_serde::from_slice::<serde_json::Value>(item_ref.value()) {
+                    let entry = LogEntry::new("INSERT".to_string(), col_name.to_string(), item_ref.key().clone(), value);
+                    if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
+                        buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+                        buffer.append(&mut encoded);
+                        
+                        if buffer.len() >= chunk_size {
+                            write_buffer(&mut buffer)?;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Write schemas if provided
+        if let Some(schemas_map) = schemas {
+            for schema_ref in schemas_map.iter() {
+                let schema_val = schema_ref.value();
+                let schema_json = &schema_val.0;
+                let entry = LogEntry::new("SCHEMA".to_string(), schema_ref.key().to_string(), "".to_string(), schema_json.clone());
+                if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
+                    buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+                    buffer.append(&mut encoded);
+                    
+                    if buffer.len() >= chunk_size {
+                        write_buffer(&mut buffer)?;
+                    }
+                }
+            }
+        }
+
+        // Flush remaining buffer
+        write_buffer(&mut buffer)?;
+
         handle.flush().map_err(|_| DbError::WriteError)?;
         Ok(())
     }
