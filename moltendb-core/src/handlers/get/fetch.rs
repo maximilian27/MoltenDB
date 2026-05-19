@@ -1,5 +1,4 @@
 use serde_json::Value;
-use std::collections::HashMap;
 use crate::{engine, query};
 
 /// Fetch raw documents from the engine based on the request payload.
@@ -15,12 +14,28 @@ pub fn fetch_documents(
     has_joins: bool,
     offset: usize,
     count_limit: usize,
-) -> HashMap<String, Value> {
+    _allowed_prefixes: Option<&[String]>,
+) -> Vec<(String, Value)> {
     match payload.get("keys") {
-        Some(Value::String(k)) => db.get(col_name, vec![k.clone()]),
+        Some(Value::String(k)) => {
+            if let Some(prefixes) = _allowed_prefixes {
+                if !prefixes.iter().any(|p| k.starts_with(p)) {
+                    return Vec::new();
+                }
+            }
+            db.get(col_name, vec![k.clone()]).into_iter().collect()
+        }
         Some(Value::Array(arr)) => {
-            let ks = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
-            db.get(col_name, ks)
+            let ks = arr.iter().filter_map(|v| {
+                let s = v.as_str()?;
+                if let Some(prefixes) = _allowed_prefixes {
+                    if !prefixes.iter().any(|p| s.starts_with(p)) {
+                        return None;
+                    }
+                }
+                Some(s.to_string())
+            }).collect();
+            db.get(col_name, ks).into_iter().collect()
         }
         _ => {
             // Full scan -- apply WHERE early when there are no joins (avoids materialising filtered-out docs).
@@ -40,9 +55,15 @@ pub fn fetch_documents(
                     }
 
                     let clause = clause.clone();
+                    let prefixes = _allowed_prefixes.map(|p| p.to_vec());
                     return db.get_filtered(
                         col_name,
-                        move |doc_bytes| {
+                        move |key, doc_bytes| {
+                            if let Some(ref pfxs) = prefixes {
+                                if !pfxs.iter().any(|p| key.starts_with(p)) {
+                                    return false;
+                                }
+                            }
                             if let Some((ref k, ref v)) = simple_match {
                                 if query::evaluate_binary_predicate(doc_bytes, k, v) {
                                     return true;
@@ -62,7 +83,21 @@ pub fn fetch_documents(
                     );
                 }
             }
-            db.get_all(col_name)
+            
+            // Apply prefix gating even for get_all, or use get_all with offset/limit
+            if let Some(prefixes) = _allowed_prefixes {
+                let pfxs = prefixes.to_vec();
+                return db.get_filtered(
+                    col_name,
+                    move |key, _| {
+                        pfxs.iter().any(|p| key.starts_with(p))
+                    },
+                    offset,
+                    Some(count_limit), // we want exactly up to count_limit after offset
+                ); // wait, if we use get_filtered we need to fetch offset + count_limit in get_filtered because offset skips there.
+            }
+            
+            db.get_all(col_name, offset, Some(count_limit))
         }
     }
 }

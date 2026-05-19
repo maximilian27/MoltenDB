@@ -146,25 +146,25 @@ impl Db {
         operations::get(&self.state, &self.storage, collection, keys)
     }
 
-    /// Retrieve all documents in a collection as a HashMap.
-    pub fn get_all(&self, collection: &str) -> HashMap<String, Value> {
-        operations::get_all(&self.state, &self.storage, collection)
+    /// Retrieve all documents in a collection.
+    pub fn get_all(&self, collection: &str, offset: usize, count: Option<usize>) -> Vec<(String, Value)> {
+        operations::get_all(&self.state, &self.storage, collection, offset, count)
     }
 
     /// Lazily scan a collection, returning only documents that match `predicate`.
     ///
     /// Avoids the full O(n) clone that `get_all` does — only matching documents
-    /// are cloned. `offset` and `limit` are applied during iteration so the
+    /// are cloned. `offset` and `count` are applied during iteration so the
     /// scan can stop early. Used for WHERE queries on large collections when
     /// no index applies.
     pub fn get_filtered(
         &self,
         collection: &str,
-        predicate: impl Fn(&[u8]) -> bool + Sync + Send,
+        predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
         offset: usize,
-        limit: Option<usize>,
-    ) -> HashMap<String, Value> {
-        operations::get_filtered(&self.state, &self.storage, collection, predicate, offset, limit)
+        count: Option<usize>,
+    ) -> Vec<(String, Value)> {
+        operations::get_filtered(&self.state, &self.storage, collection, predicate, offset, count)
     }
 
     /// Lazily scan a collection and return the top-`cap` documents according

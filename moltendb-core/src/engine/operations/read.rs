@@ -54,17 +54,17 @@ pub fn get_filtered(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
     collection: &str,
-    predicate: impl Fn(&[u8]) -> bool + Sync + Send,
+    predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
     offset: usize,
-    limit: Option<usize>,
-) -> HashMap<String, Value> {
+    count: Option<usize>,
+) -> Vec<(String, Value)> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut matches: Vec<(String, Value)> = match state.get(collection) {
             Some(col) => col
                 .par_iter()
                 .filter_map(|entry| {
-                    if predicate(entry.value()) {
+                    if predicate(entry.key(), entry.value()) {
                         let v = decode(entry.value())?;
                         Some((entry.key().clone(), v))
                     } else {
@@ -72,14 +72,14 @@ pub fn get_filtered(
                     }
                 })
                 .collect(),
-            None => return HashMap::new(),
+            None => return Vec::new(),
         };
-        // Apply offset / limit deterministically by key to keep responses stable
+        // Apply offset / count deterministically by key to keep responses stable
         // across runs even though parallel collection is unordered.
-        if offset > 0 || limit.is_some() {
+        if offset > 0 || count.is_some() {
             matches.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         }
-        let end = match limit {
+        let end = match count {
             Some(l) => (offset + l).min(matches.len()),
             None => matches.len(),
         };
@@ -88,18 +88,18 @@ pub fn get_filtered(
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let mut results = HashMap::new();
+        let mut results = Vec::new();
         let mut skipped = 0usize;
         if let Some(col) = state.get(collection) {
             for entry in col.iter() {
-                if !predicate(entry.value()) { continue; }
+                if !predicate(entry.key(), entry.value()) { continue; }
                 let v = match decode(entry.value()) {
                     Some(v) => v,
                     None => continue,
                 };
                 if skipped < offset { skipped += 1; continue; }
-                results.insert(entry.key().clone(), v);
-                if let Some(lim) = limit && results.len() >= lim {
+                results.push((entry.key().clone(), v));
+                if let Some(lim) = count && results.len() >= lim {
                     break;
                 }
             }
@@ -215,31 +215,51 @@ where
     }
 }
 
-/// Retrieve all documents in a collection as a HashMap.
+/// Retrieve all documents in a collection.
 pub fn get_all(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
     collection: &str,
-) -> HashMap<String, Value> {
+    offset: usize,
+    count: Option<usize>,
+) -> Vec<(String, Value)> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        match state.get(collection) {
+        let mut matches: Vec<(String, Value)> = match state.get(collection) {
             Some(col) => col
                 .par_iter()
                 .filter_map(|entry| {
                     decode(entry.value()).map(|v| (entry.key().clone(), v))
                 })
                 .collect(),
-            None => HashMap::new(),
+            None => return Vec::new(),
+        };
+        // Apply offset / count deterministically by key
+        if offset > 0 || count.is_some() {
+            matches.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         }
+        let end = match count {
+            Some(l) => (offset + l).min(matches.len()),
+            None => matches.len(),
+        };
+        let start = offset.min(matches.len());
+        matches.drain(start..end).collect()
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let mut results = HashMap::new();
+        let mut results = Vec::new();
+        let mut skipped = 0usize;
         if let Some(col) = state.get(collection) {
             for entry in col.iter() {
+                if skipped < offset {
+                    skipped += 1;
+                    continue;
+                }
                 if let Some(val) = decode(entry.value()) {
-                    results.insert(entry.key().clone(), val);
+                    results.push((entry.key().clone(), val));
+                    if let Some(lim) = count && results.len() >= lim {
+                        break;
+                    }
                 }
             }
         }

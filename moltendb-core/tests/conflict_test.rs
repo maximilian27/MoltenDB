@@ -84,7 +84,7 @@ async fn test_delete_filtered() {
     assert_eq!(deleted, 2);
 
     // Only admin and editor should remain.
-    let remaining = db.get_all("items");
+    let remaining: std::collections::HashMap<_, _> = db.get_all("items", 0, None).into_iter().collect();
     assert_eq!(remaining.len(), 2);
     assert!(remaining.contains_key("b"));
     assert!(remaining.contains_key("d"));
