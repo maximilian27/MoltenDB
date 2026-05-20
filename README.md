@@ -89,6 +89,7 @@ MoltenDB is a portable document engine written in Rust. It provides a consistent
 - **[`@moltendb-web/core` on NPM](https://www.npmjs.com/package/@moltendb-web/core)** — bundles the WASM engine, Web Worker, and main-thread client into a single publishable artifact
 - **[`@moltendb-web/query` on NPM](https://www.npmjs.com/package/@moltendb-web/query)** — type-safe, chainable query builder (CJS + ESM + `.d.ts`)
 - **[`@moltendb-web/angular` on NPM](https://www.npmjs.com/package/@moltendb-web/angular)** — official Angular wrapper for seamless integration
+- **[`@moltendb-web/react` on NPM](https://www.npmjs.com/package/@moltendb-web/react)** — official React wrapper for seamless integration
 - **Interactive WASM Browser Demo** — A complete, live environment to test raw JSON queries and the chainable builder directly in your browser.
   - [Run Live on StackBlitz](https://stackblitz.com/~/github.com/maximilian27/moltendb-wasm-demo) (Zero setup required)
   - [View WASM Demo Source Code (GitHub)](https://github.com/maximilian27/moltendb-wasm-demo)
