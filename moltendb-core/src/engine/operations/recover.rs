@@ -20,6 +20,7 @@ pub fn recover_to(
     let state: DashMap<Arc<str>, DashMap<String, Box<[u8]>>> = DashMap::new();
     #[cfg(feature = "schema")]
     let schemas: DashMap<String, Arc<(serde_json::Value, jsonschema::Validator)>> = DashMap::new();
+    let ttl_expiry: DashMap<String, u64> = DashMap::new();
     let mut count = 0u64;
     let mut current_tx_entries: Vec<LogEntry> = Vec::new();
     let mut current_tx_id = None;
@@ -43,6 +44,7 @@ pub fn recover_to(
                             &e,
                             &state,
                             #[cfg(feature = "schema")] &schemas,
+                            &ttl_expiry,
                         );
                     }
                     current_tx_id = None;
@@ -56,6 +58,7 @@ pub fn recover_to(
                         &entry,
                         &state,
                         #[cfg(feature = "schema")] &schemas,
+                        &ttl_expiry,
                     );
                 }
             }

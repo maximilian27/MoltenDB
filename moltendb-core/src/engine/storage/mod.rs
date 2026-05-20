@@ -185,6 +185,7 @@ pub fn stream_into_state(
     storage: &dyn StorageBackend,
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    ttl_expiry: &DashMap<String, u64>,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
     let mut tx_buffer: Vec<LogEntry> = Vec::new();
@@ -199,7 +200,7 @@ pub fn stream_into_state(
             "TX_COMMIT" => {
                 if active_tx.as_ref() == Some(&entry.key) {
                     for e in tx_buffer.drain(..) {
-                        apply_entry(&e, state, #[cfg(feature = "schema")] schemas);
+                        apply_entry(&e, state, #[cfg(feature = "schema")] schemas, ttl_expiry);
                     }
                     active_tx = None;
                 } else {
@@ -210,7 +211,7 @@ pub fn stream_into_state(
                 if active_tx.is_some() {
                     tx_buffer.push(entry);
                 } else {
-                    apply_entry(&entry, state, #[cfg(feature = "schema")] schemas);
+                    apply_entry(&entry, state, #[cfg(feature = "schema")] schemas, ttl_expiry);
                 }
             }
         }
@@ -228,6 +229,7 @@ pub fn apply_entry(
     entry: &LogEntry,
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    ttl_expiry: &DashMap<String, u64>,
 ) {
     match entry.cmd.as_str() {
         "INSERT" => {
@@ -245,6 +247,22 @@ pub fn apply_entry(
         }
         "DROP" => {
             state.remove(entry.collection.as_str());
+            ttl_expiry.remove(entry.collection.as_str());
+        }
+        "TTL_EXPIRY" => {
+            // Restore the expiry timestamp — but only if it's still in the future.
+            // If the expiry has already passed, the collection is expired and we
+            // evict it from state so stale documents don't survive a reload.
+            if let Ok(expires_at) = entry.key.parse::<u64>() {
+                let now = crate::engine::operations::ttl::now_ms();
+                if expires_at > now {
+                    ttl_expiry.insert(entry.collection.clone(), expires_at);
+                } else {
+                    // Already expired — evict the stale documents from state.
+                    state.remove(entry.collection.as_str());
+                    ttl_expiry.remove(entry.collection.as_str());
+                }
+            }
         }
         "INDEX" => {
             // Legacy INDEX entries are silently ignored — indexing has been removed.

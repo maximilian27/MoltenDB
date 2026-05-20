@@ -53,7 +53,7 @@ fn test_batch_operations() {
     
     db.insert("bench", items).expect("Batch insert failed");
     
-    let all = db.get_all("bench");
+    let all = db.get_all("bench", 0, None);
     assert_eq!(all.len(), 100);
     
     let keys = vec!["k0".to_string(), "k50".to_string(), "k99".to_string()];

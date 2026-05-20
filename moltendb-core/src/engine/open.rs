@@ -93,6 +93,7 @@ impl Db {
             &*storage,
             &state,
             #[cfg(feature = "schema")] &schemas,
+            &ttl_expiry,
         )?;
 
         Ok(Self {
