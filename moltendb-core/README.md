@@ -31,7 +31,6 @@ Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 - **Snapshot Versioning** — Automatically backs up old snapshots to a `/backup` folder before rotation.
 - **Point-in-Time Recovery (PITR)** — Rebuild the state to any millisecond or sequence number (native only).
 - **Query evaluator** — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$contains`, `$or`, `$and`, field projection (include / exclude), dot-notation for nested fields, joins, sort, count, offset.
-- **Analytics engine** — COUNT, SUM, AVG, MIN, MAX with optional WHERE filtering. ⚠️ **Under active development — not ready for production use.**
 - **Handler pipeline** — `process_get`, `process_set`, `process_update`, `process_delete`, `process_analytics` — the single source of truth consumed by both the server and the WASM adapter.
 - **Input validation** — collection name, key, and field name rules enforced before any operation reaches the engine.
 
@@ -54,7 +53,7 @@ WASM-specific code (`OpfsStorage`, `Db::open_wasm`) is gated behind `#[cfg(targe
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc3"
+moltendb-core = "1.0.0-rc4"
 ```
 
 ### Minimal example
@@ -257,7 +256,6 @@ Counts are O(1) atomic reads (`DashMap::len()`) — no document scanning. On the
 | `engine` | `Db` struct, storage backends, WAL replay, operations |
 | `engine::storage` | `DiskStorage`, `EncryptedStorage`, `OpfsStorage` |
 | `query` | Query condition evaluation, field projection, joins, sort, pagination |
-| `analytics` | Aggregate functions: COUNT, SUM, AVG, MIN, MAX — ⚠️ under development, not ready for use |
 | `handlers` | `process_get`, `process_set`, `process_update`, `process_delete`, `process_analytics` |
 | `validation` | Collection / key / field name validation rules |
 
