@@ -1,5 +1,134 @@
 use crate::engine::DbError;
 use serde_json::{Value, Map};
+use rmp::decode::read_marker;
+use serde::de::Deserialize;
+
+/// Evaluates a simple equality condition directly against MsgPack bytes.
+/// Avoids the expensive decoding of the entire document into serde_json::Value.
+pub fn evaluate_binary_predicate(
+    msgpack_bytes: &[u8],
+    target_key: &str,
+    target_value: &str
+) -> bool {
+    let mut bytes = msgpack_bytes;
+    
+    // Read the map marker
+    let marker = match read_marker(&mut bytes) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    
+    let len = match marker {
+        rmp::Marker::Map16 => {
+            let mut len_bytes = [0u8; 2];
+            if bytes.len() < 2 { return false; }
+            len_bytes.copy_from_slice(&bytes[..2]);
+            bytes = &bytes[2..];
+            u16::from_be_bytes(len_bytes) as u32
+        }
+        rmp::Marker::Map32 => {
+            let mut len_bytes = [0u8; 4];
+            if bytes.len() < 4 { return false; }
+            len_bytes.copy_from_slice(&bytes[..4]);
+            bytes = &bytes[4..];
+            u32::from_be_bytes(len_bytes)
+        }
+        rmp::Marker::FixMap(l) => l as u32,
+        _ => return false,
+    };
+    
+    for _ in 0..len {
+        // Read key
+        let key_marker = match read_marker(&mut bytes) {
+            Ok(m) => m,
+            Err(_) => return false,
+        };
+        
+        let key_len = match key_marker {
+            rmp::Marker::FixStr(l) => l as u32,
+            rmp::Marker::Str8 => {
+                if bytes.is_empty() { return false; }
+                let l = bytes[0] as u32;
+                bytes = &bytes[1..];
+                l
+            }
+            rmp::Marker::Str16 => {
+                let mut len_bytes = [0u8; 2];
+                if bytes.len() < 2 { return false; }
+                len_bytes.copy_from_slice(&bytes[..2]);
+                bytes = &bytes[2..];
+                u16::from_be_bytes(len_bytes) as u32
+            }
+            rmp::Marker::Str32 => {
+                let mut len_bytes = [0u8; 4];
+                if bytes.len() < 4 { return false; }
+                len_bytes.copy_from_slice(&bytes[..4]);
+                bytes = &bytes[4..];
+                u32::from_be_bytes(len_bytes)
+            }
+            _ => {
+                // If key is not a string, skip it
+                skip_value(&mut bytes);
+                continue;
+            }
+        };
+        
+        if bytes.len() < key_len as usize { return false; }
+        let key = std::str::from_utf8(&bytes[..key_len as usize]).unwrap_or("");
+        bytes = &bytes[key_len as usize..];
+        
+        if key == target_key {
+            // Check value
+            let val_marker = match read_marker(&mut bytes) {
+                Ok(m) => m,
+                Err(_) => return false,
+            };
+            
+            let val_len = match val_marker {
+                rmp::Marker::FixStr(l) => l as u32,
+                rmp::Marker::Str8 => {
+                    if bytes.is_empty() { return false; }
+                    let l = bytes[0] as u32;
+                    bytes = &bytes[1..];
+                    l
+                }
+                rmp::Marker::Str16 => {
+                    let mut len_bytes = [0u8; 2];
+                    if bytes.len() < 2 { return false; }
+                    len_bytes.copy_from_slice(&bytes[..2]);
+                    bytes = &bytes[2..];
+                    u16::from_be_bytes(len_bytes) as u32
+                }
+                rmp::Marker::Str32 => {
+                    let mut len_bytes = [0u8; 4];
+                    if bytes.len() < 4 { return false; }
+                    len_bytes.copy_from_slice(&bytes[..4]);
+                    bytes = &bytes[4..];
+                    u32::from_be_bytes(len_bytes)
+                }
+                _ => return false,
+            };
+            
+            if bytes.len() < val_len as usize { return false; }
+            let val = std::str::from_utf8(&bytes[..val_len as usize]).unwrap_or("");
+            return val == target_value;
+        } else {
+            // Skip value
+            skip_value(&mut bytes);
+        }
+    }
+    
+    false
+}
+
+fn skip_value(bytes: &mut &[u8]) {
+    let mut de = rmp_serde::Deserializer::new(*bytes);
+    if let Ok(_) = serde::de::IgnoredAny::deserialize(&mut de) {
+        *bytes = de.into_inner();
+    } else {
+        *bytes = &[];
+    }
+}
 
 // Returns a new document containing only the requested dot-notation fields.
 pub fn project(doc: &Value, fields: &[Value]) -> Value {

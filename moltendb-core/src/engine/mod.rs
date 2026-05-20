@@ -146,25 +146,25 @@ impl Db {
         operations::get(&self.state, &self.storage, collection, keys)
     }
 
-    /// Retrieve all documents in a collection as a HashMap.
-    pub fn get_all(&self, collection: &str) -> HashMap<String, Value> {
-        operations::get_all(&self.state, &self.storage, collection)
+    /// Retrieve all documents in a collection.
+    pub fn get_all(&self, collection: &str, offset: usize, count: Option<usize>) -> Vec<(String, Value)> {
+        operations::get_all(&self.state, &self.storage, collection, offset, count)
     }
 
     /// Lazily scan a collection, returning only documents that match `predicate`.
     ///
     /// Avoids the full O(n) clone that `get_all` does — only matching documents
-    /// are cloned. `offset` and `limit` are applied during iteration so the
+    /// are cloned. `offset` and `count` are applied during iteration so the
     /// scan can stop early. Used for WHERE queries on large collections when
     /// no index applies.
     pub fn get_filtered(
         &self,
         collection: &str,
-        predicate: impl Fn(&Value) -> bool + Sync,
+        predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
         offset: usize,
-        limit: Option<usize>,
-    ) -> HashMap<String, Value> {
-        operations::get_filtered(&self.state, &self.storage, collection, predicate, offset, limit)
+        count: Option<usize>,
+    ) -> Vec<(String, Value)> {
+        operations::get_filtered(&self.state, &self.storage, collection, predicate, offset, count)
     }
 
     /// Lazily scan a collection and return the top-`cap` documents according
@@ -196,6 +196,18 @@ impl Db {
                 "Background disk I/O failed. System is in read-only mode.".into(),
             ));
         }
+        // If the collection has expired, physically evict all its documents before
+        // inserting. Without this, re-inserted documents inherit the old _v counter
+        // (e.g. _v:2 instead of _v:1) because insert.rs finds the stale docs in memory.
+        // We also write a DROP entry to the WAL so the eviction is durable — without
+        // this, a restart before compaction would replay the old INSERT entries and
+        // restore the stale documents, causing the same _v counter bug after reload.
+        if let Some(exp) = self.ttl_expiry.get(collection).map(|v| *v) {
+            if operations::ttl::collection_is_expired(exp, operations::ttl::now_ms()) {
+                let _ = operations::delete_collection(&self.state, &self.storage, &self.tx, collection);
+                self.ttl_expiry.remove(collection);
+            }
+        }
         operations::insert(operations::InsertParams {
             state: &self.state,
             storage: &self.storage,
@@ -218,6 +230,13 @@ impl Db {
         if let Some(secs) = self.ttl_defaults.get(collection).map(|v| *v) {
             let expires_at = operations::ttl::now_ms() + secs * 1_000;
             self.ttl_expiry.insert(collection.to_string(), expires_at);
+            // Persist the expiry to the WAL so it survives restarts.
+            let _ = self.storage.write_entry(&crate::engine::types::LogEntry::new(
+                "TTL_EXPIRY".to_string(),
+                collection.to_string(),
+                expires_at.to_string(),
+                serde_json::Value::Null,
+            ));
             // Broadcast the new expiry so the sweep task can update its heap.
             let event = serde_json::json!({
                 "event": "ttl_expiry",

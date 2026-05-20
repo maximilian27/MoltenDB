@@ -1,3 +1,23 @@
+# [1.0.0-rc4] (May 19, 2026)
+
+### Performance
+* **Zero-copy binary predicate evaluation** -- swapped `serde_json` deserialization in `get_filtered` with a raw `rmp` byte-scanner. This avoids deserializing the entire document into an allocated `serde_json::Value` during full-table scans for simple queries, vastly reducing CPU overhead and memory allocation churn, yielding ~3x faster queries on large collections.
+
+### Bug Fixes
+* **Tenant scoping in GET queries** -- pushed `_allowed_prefixes` evaluation directly into `fetch_documents` and the core `get_filtered` / `get_all` closures. Prefix gating is now evaluated before `limit` and `offset` truncation to prevent silent query results dropping.
+* **Pagination stability** -- changed `get_filtered` and `get_all` to return `Vec<(String, Value)>` instead of `HashMap`. Ordered sorting based on `key` is now maintained before truncation, preventing non-deterministic pagination scrambling.
+* **OOM on simple queries** -- modified `get_all` to accept `offset` and `limit` parameters, enabling early loop exit and preventing massive full-collection heap allocations on simple queries.
+* **Early prefix gating** -- improved efficiency by evaluating simple conditions (e.g. `_allowed_prefixes`) on raw document keys before performing deep JSON parsing and full `WHERE` predicate evaluation.
+* **Parameter rename** -- renamed the parameter `limit` to `count` in the core engine's GET functionality signatures (`get_filtered` and `get_all`) to match the existing naming convention across the API.
+* **WASM: OOM on OPFS compaction** -- fixed `OpfsStorage` failing to implement `compact_from_maps`. The compaction process previously aggregated all documents into a massive byte vector before writing to OPFS. It now serializes documents sequentially directly from the DashMap and writes in 64KB chunks, preventing OOM crashes in the Web Worker when compacting large datasets.
+* **WASM: OPFS storage format inconsistency** -- OPFS backend (`wasm.rs`) still used plain-text JSON with newline separators for logging, causing high disk usage and string encoding/decoding overhead in the browser. Aligned with native engines by switching to binary length-prefixed MessagePack (`rmp_serde`). The reader now streams the file in chunks instead of loading the entire log into a `String`, preventing Out of Memory (OOM) crashes in the browser worker on large datasets.
+* **WASM: `time not implemented on this platform` panic** -- replaced `std::time::SystemTime` with `web_time::SystemTime` in `engine/operations/ttl.rs` and `engine/storage/disk/snapshot.rs`. Both files were using the standard library time API which panics unconditionally on `wasm32` targets. `web_time` was already a dependency of `moltendb-core`.
+* **TTL expiry: re-inserted documents incorrectly received `_v: 2` instead of `_v: 1`** -- TTL expiry used lazy eviction (documents hidden on read but never removed from the `DashMap`). When the same keys were re-inserted after expiry, `insert.rs` found the stale documents in memory and incremented their `_v` counter. Fixed in `db.insert()` (`engine/mod.rs`): before calling `operations::insert`, the engine now checks whether the target collection has expired and, if so, physically evicts it via `operations::delete_collection()`.
+* **TTL eviction is now durable across restarts** -- the previous fix cleared expired documents from memory but left the old `INSERT` entries in the WAL. A process restart before compaction would replay those entries and restore the stale documents, causing the `_v` counter bug to reappear. The eviction now calls `operations::delete_collection()` which writes a `TX_BEGIN → DROP → TX_COMMIT` sequence to the WAL before removing the collection from memory, so the eviction survives WAL replay.
+* **TTL expiry now survives restarts** -- `ttl_expiry` was a purely in-memory map that was never persisted. After a reload, the map was empty so `process_get` no longer hid expired documents — they became fully visible again. Fixed by writing a `TTL_EXPIRY` WAL entry each time an expiry timestamp is set, and restoring it during WAL replay in `apply_entry`. If the expiry has already passed at replay time, the collection is evicted from state immediately so stale documents never surface after a reload.
+
+---
+
 # [1.0.0-rc3] (May 12, 2026)
 
 ### Breaking Changes

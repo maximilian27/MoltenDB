@@ -42,7 +42,10 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
 
     // Fetch, filter, join.
     let has_joins = params.joins_req.map(|j| !j.is_empty()).unwrap_or(false);
-    let raw = fetch_documents(db, params.col_name, payload, params.where_clause, has_joins, params.offset, params.count_limit);
+    let allowed_pfxs_vec = params.allowed_prefixes.map(|arr| {
+        arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+    });
+    let raw = fetch_documents(db, params.col_name, payload, params.where_clause, has_joins, params.offset, params.count_limit, allowed_pfxs_vec.as_deref());
 
     let results = match filter_and_join_docs(db, raw, &params) {
         Ok(r)  => r,
@@ -183,11 +186,11 @@ fn run_fast_sort_path(db: &engine::Db, _payload: &Value, params: &GetParams<'_>)
 }
 
 /// Apply prefix gating, cross-collection joins, and WHERE filtering to the raw
-/// document map. Returns the surviving `(key, doc, join_aliases)` triples, or
+/// document list. Returns the surviving `(key, doc, join_aliases)` triples, or
 /// `Err((status, body))` if a WHERE evaluation error occurs.
 fn filter_and_join_docs(
     db: &engine::Db,
-    raw: std::collections::HashMap<String, Value>,
+    raw: Vec<(String, Value)>,
     params: &GetParams<'_>,
 ) -> Result<Vec<(String, Value, Vec<String>)>, (u16, Value)> {
     let mut results: Vec<(String, Value, Vec<String>)> = Vec::with_capacity(raw.len());
