@@ -3,36 +3,43 @@
 
 # moltendb-core
 
-### 🌋 The Pure Engine Crate
+### 🌋 The Engine Kernel
 
-**In-memory document store · Append-only WAL · Query evaluator · Analytics (🚧 WIP)**  
+**The shared core that powers every MoltenDB runtime.**  
 Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 
-[![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
+[![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](../LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![crates.io](https://img.shields.io/crates/v/moltendb-core?style=flat-square)](https://crates.io/crates/moltendb-core)
-[![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](../CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-1.0.0--rc4-blue?style=flat-square)](../CHANGELOG.md)
 
 </div>
 
 > [!WARNING]
 > **Versions starting with `v1.0.0-rc1` are not backwards compatible with previous versions.**
-> We are actively working on improving performance and stability. Please review the changelog before upgrading.
+> Review the [changelog](../CHANGELOG.md) before upgrading.
 
 ---
 
 ## What is this crate?
 
-`moltendb-core` is the heart of MoltenDB. It contains every piece of logic that is shared between the HTTP server (`moltendb-server`) and the browser WASM adapter (`moltendb-wasm`):
+`moltendb-core` is the engine kernel of MoltenDB — the single crate shared by the HTTP server (`moltendb-server`) and the browser WASM adapter (`moltendb-wasm`). It has no knowledge of the network layer, authentication, or WASM bindings. Everything above this layer is an optional adapter.
 
-- **In-memory store** — `DashMap`-backed document collections, keyed by `(collection, key)`.
-- **Append-only WAL** — every write is appended to a log file (`LogEntry`: INSERT, DELETE, DROP, INDEX, ENC) with an engine-level `_t` timestamp for Point-in-Time Recovery.
-- **Storage backends** — `DiskStorage` (sync/async), `EncryptedStorage` (ChaCha20-Poly1305), `OpfsStorage` (WASM / browser OPFS).
-- **Snapshot Versioning** — Automatically backs up old snapshots to a `/backup` folder before rotation.
-- **Point-in-Time Recovery (PITR)** — Rebuild the state to any millisecond or sequence number (native only).
-- **Query evaluator** — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$contains`, `$or`, `$and`, field projection (include / exclude), dot-notation for nested fields, joins, sort, count, offset.
-- **Handler pipeline** — `process_get`, `process_set`, `process_update`, `process_delete`, `process_analytics` — the single source of truth consumed by both the server and the WASM adapter.
-- **Input validation** — collection name, key, and field name rules enforced before any operation reaches the engine.
+### Layer 1: Query Engine
+- **Query evaluator** — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$contains`, `$or`, `$and`
+- **Fine-grained field projection** — include (`fields`) or exclude (`excludedFields`) at any dot-notation depth
+- **Joins, sort, pagination** — cross-collection joins, multi-field sort, `count` / `offset`
+- **Input validation** — collection name, key, and field name rules enforced before any operation reaches the engine
+
+### Layer 2: Storage & Runtime Adapters
+- **In-memory store** — `DashMap`-backed document collections, keyed by `(collection, key)`
+- **Append-only WAL** — every write is appended as a `LogEntry` (INSERT, DELETE, DROP, INDEX, ENC) with a `_t` timestamp
+- **Storage backends** — `AsyncDiskStorage` (default), `SyncDiskStorage`, `InMemoryStorage`, `EncryptedStorage` (ChaCha20-Poly1305), `OpfsStorage` (WASM / browser OPFS)
+- **Snapshot Versioning** — old snapshots are moved to `/backup` before rotation; no data is ever deleted
+- **Point-in-Time Recovery (PITR)** — rebuild state to any millisecond or sequence number (native only)
+
+### Handler Pipeline
+- `process_get`, `process_set`, `process_update`, `process_delete`, `process_analytics` — the single source of truth consumed by both the server and the WASM adapter
 
 ---
 
@@ -63,7 +70,6 @@ use moltendb_core::engine::{Db, DbConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Open (or create) a database with custom configuration
     let config = DbConfig {
         path: "./my_app.log".to_string(),
         sync_mode: true,
@@ -71,13 +77,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let db = Db::open(config).await?;
 
-    // Insert a document
     db.set("users", "u1", serde_json::json!({
         "name": "Alice",
         "role": "admin"
     })).await?;
 
-    // Read it back
     let user = db.get("users", "u1").await?;
     println!("{}", user);
 
@@ -118,152 +122,7 @@ All documents are kept in RAM in a `DashMap`. On startup, the snapshot is loaded
 
 ---
 
-## Reserved fields
-
-Every document automatically receives the following engine-managed fields. Any field whose name starts with `_` is reserved — the handler layer rejects inserts or updates that contain such fields.
-
-| Field | Description |
-|---|---|
-| `_key` | The document's own key — injected on read, never stored inside the document body |
-| `_v` | Version counter, incremented on every write by the engine. Always starts at `1` for new documents. |
-| `_seq` | Monotonic insertion sequence number — strictly increasing within a collection. Assigned at first insert and preserved on overwrites. Used for FIFO eviction when `maxSize` is set. **Opt-in** — only returned when explicitly listed in `fields`. |
-| `_createdAt` | ISO-8601 timestamp set once at first insert and never overwritten. **Opt-in** — only returned when explicitly listed in `fields`. |
-| `_modifiedAt` | ISO-8601 timestamp updated on every write. **Opt-in** — only returned when explicitly listed in `fields`. |
-| `_expiresAt` | ISO-8601 timestamp when the **collection** expires. This is a **virtual field** — never stored inside documents. **Opt-in** — only returned when explicitly listed in `fields` (only relevant for TTL collections). |
-
-Attempting to insert or update a document containing any `_`-prefixed field (except `_v` on update) returns `400 Bad Request`.
-
-**`_key` and `_v` are always present in every response** — they are protocol primitives and cannot be suppressed by `fields` or `excludedFields`.
-
-`_seq`, `_createdAt`, `_modifiedAt`, and `_expiresAt` are **opt-in** — they are never returned unless explicitly listed in a `fields` projection:
-```rust
-// Only return brand, price, and the creation timestamp
-db.get_filtered("laptops", |_| true, 0, Some(100))
-// then project with fields: ["brand", "price", "_createdAt"]
-```
-
----
-
-## TTL (Time-to-Live)
-
-MoltenDB supports **collection-level TTL** — an entire collection expires and is dropped automatically after a configurable idle period. Set it via `process_schema` (no JSON schema required) or inline on `process_set`:
-
-```rust
-// Via /schema (no JSON schema required)
-let payload = json!({ "collection": "cache", "ttl": 300 });
-handlers::process_schema::process_schema(&db, &payload, 10 * 1024 * 1024, 1000);
-
-// Inline on /set (shortcut — registers TTL and inserts in one call)
-let payload = json!({ "collection": "cache", "data": { "k": { "value": 1 } }, "ttl": 300 });
-handlers::process_set::process_set(&db, &payload, 10 * 1024 * 1024, 1000);
-```
-
-**How it works:**
-- The expiry clock resets to `now + ttl_secs` at the end of **every insert batch** — so the clock measures idle time since the last write, not time since schema registration.
-- On expiry the **entire collection is dropped** in one O(1) `Db::delete_collection` call — no per-document iteration.
-- `_expiresAt` is a **virtual field** — never stored inside documents. It is computed from `Db::ttl_expiry` and injected into every response when the collection has a TTL.
-- TTL is **immutable by design** — once set, the TTL value cannot be changed without dropping and recreating the collection.
-- `/update` calls do **not** reset the expiry clock — only `/set` (insert) does.
-
-> **Design decision — sliding-window expiry:** The TTL clock resets on every insert, not on every access. A collection that receives a steady stream of writes will never expire — it only drops after `ttl_secs` of complete write inactivity. This makes MoltenDB TTL ideal for **ephemeral caches, analytics buffers, and temporary working sets**. It is **not** designed for per-document expiry (OTPs, password-reset tokens, session invalidation) — for those, store your own `expires_at` field in the document and use `delete_filtered` with a time-based predicate to clean up expired entries.
-
-**Eviction:**
-- **Lazy** — `process_get` checks the collection expiry once per request (O(1)) and returns `404` immediately if expired.
-- **Eager** (server only) — `ttl_sweep` uses an event-driven min-heap with **one entry per collection**, wakes exactly when the next collection expires, and calls `Db::delete_collection`. Zero CPU when idle.
-- **WASM** — lazy eviction only (no background thread in the browser).
-
----
-
-## Capped Collections (`maxSize`)
-
-Collections can be capped to a maximum document count. When the collection exceeds `maxSize` after an insert batch, the **oldest documents** (lowest `_seq`) are evicted automatically — keeping exactly `maxSize` documents at all times.
-
-```rust
-// Via /schema
-let payload = json!({ "collection": "recent_events", "maxSize": 100 });
-handlers::process_schema::process_schema(&db, &payload, 10 * 1024 * 1024, 1000);
-
-// Inline on /set (registers cap and inserts in one call)
-let payload = json!({ "collection": "top5", "maxSize": 5, "data": { "s1": { "score": 9800 } } });
-handlers::process_set::process_set(&db, &payload, 10 * 1024 * 1024, 1000);
-```
-
-- Eviction is **FIFO** — the document with the lowest `_seq` is always evicted first.
-- Overwrites preserve the original `_seq`, so a document's position in the eviction queue is fixed at first insert.
-- `maxSize` is reported in `process_stats` responses.
-- `maxSize` can be combined with `ttl` on the same collection.
-- Works identically on native, WASM, and embedded usage.
-
----
-
-## Bulk delete with `where` filters
-
-`process_delete` supports the same `where` clause as `process_get`, letting you delete all documents that match a filter in a single atomic operation:
-
-```rust
-use moltendb_core::{engine::Db, handlers};
-use serde_json::json;
-
-let payload = json!({
-    "collection": "users",
-    "where": { "role": { "$eq": "guest" } }
-});
-
-let (status, body) = handlers::process_delete::process_delete(&db, &payload, 10 * 1024 * 1024, 1000);
-// body → { "status": "ok", "deleted": 42 }
-```
-
-All filter operators are supported: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains`, `$in`, `$nin`, `$and`, `$or`. An optional `count` property limits how many documents are deleted (**default `100`**, max `1000`).
-
-Internally, `Db::delete_filtered(collection, predicate, count_limit)` runs a parallel scan (rayon on native, sequential on WASM) to collect matching keys, then deletes them in a single transaction. The response always includes the count of deleted documents.
-
-This works identically in the HTTP server, the WASM browser module, and when embedding `moltendb-core` directly in your own Rust application.
-
----
-
-## Collection Stats
-
-`process_stats` returns document counts per collection. TTL-aware: expired collections report `count: 0` and `expired: true`.
-
-```rust
-// All collections
-let (code, body) = process_stats(&db, &json!({}));
-
-// Single collection
-let (code, body) = process_stats(&db, &json!({ "collection": "laptops" }));
-```
-
-**All collections response:**
-```json
-{
-  "collections": {
-    "laptops": { "count": 42381 },
-    "sessions": { "count": 1200, "expiresAt": "2026-05-15T15:00:00Z" },
-    "expired_cache": { "count": 0, "expired": true, "expiresAt": "2026-05-15T07:00:00Z" }
-  },
-  "total": 43581
-}
-```
-
-Counts are O(1) atomic reads (`DashMap::len()`) — no document scanning. On the HTTP server both `POST /stats` and `GET /stats` are available. On the WASM module use `action: "stats"`.
-
----
-
-## Module overview
-
-| Module | Responsibility |
-|---|---|
-| `engine` | `Db` struct, storage backends, WAL replay, operations |
-| `engine::storage` | `DiskStorage`, `EncryptedStorage`, `OpfsStorage` |
-| `query` | Query condition evaluation, field projection, joins, sort, pagination |
-| `handlers` | `process_get`, `process_set`, `process_update`, `process_delete`, `process_analytics` |
-| `validation` | Collection / key / field name validation rules |
-
----
-
 ## Storage modes
-
-MoltenDB has three storage backends:
 
 | Mode | `DbConfig` field | Best for |
 |---|---|---|
@@ -279,7 +138,6 @@ Single append-only log file. Writes are buffered and flushed to disk every **50 
 
 Same single-file layout as async, but every write blocks until the OS confirms the data is on disk. **Zero data loss on crash.** Lower throughput. Use this when losing even 50 ms of writes is unacceptable (financial records, audit logs).
 
-
 ### In-Memory (`in_memory: true`)
 
 Bypasses the WAL and all disk I/O entirely. All data lives exclusively in the RAM `DashMap`. Compaction is skipped. All data is lost when the process exits.
@@ -294,58 +152,150 @@ Browser WASM only — uses the Origin Private File System (OPFS) as the storage 
 
 ---
 
+## Reserved fields
+
+Every document automatically receives the following engine-managed fields. Any field whose name starts with `_` is reserved — the handler layer rejects inserts or updates that contain such fields.
+
+| Field | Description |
+|---|---|
+| `_key` | The document's own key — injected on read, never stored inside the document body |
+| `_v` | Version counter, incremented on every write by the engine. Always starts at `1` for new documents. |
+| `_seq` | Monotonic insertion sequence number — strictly increasing within a collection. Assigned at first insert and preserved on overwrites. Used for FIFO eviction when `maxSize` is set. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_createdAt` | ISO-8601 timestamp set once at first insert and never overwritten. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_modifiedAt` | ISO-8601 timestamp updated on every write. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_expiresAt` | ISO-8601 timestamp when the **collection** expires. This is a **virtual field** — never stored inside documents. **Opt-in** — only returned when explicitly listed in `fields` (only relevant for TTL collections). |
+
+**`_key` and `_v` are always present in every response** — they are protocol primitives and cannot be suppressed by `fields` or `excludedFields`.
+
+`_seq`, `_createdAt`, `_modifiedAt`, and `_expiresAt` are **opt-in** — they are never returned unless explicitly listed in a `fields` projection.
+
+---
+
+## TTL (Time-to-Live)
+
+MoltenDB supports **collection-level TTL** — an entire collection expires and is dropped automatically after a configurable idle period.
+
+```rust
+// Via /schema
+let payload = json!({ "collection": "cache", "ttl": 300 });
+handlers::process_schema::process_schema(&db, &payload, 10 * 1024 * 1024, 1000);
+
+// Inline on /set (registers TTL and inserts in one call)
+let payload = json!({ "collection": "cache", "data": { "k": { "value": 1 } }, "ttl": 300 });
+handlers::process_set::process_set(&db, &payload, 10 * 1024 * 1024, 1000);
+```
+
+- The expiry clock resets to `now + ttl_secs` at the end of **every insert batch** — idle time since last write, not since schema registration.
+- On expiry the **entire collection is dropped** in one O(1) `Db::delete_collection` call.
+- `_expiresAt` is a **virtual field** — computed from `Db::ttl_expiry` and injected into every response when the collection has a TTL.
+- TTL is **immutable by design** — once set, it cannot be changed without dropping and recreating the collection.
+- `/update` calls do **not** reset the expiry clock — only `/set` (insert) does.
+
+> **Design decision — sliding-window expiry:** The TTL clock resets on every insert, not on every access. This makes MoltenDB TTL ideal for **ephemeral caches, analytics buffers, and temporary working sets**. It is **not** designed for per-document expiry (OTPs, session tokens) — for those, store your own `expires_at` field and use `delete_filtered` with a time-based predicate.
+
+**Eviction:**
+- **Lazy** — `process_get` checks the collection expiry once per request (O(1)) and returns `404` immediately if expired.
+- **Eager** (server only) — `ttl_sweep` uses an event-driven min-heap, wakes exactly when the next collection expires, and calls `Db::delete_collection`. Zero CPU when idle.
+- **WASM** — lazy eviction only (no background thread in the browser).
+
+---
+
+## Capped Collections (`maxSize`)
+
+Collections can be capped to a maximum document count. When the collection exceeds `maxSize` after an insert batch, the **oldest documents** (lowest `_seq`) are evicted automatically.
+
+```rust
+// Via /schema
+let payload = json!({ "collection": "recent_events", "maxSize": 100 });
+handlers::process_schema::process_schema(&db, &payload, 10 * 1024 * 1024, 1000);
+
+// Inline on /set
+let payload = json!({ "collection": "top5", "maxSize": 5, "data": { "s1": { "score": 9800 } } });
+handlers::process_set::process_set(&db, &payload, 10 * 1024 * 1024, 1000);
+```
+
+- Eviction is **FIFO** — the document with the lowest `_seq` is always evicted first.
+- Overwrites preserve the original `_seq`, so a document's position in the eviction queue is fixed at first insert.
+- `maxSize` can be combined with `ttl` on the same collection.
+- Works identically on native, WASM, and embedded usage.
+
+---
+
+## Bulk delete with `where` filters
+
+`process_delete` supports the same `where` clause as `process_get`, letting you delete all matching documents in a single atomic operation:
+
+```rust
+let payload = json!({
+    "collection": "users",
+    "where": { "role": { "$eq": "guest" } }
+});
+
+let (status, body) = handlers::process_delete::process_delete(&db, &payload, 10 * 1024 * 1024, 1000);
+// body → { "status": "ok", "deleted": 42 }
+```
+
+All filter operators are supported. An optional `count` property limits how many documents are deleted (**default `100`**, max `1000`).
+
+---
+
+## Collection Stats
+
+`process_stats` returns document counts per collection. TTL-aware: expired collections report `count: 0` and `expired: true`.
+
+```rust
+// All collections
+let (code, body) = process_stats(&db, &json!({}));
+
+// Single collection
+let (code, body) = process_stats(&db, &json!({ "collection": "laptops" }));
+```
+
+---
+
 ## Snapshots, Compaction & Data Safety
 
 Compaction is **manual-only** — trigger it explicitly via `POST /snapshot` (HTTP server) or `db.compact()` (embedded). It:
 
-1. Writes the complete current in-memory state to a **temp snapshot file** — the live snapshot is untouched at this point.
-2. **Moves the existing snapshot** to `backup/<name>.snapshot.bin.<unix_timestamp>.bak` — the old snapshot is never deleted.
-3. **Atomically renames** the temp file to the live snapshot — a single OS rename, no window where neither file exists.
-4. **Resets the live log to empty** — all data is already captured in the new snapshot before this happens.
+1. Writes the complete current in-memory state to a **temp snapshot file**.
+2. **Moves the existing snapshot** to `backup/<name>.snapshot.bin.<unix_timestamp>.bak`.
+3. **Atomically renames** the temp file to the live snapshot.
+4. **Resets the live log to empty**.
 
-### No data is lost across compactions
-
-Each snapshot is a **full state dump**, not a diff. A document inserted in compaction 1 is present in every subsequent snapshot until it is explicitly deleted:
-
-```
-Compaction 1:  snapshot = { doc_A, doc_B }
-Compaction 2:  snapshot = { doc_A, doc_B, doc_C }   ← doc_A still here
-Compaction 3:  snapshot = { doc_A, doc_B, doc_C, doc_D }  ← doc_A still here
-```
-
-### The `backup/` folder
-
-Every compaction moves the previous snapshot to `backup/` as a `.bak` file — a point-in-time copy of the full database state. These files are not loaded at startup and are not pruned automatically. Use them for manual point-in-time recovery via `Db::recover_to`.
-
-### Startup RAM usage
+Each snapshot is a **full state dump**, not a diff. A document inserted in compaction 1 is present in every subsequent snapshot until explicitly deleted.
 
 At startup, `stream_into_state` reads the snapshot and applies each entry **directly into the `DashMap`** as it is read — no intermediate buffer. Peak RAM at startup is approximately **1× the snapshot file size**.
 
 ---
 
+## Module overview
+
+| Module | Responsibility |
+|---|---|
+| `engine` | `Db` struct, storage backends, WAL replay, operations |
+| `engine::storage` | `DiskStorage`, `EncryptedStorage`, `OpfsStorage` |
+| `query` | Query condition evaluation, field projection, joins, sort, pagination |
+| `handlers` | `process_get`, `process_set`, `process_update`, `process_delete`, `process_analytics` |
+| `validation` | Collection / key / field name validation rules |
+
+---
+
 ## Design constraints
 
-- **Memory-First.** All documents are kept in RAM for sub-microsecond reads. Compaction + snapshot keep startup fast even for large collections.
-- **No HTTP, no auth, no JWT.** This crate has zero knowledge of the network layer. It is safe to embed in any Rust application without pulling in Axum, Tokio TLS, or any auth dependency.
-- **Programmatic Configuration.** Unlike `moltendb-server`, this crate does **not** parse environment variables or CLI flags. All configuration must be passed via the `DbConfig` struct.
+- **Memory-First.** All documents are kept in RAM for sub-microsecond reads.
+- **No HTTP, no auth, no JWT.** Safe to embed in any Rust application without pulling in Axum, Tokio TLS, or any auth dependency.
+- **Programmatic Configuration.** All configuration is passed via the `DbConfig` struct — no environment variables, no CLI flags.
 - **Single writer, many readers.** The `DashMap` store is safe for concurrent reads. Writes are serialised through the storage backend.
 
 ---
 
 ## Testing
 
-`moltendb-core` includes a comprehensive test suite to ensure engine reliability and query correctness.
-
-### Unit Tests
-Unit tests are located within the source files (e.g., `src/query.rs`, `src/engine/storage/mod.rs`).
 ```bash
+# Unit tests
 cargo test -p moltendb-core --lib
-```
 
-### Integration Tests
-Integration tests are located in the `tests/` directory and verify the interaction between the engine, handlers, and storage backends.
-```bash
-# Run all core integration tests
+# Integration tests
 cargo test -p moltendb-core --test engine_tests
 cargo test -p moltendb-core --test query_tests
 cargo test -p moltendb-core --test hybrid_storage_tests
@@ -357,7 +307,7 @@ cargo test -p moltendb-core --test hybrid_storage_tests
 
 ```
 MoltenDB/
-├── moltendb-core/     ← you are here
+├── moltendb-core/     ← you are here (engine kernel)
 ├── moltendb-wasm/     — browser adapter (wasm-bindgen glue, WorkerDb, OPFS)
 ├── moltendb-auth/     — identity layer (JWT, Argon2, UserStore)
 └── moltendb-server/   — network layer (Axum, TLS, CORS, CLI config)
