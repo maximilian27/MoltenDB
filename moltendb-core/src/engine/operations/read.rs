@@ -60,31 +60,42 @@ pub fn get_filtered(
 ) -> Vec<(String, Value)> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let mut matches: Vec<(String, Value)> = match state.get(collection) {
-            Some(col) => col
-                .par_iter()
-                .filter_map(|entry| {
-                    if predicate(entry.key(), entry.value()) {
-                        let v = decode(entry.value())?;
-                        Some((entry.key().clone(), v))
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
+        let col = match state.get(collection) {
+            Some(c) => c,
             None => return Vec::new(),
         };
-        // Apply offset / count deterministically by key to keep responses stable
-        // across runs even though parallel collection is unordered.
-        if offset > 0 || count.is_some() {
-            matches.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        }
+
+        // Phase 1: collect only the keys (+ raw bytes ref) that pass the predicate.
+        // We deliberately do NOT decode to Value here so that filtered-out documents
+        // (the majority for $ne/$nin queries) never get deserialized.
+        let mut matching_keys: Vec<String> = col
+            .par_iter()
+            .filter_map(|entry| {
+                if predicate(entry.key(), entry.value()) {
+                    Some(entry.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Phase 2: sort for deterministic ordering, then slice to the requested page.
+        matching_keys.sort_unstable();
         let end = match count {
-            Some(l) => (offset + l).min(matches.len()),
-            None => matches.len(),
+            Some(l) => (offset + l).min(matching_keys.len()),
+            None => matching_keys.len(),
         };
-        let start = offset.min(matches.len());
-        matches.drain(start..end).collect()
+        let start = offset.min(matching_keys.len());
+        let page_keys = &matching_keys[start..end];
+
+        // Phase 3: decode only the documents on the requested page.
+        page_keys
+            .iter()
+            .filter_map(|k| {
+                let v = decode(col.get(k)?.value())?;
+                Some((k.clone(), v))
+            })
+            .collect()
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -137,14 +148,19 @@ where
         cmp: Arc<F>,
     }
     impl<F: Fn(&Value, &Value) -> Ordering> PartialEq for HeapItem<F> {
-        fn eq(&self, o: &Self) -> bool { (self.cmp)(&self.value, &o.value) == Ordering::Equal }
+        fn eq(&self, o: &Self) -> bool {
+            (self.cmp)(&self.value, &o.value) == Ordering::Equal && self.key == o.key
+        }
     }
     impl<F: Fn(&Value, &Value) -> Ordering> Eq for HeapItem<F> {}
     impl<F: Fn(&Value, &Value) -> Ordering> PartialOrd for HeapItem<F> {
         fn partial_cmp(&self, o: &Self) -> Option<Ordering> { Some(self.cmp(o)) }
     }
     impl<F: Fn(&Value, &Value) -> Ordering> Ord for HeapItem<F> {
-        fn cmp(&self, o: &Self) -> Ordering { (self.cmp)(&self.value, &o.value) }
+        fn cmp(&self, o: &Self) -> Ordering {
+            // Break ties by key so the heap is deterministic across pages.
+            (self.cmp)(&self.value, &o.value).then_with(|| self.key.cmp(&o.key))
+        }
     }
 
     let cmp = Arc::new(cmp);
@@ -157,13 +173,16 @@ where
         // O(collection size), and we avoid materialising a giant intermediate Vec
         // — which is the dominant cost for sort-only queries over 1M docs.
         let push_into = |heap: &mut BinaryHeap<HeapItem<C>>, k: String, v: Value, cmp: &Arc<C>| {
-            if heap.len() >= cap
-                && let Some(worst) = heap.peek()
-                && cmp(&v, &worst.value) != Ordering::Less
-            {
-                return;
+            let candidate = HeapItem { key: k, value: v, cmp: cmp.clone() };
+            if heap.len() >= cap {
+                // Only evict the current worst if the candidate is strictly better.
+                if let Some(worst) = heap.peek() {
+                    if candidate.cmp(worst) != Ordering::Less {
+                        return;
+                    }
+                }
             }
-            heap.push(HeapItem { key: k, value: v, cmp: cmp.clone() });
+            heap.push(candidate);
             if heap.len() > cap { heap.pop(); }
         };
 
@@ -201,13 +220,13 @@ where
                     None => continue,
                 };
                 if !predicate(&v) { continue; }
-                if heap.len() >= cap
-                    && let Some(worst) = heap.peek()
-                    && cmp(&v, &worst.value) != Ordering::Less
-                {
-                    continue;
+                let candidate = HeapItem { key: entry.key().clone(), value: v, cmp: cmp.clone() };
+                if heap.len() >= cap {
+                    if let Some(worst) = heap.peek() {
+                        if candidate.cmp(worst) != Ordering::Less { continue; }
+                    }
                 }
-                heap.push(HeapItem { key: entry.key().clone(), value: v, cmp: cmp.clone() });
+                heap.push(candidate);
                 if heap.len() > cap { heap.pop(); }
             }
         }

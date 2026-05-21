@@ -3,124 +3,65 @@ use serde_json::{Value, Map};
 use rmp::decode::read_marker;
 use serde::de::Deserialize;
 
-/// Evaluates a simple equality condition directly against MsgPack bytes.
-/// Avoids the expensive decoding of the entire document into serde_json::Value.
-pub fn evaluate_binary_predicate(
-    msgpack_bytes: &[u8],
-    target_key: &str,
-    target_value: &str
-) -> bool {
-    let mut bytes = msgpack_bytes;
-    
-    // Read the map marker
-    let marker = match read_marker(&mut bytes) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-    
+// ─── MsgPack fast-path helpers ───────────────────────────────────────────────
+// These functions walk raw MsgPack bytes to evaluate predicates without
+// deserializing the whole document into serde_json::Value.
+
+/// Read a MsgPack string at the front of `bytes`, returning the str slice and
+/// advancing `bytes` past it. Returns None if the next value is not a string.
+fn read_msgpack_str<'a>(bytes: &mut &'a [u8]) -> Option<&'a str> {
+    let marker = read_marker(bytes).ok()?;
     let len = match marker {
-        rmp::Marker::Map16 => {
-            let mut len_bytes = [0u8; 2];
-            if bytes.len() < 2 { return false; }
-            len_bytes.copy_from_slice(&bytes[..2]);
-            bytes = &bytes[2..];
-            u16::from_be_bytes(len_bytes) as u32
+        rmp::Marker::FixStr(l) => l as usize,
+        rmp::Marker::Str8 => {
+            if bytes.is_empty() { return None; }
+            let l = bytes[0] as usize;
+            *bytes = &bytes[1..];
+            l
         }
-        rmp::Marker::Map32 => {
-            let mut len_bytes = [0u8; 4];
-            if bytes.len() < 4 { return false; }
-            len_bytes.copy_from_slice(&bytes[..4]);
-            bytes = &bytes[4..];
-            u32::from_be_bytes(len_bytes)
+        rmp::Marker::Str16 => {
+            if bytes.len() < 2 { return None; }
+            let l = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+            *bytes = &bytes[2..];
+            l
         }
-        rmp::Marker::FixMap(l) => l as u32,
-        _ => return false,
+        rmp::Marker::Str32 => {
+            if bytes.len() < 4 { return None; }
+            let l = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+            *bytes = &bytes[4..];
+            l
+        }
+        _ => return None,
     };
-    
-    for _ in 0..len {
-        // Read key
-        let key_marker = match read_marker(&mut bytes) {
-            Ok(m) => m,
-            Err(_) => return false,
-        };
-        
-        let key_len = match key_marker {
-            rmp::Marker::FixStr(l) => l as u32,
-            rmp::Marker::Str8 => {
-                if bytes.is_empty() { return false; }
-                let l = bytes[0] as u32;
-                bytes = &bytes[1..];
-                l
-            }
-            rmp::Marker::Str16 => {
-                let mut len_bytes = [0u8; 2];
-                if bytes.len() < 2 { return false; }
-                len_bytes.copy_from_slice(&bytes[..2]);
-                bytes = &bytes[2..];
-                u16::from_be_bytes(len_bytes) as u32
-            }
-            rmp::Marker::Str32 => {
-                let mut len_bytes = [0u8; 4];
-                if bytes.len() < 4 { return false; }
-                len_bytes.copy_from_slice(&bytes[..4]);
-                bytes = &bytes[4..];
-                u32::from_be_bytes(len_bytes)
-            }
-            _ => {
-                // If key is not a string, skip it
-                skip_value(&mut bytes);
-                continue;
-            }
-        };
-        
-        if bytes.len() < key_len as usize { return false; }
-        let key = std::str::from_utf8(&bytes[..key_len as usize]).unwrap_or("");
-        bytes = &bytes[key_len as usize..];
-        
-        if key == target_key {
-            // Check value
-            let val_marker = match read_marker(&mut bytes) {
-                Ok(m) => m,
-                Err(_) => return false,
-            };
-            
-            let val_len = match val_marker {
-                rmp::Marker::FixStr(l) => l as u32,
-                rmp::Marker::Str8 => {
-                    if bytes.is_empty() { return false; }
-                    let l = bytes[0] as u32;
-                    bytes = &bytes[1..];
-                    l
-                }
-                rmp::Marker::Str16 => {
-                    let mut len_bytes = [0u8; 2];
-                    if bytes.len() < 2 { return false; }
-                    len_bytes.copy_from_slice(&bytes[..2]);
-                    bytes = &bytes[2..];
-                    u16::from_be_bytes(len_bytes) as u32
-                }
-                rmp::Marker::Str32 => {
-                    let mut len_bytes = [0u8; 4];
-                    if bytes.len() < 4 { return false; }
-                    len_bytes.copy_from_slice(&bytes[..4]);
-                    bytes = &bytes[4..];
-                    u32::from_be_bytes(len_bytes)
-                }
-                _ => return false,
-            };
-            
-            if bytes.len() < val_len as usize { return false; }
-            let val = std::str::from_utf8(&bytes[..val_len as usize]).unwrap_or("");
-            return val == target_value;
-        } else {
-            // Skip value
-            skip_value(&mut bytes);
-        }
-    }
-    
-    false
+    if bytes.len() < len { return None; }
+    let s = std::str::from_utf8(&bytes[..len]).ok()?;
+    *bytes = &bytes[len..];
+    Some(s)
 }
 
+/// Read the number of entries in a MsgPack map, advancing `bytes` past the
+/// map header. Returns None if the next value is not a map.
+fn read_msgpack_map_len(bytes: &mut &[u8]) -> Option<u32> {
+    let marker = read_marker(bytes).ok()?;
+    match marker {
+        rmp::Marker::FixMap(l) => Some(l as u32),
+        rmp::Marker::Map16 => {
+            if bytes.len() < 2 { return None; }
+            let l = u16::from_be_bytes([bytes[0], bytes[1]]) as u32;
+            *bytes = &bytes[2..];
+            Some(l)
+        }
+        rmp::Marker::Map32 => {
+            if bytes.len() < 4 { return None; }
+            let l = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            *bytes = &bytes[4..];
+            Some(l)
+        }
+        _ => None,
+    }
+}
+
+/// Skip one MsgPack value, advancing `bytes` past it.
 fn skip_value(bytes: &mut &[u8]) {
     let mut de = rmp_serde::Deserializer::new(*bytes);
     if let Ok(_) = serde::de::IgnoredAny::deserialize(&mut de) {
@@ -129,6 +70,186 @@ fn skip_value(bytes: &mut &[u8]) {
         *bytes = &[];
     }
 }
+
+/// Navigate a dot-notation path inside a MsgPack map, returning a slice
+/// starting at the value for the final path component. Returns None if any
+/// segment is not found or the intermediate value is not a map.
+///
+/// `path_parts` must have at least one element.
+fn find_msgpack_value<'a>(mut bytes: &'a [u8], path_parts: &[&str]) -> Option<&'a [u8]> {
+    for (depth, &segment) in path_parts.iter().enumerate() {
+        let map_len = read_msgpack_map_len(&mut bytes)?;
+        let mut found = false;
+        for _ in 0..map_len {
+            let key = read_msgpack_str(&mut bytes)?;
+            if key == segment {
+                if depth == path_parts.len() - 1 {
+                    // This is the final segment — return a slice starting here
+                    return Some(bytes);
+                }
+                // Intermediate segment — recurse into the nested map
+                found = true;
+                break;
+            } else {
+                skip_value(&mut bytes);
+            }
+        }
+        if !found && depth < path_parts.len() - 1 {
+            return None;
+        }
+    }
+    None
+}
+
+/// Read the string value at the current position in `bytes` (case-insensitive
+/// comparison helper). Returns None if the value is not a string.
+fn read_str_value(bytes: &[u8]) -> Option<String> {
+    let mut b = bytes;
+    read_msgpack_str(&mut b).map(|s| s.to_lowercase())
+}
+
+/// Evaluate a single-field predicate directly against MsgPack bytes.
+///
+/// Supported operators: `$eq`, `$ne`, `$in`, `$nin`.
+/// The field path may use dot-notation (e.g. `"specs.cpu.brand"`).
+/// String comparisons are case-insensitive.
+///
+/// Returns `None` if the operator is not one of the above (caller should fall
+/// back to full deserialization).
+pub fn evaluate_predicate_msgpack(
+    msgpack_bytes: &[u8],
+    field_path: &str,
+    operator: &str,
+    op_value: &Value,
+) -> Option<bool> {
+    let parts: Vec<&str> = field_path.split('.').collect();
+    let value_slice = find_msgpack_value(msgpack_bytes, &parts)?;
+
+    match operator {
+        "$eq" | "$equals" => {
+            match op_value {
+                Value::String(expected) => {
+                    let actual = read_str_value(value_slice)?;
+                    Some(actual == expected.to_lowercase())
+                }
+                Value::Number(n) => {
+                    // Read numeric value from msgpack
+                    let actual = read_msgpack_number(value_slice)?;
+                    Some((actual - n.as_f64()?).abs() < f64::EPSILON)
+                }
+                Value::Bool(b) => {
+                    let actual = read_msgpack_bool(value_slice)?;
+                    Some(actual == *b)
+                }
+                _ => None,
+            }
+        }
+        "$ne" | "$notEquals" => {
+            match op_value {
+                Value::String(expected) => {
+                    let actual = read_str_value(value_slice)?;
+                    Some(actual != expected.to_lowercase())
+                }
+                Value::Number(n) => {
+                    let actual = read_msgpack_number(value_slice)?;
+                    Some((actual - n.as_f64()?).abs() >= f64::EPSILON)
+                }
+                Value::Bool(b) => {
+                    let actual = read_msgpack_bool(value_slice)?;
+                    Some(actual != *b)
+                }
+                _ => None,
+            }
+        }
+        "$in" | "$oneOf" => {
+            let allowed = op_value.as_array()?;
+            let actual = read_str_value(value_slice);
+            Some(allowed.iter().any(|v| match (actual.as_deref(), v) {
+                (Some(a), Value::String(b)) => a == b.to_lowercase().as_str(),
+                _ => false,
+            }))
+        }
+        "$nin" | "$notIn" => {
+            let excluded = op_value.as_array()?;
+            let actual = read_str_value(value_slice);
+            Some(!excluded.iter().any(|v| match (actual.as_deref(), v) {
+                (Some(a), Value::String(b)) => a == b.to_lowercase().as_str(),
+                _ => false,
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
+    let mut b = bytes;
+    let marker = read_marker(&mut b).ok()?;
+    match marker {
+        rmp::Marker::FixPos(v) => Some(v as f64),
+        rmp::Marker::FixNeg(v) => Some(v as f64),
+        rmp::Marker::U8 => { let v = b.first().copied()? as f64; Some(v) }
+        rmp::Marker::U16 => {
+            if b.len() < 2 { return None; }
+            Some(u16::from_be_bytes([b[0], b[1]]) as f64)
+        }
+        rmp::Marker::U32 => {
+            if b.len() < 4 { return None; }
+            Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f64)
+        }
+        rmp::Marker::U64 => {
+            if b.len() < 8 { return None; }
+            Some(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f64)
+        }
+        rmp::Marker::I8 => { let v = b.first().copied()? as i8 as f64; Some(v) }
+        rmp::Marker::I16 => {
+            if b.len() < 2 { return None; }
+            Some(i16::from_be_bytes([b[0], b[1]]) as f64)
+        }
+        rmp::Marker::I32 => {
+            if b.len() < 4 { return None; }
+            Some(i32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f64)
+        }
+        rmp::Marker::I64 => {
+            if b.len() < 8 { return None; }
+            Some(i64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f64)
+        }
+        rmp::Marker::F32 => {
+            if b.len() < 4 { return None; }
+            Some(f32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f64)
+        }
+        rmp::Marker::F64 => {
+            if b.len() < 8 { return None; }
+            Some(f64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+        }
+        _ => None,
+    }
+}
+
+fn read_msgpack_bool(bytes: &[u8]) -> Option<bool> {
+    let mut b = bytes;
+    match read_marker(&mut b).ok()? {
+        rmp::Marker::True => Some(true),
+        rmp::Marker::False => Some(false),
+        _ => None,
+    }
+}
+
+/// Evaluates a simple equality condition directly against MsgPack bytes.
+/// Avoids the expensive decoding of the entire document into serde_json::Value.
+pub fn evaluate_binary_predicate(
+    msgpack_bytes: &[u8],
+    target_key: &str,
+    target_value: &str
+) -> bool {
+    evaluate_predicate_msgpack(
+        msgpack_bytes,
+        target_key,
+        "$eq",
+        &Value::String(target_value.to_string()),
+    ).unwrap_or(false)
+}
+
+// ─── Projection / exclusion ──────────────────────────────────────────────────
 
 // Returns a new document containing only the requested dot-notation fields.
 pub fn project(doc: &Value, fields: &[Value]) -> Value {
@@ -199,6 +320,8 @@ fn remove_nested_value(target: &mut Map<String, Value>, parts: &[&str]) {
         }
     }
 }
+
+// ─── WHERE evaluation (on decoded Value) ─────────────────────────────────────
 
 // Evaluates a WHERE clause against a document.
 // Supports $or/$and logical operators and field-level operators: $eq, $ne, $gt, $gte, $lt, $lte,
@@ -377,5 +500,70 @@ mod tests {
         assert!(!evaluate_where(&doc, &json!({ "role": { "$in": ["guest", "user"] } })).unwrap());
         assert!(evaluate_where(&doc, &json!({ "role": { "$nin": ["guest", "user"] } })).unwrap());
         assert!(!evaluate_where(&doc, &json!({ "role": { "$nin": ["admin", "user"] } })).unwrap());
+    }
+
+    #[test]
+    fn test_evaluate_predicate_msgpack_eq_ne() {
+        let doc = json!({ "brand": "Apple", "price": 999.0 });
+        let bytes = rmp_serde::to_vec(&doc).unwrap();
+
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "brand", "$eq", &json!("Apple")),
+            Some(true)
+        );
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "brand", "$eq", &json!("apple")),
+            Some(true)
+        );
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "brand", "$ne", &json!("Intel")),
+            Some(true)
+        );
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "brand", "$ne", &json!("Apple")),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_evaluate_predicate_msgpack_in_nin() {
+        let doc = json!({ "brand": "Dell" });
+        let bytes = rmp_serde::to_vec(&doc).unwrap();
+
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "brand", "$in", &json!(["Apple", "Dell", "Razer"])),
+            Some(true)
+        );
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "brand", "$in", &json!(["Apple", "Razer"])),
+            Some(false)
+        );
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "brand", "$nin", &json!(["Framework", "Lenovo"])),
+            Some(true)
+        );
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "brand", "$nin", &json!(["Dell", "Lenovo"])),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_evaluate_predicate_msgpack_nested() {
+        let doc = json!({ "specs": { "cpu": { "brand": "Intel" } } });
+        let bytes = rmp_serde::to_vec(&doc).unwrap();
+
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "specs.cpu.brand", "$eq", &json!("Intel")),
+            Some(true)
+        );
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "specs.cpu.brand", "$ne", &json!("Intel")),
+            Some(false)
+        );
+        assert_eq!(
+            evaluate_predicate_msgpack(&bytes, "specs.cpu.brand", "$nin", &json!(["AMD", "Apple"]),),
+            Some(true)
+        );
     }
 }

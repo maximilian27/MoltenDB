@@ -41,18 +41,11 @@ pub fn fetch_documents(
             // Full scan -- apply WHERE early when there are no joins (avoids materialising filtered-out docs).
             if let Some(clause) = where_clause {
                 if !has_joins {
-                    // Extract simple $eq condition for binary evaluation
-                    let mut simple_match = None;
-                    if let Some(obj) = clause.as_object() {
-                        if obj.len() == 1 {
-                            let (k, v) = obj.iter().next().unwrap();
-                            if !k.starts_with('$') {
-                                if let Some(v_str) = v.as_str() {
-                                    simple_match = Some((k.clone(), v_str.to_string()));
-                                }
-                            }
-                        }
-                    }
+                    // Try to extract a single-field operator predicate that can be
+                    // evaluated directly on MsgPack bytes — covers $eq, $ne, $in, $nin
+                    // and dot-notation paths (e.g. "specs.cpu.brand").
+                    // This avoids full rmp_serde deserialization for every document.
+                    let fast_pred = extract_single_field_predicate(clause);
 
                     let clause = clause.clone();
                     let prefixes = _allowed_prefixes.map(|p| p.to_vec());
@@ -64,14 +57,12 @@ pub fn fetch_documents(
                                     return false;
                                 }
                             }
-                            if let Some((ref k, ref v)) = simple_match {
-                                if query::evaluate_binary_predicate(doc_bytes, k, v) {
-                                    return true;
-                                }
-                                return false;
+                            // Fast path: evaluate directly on MsgPack bytes
+                            if let Some((ref field, ref op, ref val)) = fast_pred {
+                                return query::evaluate_predicate_msgpack(doc_bytes, field, op, val)
+                                    .unwrap_or(false);
                             }
-                            
-                            // fallback
+                            // Fallback: full deserialization (complex / logical queries)
                             let doc: Value = match rmp_serde::from_slice(doc_bytes) {
                                 Ok(d) => d,
                                 Err(_) => return false,
@@ -83,7 +74,7 @@ pub fn fetch_documents(
                     );
                 }
             }
-            
+
             // Apply prefix gating even for get_all, or use get_all with offset/limit
             if let Some(prefixes) = _allowed_prefixes {
                 let pfxs = prefixes.to_vec();
@@ -93,11 +84,48 @@ pub fn fetch_documents(
                         pfxs.iter().any(|p| key.starts_with(p))
                     },
                     offset,
-                    Some(count_limit), // we want exactly up to count_limit after offset
-                ); // wait, if we use get_filtered we need to fetch offset + count_limit in get_filtered because offset skips there.
+                    Some(count_limit),
+                );
             }
-            
+
             db.get_all(col_name, offset, Some(count_limit))
         }
+    }
+}
+
+/// Try to extract a single-field predicate from a WHERE clause of the form:
+///   `{ "field": { "$op": value } }`  or  `{ "field": value }` (implicit $eq)
+///
+/// Returns `Some((field_path, operator, op_value))` when the clause is a
+/// single-field condition with an operator supported by
+/// `query::evaluate_predicate_msgpack` ($eq, $ne, $in, $nin).
+/// Returns `None` for logical operators ($or/$and), multi-field clauses, or
+/// operators that require full deserialization ($gt, $lt, $ct, …).
+fn extract_single_field_predicate(clause: &Value) -> Option<(String, String, Value)> {
+    let obj = clause.as_object()?;
+    if obj.len() != 1 {
+        return None;
+    }
+    let (field, condition) = obj.iter().next()?;
+    // Skip logical operators
+    if field.starts_with('$') {
+        return None;
+    }
+    match condition {
+        // Implicit equality: { "field": "value" }
+        Value::String(_) | Value::Number(_) | Value::Bool(_) => {
+            Some((field.clone(), "$eq".to_string(), condition.clone()))
+        }
+        // Explicit operator: { "field": { "$op": value } }
+        Value::Object(op_obj) if op_obj.len() == 1 => {
+            let (op, op_val) = op_obj.iter().next()?;
+            match op.as_str() {
+                "$eq" | "$equals" | "$ne" | "$notEquals" | "$in" | "$oneOf" | "$nin" | "$notIn" => {
+                    Some((field.clone(), op.clone(), op_val.clone()))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
