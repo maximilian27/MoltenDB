@@ -1,6 +1,7 @@
 ﻿# [1.0.0-rc5] (May 21, 2026)
 
 ### Performance
+* **Parallel Phase 3 decode** -- `get_filtered`, `get_all`, and `get_filtered_numeric_simd` now use `par_iter()` in Phase 3 (decoding the page-sized subset of documents) instead of a sequential `iter()`. For `count: 100` with heavy documents this is free parallelism — the decode work is embarrassingly parallel and scales near-linearly with available cores. The wasm32 paths remain sequential (no rayon on wasm32).
 * **Multi-condition WHERE clauses now use the MsgPack fast path** — previously, any WHERE clause with more than one condition (e.g. `{ "price": { "$gte": 1500, "$lte": 2500 } }` or `{ "in_stock": true, "price": { "$lt": 1000 } }`) fell through to full `rmp_serde` deserialization for every document because `extract_single_field_predicate` required exactly one field with exactly one operator. The new `extract_fast_predicates` helper flattens the entire WHERE clause into a flat list of `(field, op, value)` triples and evaluates them all directly on raw MsgPack bytes via `evaluate_predicate_msgpack`. All conditions are AND-ed together without ever calling `rmp_serde::from_slice`. This covers:
   - **Multi-operator on the same field**: `{ "price": { "$gte": 1500, "$lte": 2500 } }` → two raw-byte comparisons per doc
   - **Multi-field predicates**: `{ "in_stock": true, "price": { "$lt": 1000 } }` → two raw-byte comparisons per doc

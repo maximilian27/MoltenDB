@@ -92,9 +92,9 @@ pub fn get_filtered(
         let start = offset.min(matching.len());
         let page = &matching[start..end];
 
-        // Phase 3: decode only the documents on the requested page.
+        // Phase 3: decode only the documents on the requested page (parallel).
         page
-            .iter()
+            .par_iter()
             .filter_map(|(_, k)| {
                 let v = decode(col.get(k)?.value())?;
                 Some((k.clone(), v))
@@ -227,7 +227,7 @@ pub fn get_filtered_numeric_simd(
     let start = offset.min(matching.len());
     let page = &matching[start..end];
 
-    page.iter()
+    page.par_iter()
         .filter_map(|(_, k)| {
             let v = decode(col.get(k)?.value())?;
             Some((k.clone(), v))
@@ -376,7 +376,7 @@ pub fn get_all(
         };
         let start = offset.min(pairs.len());
         pairs[start..end]
-            .iter()
+            .par_iter()
             .filter_map(|(_, k)| decode(col.get(k)?.value()).map(|v| (k.clone(), v)))
             .collect()
     }

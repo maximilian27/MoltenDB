@@ -64,7 +64,7 @@ pub fn fetch_documents(
                     // raw MsgPack bytes. Returns a non-empty Vec when ALL conditions
                     // in the WHERE clause are fast-path compatible; empty Vec means
                     // at least one condition requires full deserialization (e.g. $or,
-                    // $and, $ct, or unknown operators).
+                    // $and, or unknown operators).
                     let fast_preds = extract_fast_predicates(clause);
 
                     // SIMD fast path: single numeric range predicate with no prefix
@@ -154,7 +154,7 @@ pub fn fetch_documents(
 ///   `{ "in_stock": true, "price": { "$lt": 1000 } }`
 ///       → `[("in_stock", "$eq", true), ("price", "$lt", 1000)]`
 ///
-///   `{ "$or": [...] }` or `{ "tags": { "$ct": "gaming" } }`
+///   - Any operator is not in the fast-path set (e.g. `$ct`, `$contains`)
 ///       → `[]`  (requires full deserialization)
 fn extract_fast_predicates(clause: &Value) -> Vec<(String, String, Value)> {
     let obj = match clause.as_object() {
