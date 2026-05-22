@@ -523,3 +523,14 @@ Content-Type: application/json
 Authorization: Bearer {{token}}
 
 {}
+
+### ─── §10. Stats ──────────────────────────────────────────────────────────
+### §9. Get collections stats.
+POST http://localhost:1538/stats
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+"collection": "stress"
+}
+

@@ -103,23 +103,41 @@ pub fn get_filtered(
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let mut results = Vec::new();
-        let mut skipped = 0usize;
-        if let Some(col) = state.get(collection) {
-            for entry in col.iter() {
-                if !predicate(entry.key(), entry.value()) { continue; }
-                let v = match decode(entry.value()) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                if skipped < offset { skipped += 1; continue; }
-                results.push((entry.key().clone(), v));
-                if let Some(lim) = count && results.len() >= lim {
-                    break;
+        let col = match state.get(collection) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        // Phase 1: collect (seq, key) pairs for docs that pass the predicate.
+        let mut matching: Vec<(u64, String)> = col
+            .iter()
+            .filter_map(|entry| {
+                if predicate(entry.key(), entry.value()) {
+                    let seq = read_msgpack_seq(entry.value());
+                    Some((seq, entry.key().clone()))
+                } else {
+                    None
                 }
-            }
-        }
-        results
+            })
+            .collect();
+
+        // Phase 2: sort by insertion order (_seq), then slice to the requested page.
+        matching.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        let end = match count {
+            Some(l) => (offset + l).min(matching.len()),
+            None => matching.len(),
+        };
+        let start = offset.min(matching.len());
+        let page = &matching[start..end];
+
+        // Phase 3: decode only the documents on the requested page.
+        page
+            .iter()
+            .filter_map(|(_, k)| {
+                let v = decode(col.get(k)?.value())?;
+                Some((k.clone(), v))
+            })
+            .collect()
     }
 }
 
@@ -364,22 +382,24 @@ pub fn get_all(
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let mut results = Vec::new();
-        let mut skipped = 0usize;
-        if let Some(col) = state.get(collection) {
-            for entry in col.iter() {
-                if skipped < offset {
-                    skipped += 1;
-                    continue;
-                }
-                if let Some(val) = decode(entry.value()) {
-                    results.push((entry.key().clone(), val));
-                    if let Some(lim) = count && results.len() >= lim {
-                        break;
-                    }
-                }
-            }
-        }
-        results
+        let col = match state.get(collection) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+        // Collect (seq, key) so we can sort by insertion order before paging.
+        let mut pairs: Vec<(u64, String)> = col
+            .iter()
+            .map(|entry| (read_msgpack_seq(entry.value()), entry.key().clone()))
+            .collect();
+        pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        let end = match count {
+            Some(l) => (offset + l).min(pairs.len()),
+            None => pairs.len(),
+        };
+        let start = offset.min(pairs.len());
+        pairs[start..end]
+            .iter()
+            .filter_map(|(_, k)| decode(col.get(k)?.value()).map(|v| (k.clone(), v)))
+            .collect()
     }
 }

@@ -11,6 +11,7 @@
 * **Duplicate documents across paginated sorted queries** -- `HeapItem::Ord` previously broke ties by sort-value only, causing non-deterministic heap eviction when multiple documents share the same sort value. Ties are now broken by `key`, making the bounded heap fully deterministic. Both the rayon `push_into` guard and the wasm32 sequential path use the same `HeapItem::cmp` (value + key) comparator, so eviction decisions are consistent with heap ordering.
 
 ### Improvements
+* **wasm32 scan paths now identical to native** -- `get_filtered` and `get_all` on wasm32 now use the same three-phase (collect `(seq, key)` -> sort by `_seq` -> page -> decode) pattern as the native rayon path. Previously the wasm32 branches used a streaming early-stop loop that decoded documents before paging and applied `offset`/`count` inline, producing non-deterministic ordering and incorrect pagination. Both targets now sort by insertion order (`_seq`) and decode only the page-sized subset.
 * **Default sort order changed from `_key` (alphabetical) to `_seq` (insertion order)** -- when no `sort` field is provided, `get_filtered` and `get_all` now sort results by the document's `_seq` counter before applying `offset`/`count`. This matches the natural-order expectation of every major document database (MongoDB, CouchDB, Firestore) and avoids surprising alphabetical ordering when keys are user-supplied strings. A new `read_msgpack_seq` helper extracts `_seq` directly from raw MsgPack bytes without full deserialization; docs without `_seq` sort last (`u64::MAX` fallback).
 
 ---
