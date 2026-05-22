@@ -63,6 +63,28 @@ fn read_msgpack_map_len(bytes: &mut &[u8]) -> Option<u32> {
     }
 }
 
+/// Read the number of entries in a MsgPack array, advancing `bytes` past the
+/// array header. Returns None if the next value is not an array.
+fn read_msgpack_array_len(bytes: &mut &[u8]) -> Option<u32> {
+    let marker = read_marker(bytes).ok()?;
+    match marker {
+        rmp::Marker::FixArray(l) => Some(l as u32),
+        rmp::Marker::Array16 => {
+            if bytes.len() < 2 { return None; }
+            let l = u16::from_be_bytes([bytes[0], bytes[1]]) as u32;
+            *bytes = &bytes[2..];
+            Some(l)
+        }
+        rmp::Marker::Array32 => {
+            if bytes.len() < 4 { return None; }
+            let l = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            *bytes = &bytes[4..];
+            Some(l)
+        }
+        _ => None,
+    }
+}
+
 /// Skip one MsgPack value, advancing `bytes` past it.
 fn skip_value(bytes: &mut &[u8]) {
     let mut de = rmp_serde::Deserializer::new(*bytes);
@@ -198,6 +220,28 @@ pub fn evaluate_predicate_msgpack(
             let threshold = op_value.as_f64()?;
             let actual = read_msgpack_number(value_slice)?;
             Some(actual <= threshold)
+        }
+        "$ct" | "$contains" => {
+            let needle = op_value.as_str()?.to_lowercase();
+            // Try plain string first.
+            if let Some(haystack) = read_str_value(value_slice) {
+                return Some(haystack.contains(needle.as_str()));
+            }
+            // Try array: check if any string element contains the needle.
+            let mut arr_bytes = value_slice;
+            if let Some(arr_len) = read_msgpack_array_len(&mut arr_bytes) {
+                for _ in 0..arr_len {
+                    if let Some(elem) = read_msgpack_str(&mut arr_bytes) {
+                        if elem.to_lowercase().contains(needle.as_str()) {
+                            return Some(true);
+                        }
+                    } else {
+                        skip_value(&mut arr_bytes);
+                    }
+                }
+                return Some(false);
+            }
+            None
         }
         _ => None,
     }

@@ -1,4 +1,12 @@
-﻿# [1.0.0-rc5] (May 21, 2026)
+﻿# [1.0.0-rc6] (May 22, 2026)
+
+### Performance
+* **`$ct`/`$contains` added to the MsgPack fast path** -- substring-match predicates (e.g. `{ "model": { "$ct": "Pro" } }`) now evaluate directly on raw MsgPack bytes via `evaluate_predicate_msgpack` instead of falling back to full `rmp_serde` deserialization per document. The check is case-insensitive. Crucially, `$ct` now also works on **array fields** (e.g. `{ "tags": { "$ct": "gaming" } }` where `tags` is a string array) — the evaluator iterates the MsgPack array elements and returns `true` if any element contains the needle. `is_fast_path_op` in `fetch.rs` includes `$ct`/`$contains`, so mixed WHERE clauses also avoid full deserialization.
+* **Parallel Phase 3 decode** -- `get_filtered`, `get_all`, and `get_filtered_numeric_simd` now use `par_iter()` in Phase 3 (decoding the page-sized subset of documents) instead of a sequential `iter()`. For `count: 100` with heavy documents this is free parallelism — the decode work is embarrassingly parallel and scales near-linearly with available cores. The wasm32 paths remain sequential (no rayon on wasm32).
+
+---
+
+# [1.0.0-rc5] (May 21, 2026)
 
 ### Performance
 * **Parallel Phase 3 decode** -- `get_filtered`, `get_all`, and `get_filtered_numeric_simd` now use `par_iter()` in Phase 3 (decoding the page-sized subset of documents) instead of a sequential `iter()`. For `count: 100` with heavy documents this is free parallelism — the decode work is embarrassingly parallel and scales near-linearly with available cores. The wasm32 paths remain sequential (no rayon on wasm32).
@@ -6,7 +14,7 @@
   - **Multi-operator on the same field**: `{ "price": { "$gte": 1500, "$lte": 2500 } }` → two raw-byte comparisons per doc
   - **Multi-field predicates**: `{ "in_stock": true, "price": { "$lt": 1000 } }` → two raw-byte comparisons per doc
   - **Any combination of `$eq`, `$ne`, `$in`, `$nin`, `$gt`, `$gte`, `$lt`, `$lte`** across any number of fields
-* **Full deserialization fallback preserved** — clauses containing logical operators (`$or`, `$and`) or unsupported operators (`$ct`/`$contains`) still fall back to `evaluate_where` with full deserialization, exactly as before.
+* **Full deserialization fallback preserved** — clauses containing logical operators (`$or`, `$and`) or unknown/custom operators still fall back to `evaluate_where` with full deserialization, exactly as before.
 * **SIMD path unchanged** — the `get_filtered_numeric_simd` route is still taken for single-field, single numeric-range-op predicates with no prefix filter.
 * **SIMD-accelerated numeric range scans** -- numeric range predicates (`$gt`, `$gte`, `$lt`, `$lte`) on a single field now use a dedicated `get_filtered_numeric_simd` scan path (native only). The field value is extracted from raw MsgPack bytes for 4 documents at a time and compared in a single `f64x4` SIMD instruction via the `wide` crate, giving up to 4Ă— throughput improvement over scalar evaluation on numeric range queries (e.g. `{ "price": { "$gt": 100 } }` over 1M docs). The tail (< 4 docs) falls back to scalar `evaluate_predicate_msgpack`. On wasm32 the existing scalar path is used unchanged.
 * **Scalar fast-path extended to `$gt`/`$gte`/`$lt`/`$lte`** -- `evaluate_predicate_msgpack` now handles all four numeric range operators in addition to the existing `$eq`/`$ne`/`$in`/`$nin`, so even non-SIMD paths (wasm32, prefix-filtered queries) avoid full `rmp_serde` deserialization for numeric comparisons.

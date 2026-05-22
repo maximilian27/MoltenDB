@@ -17,6 +17,7 @@ fn is_fast_path_op(op: &str) -> bool {
         | "$in" | "$oneOf" | "$nin" | "$notIn"
         | "$gt" | "$greaterThan" | "$gte" | "$greaterThanOrEqual"
         | "$lt" | "$lessThan"   | "$lte" | "$lessThanOrEqual"
+        | "$ct" | "$contains"
     )
 }
 
@@ -64,7 +65,7 @@ pub fn fetch_documents(
                     // raw MsgPack bytes. Returns a non-empty Vec when ALL conditions
                     // in the WHERE clause are fast-path compatible; empty Vec means
                     // at least one condition requires full deserialization (e.g. $or,
-                    // $and, or unknown operators).
+                    // $and, or unknown/unsupported operators).
                     let fast_preds = extract_fast_predicates(clause);
 
                     // SIMD fast path: single numeric range predicate with no prefix
@@ -102,7 +103,7 @@ pub fn fetch_documents(
                                         .unwrap_or(false)
                                 });
                             }
-                            // Fallback: full deserialization (logical operators, $ct, etc.)
+                            // Fallback: full deserialization (logical operators $or/$and, etc.)
                             let doc: Value = match rmp_serde::from_slice(doc_bytes) {
                                 Ok(d) => d,
                                 Err(_) => return false,
@@ -141,7 +142,7 @@ pub fn fetch_documents(
 /// fast-path compatible. Returns an **empty** Vec (fall back to full
 /// deserialization) when:
 ///   - Any top-level key starts with `$` (logical operators: `$or`, `$and`, …)
-///   - Any operator is not in the fast-path set (e.g. `$ct`, `$contains`)
+///   - Any operator is not in the fast-path set (e.g. unknown/custom operators)
 ///   - The clause is not a plain JSON object
 ///
 /// Examples:
@@ -154,7 +155,7 @@ pub fn fetch_documents(
 ///   `{ "in_stock": true, "price": { "$lt": 1000 } }`
 ///       → `[("in_stock", "$eq", true), ("price", "$lt", 1000)]`
 ///
-///   - Any operator is not in the fast-path set (e.g. `$ct`, `$contains`)
+///   - Any operator is not in the fast-path set (e.g. unknown/custom operators)
 ///       → `[]`  (requires full deserialization)
 fn extract_fast_predicates(clause: &Value) -> Vec<(String, String, Value)> {
     let obj = match clause.as_object() {
@@ -179,7 +180,7 @@ fn extract_fast_predicates(clause: &Value) -> Vec<(String, String, Value)> {
             Value::Object(op_obj) => {
                 for (op, op_val) in op_obj {
                     if !is_fast_path_op(op) {
-                        // Unsupported operator (e.g. $ct) — bail out entirely.
+                        // Unsupported operator — bail out entirely.
                         return Vec::new();
                     }
                     result.push((field.clone(), op.clone(), op_val.clone()));
