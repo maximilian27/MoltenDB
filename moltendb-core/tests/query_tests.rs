@@ -84,3 +84,45 @@ fn test_query_projection() {
     assert!(first.get("name").is_some());
     assert!(first.get("type").is_none());
 }
+
+#[test]
+fn test_query_deep_pagination_zero_string_scan() {
+    let db = open_db();
+    
+    // Insert 6000 small items to test both bounded heap and flat vector select_nth_unstable_by paths
+    let items: Vec<(String, serde_json::Value)> = (0..6000)
+        .map(|i| {
+            (
+                format!("item_{}", i),
+                json!({
+                    "val": i,
+                    "type": "test",
+                }),
+            )
+        })
+        .collect();
+    
+    db.insert("items", items).unwrap();
+    
+    // 1. Small offset + limit (<= 5000), using bounded heap path
+    let payload_small = json!({
+        "collection": "items",
+        "where": {"type": "test"},
+        "offset": 10,
+        "count": 5,
+    });
+    let (_, results_small) = process_get(&db, &payload_small, 1024 * 1024, 1000);
+    let arr_small = results_small.as_array().unwrap();
+    assert_eq!(arr_small.len(), 5);
+    
+    // 2. Large offset + limit (> 5000), using flat vec select_nth_unstable_by path
+    let payload_large = json!({
+        "collection": "items",
+        "where": {"type": "test"},
+        "offset": 5500,
+        "count": 10,
+    });
+    let (_, results_large) = process_get(&db, &payload_large, 1024 * 1024, 1000);
+    let arr_large = results_large.as_array().unwrap();
+    assert_eq!(arr_large.len(), 10);
+}

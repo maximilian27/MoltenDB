@@ -41,7 +41,7 @@ MoltenDB is a portable document engine written in Rust. It provides a consistent
 - **In-memory store:** the entire dataset lives in RAM (`DashMap`) — reads are pure hashmap lookups with no disk I/O; RAM is the hard dataset size limit
 - `WHERE` clause with: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains` / `$ct` (strings and arrays), `$in` / `$oneOf`, `$nin` / `$notIn` — all string comparisons are **case-insensitive**
 - Field projection (`fields`) and field exclusion (`excludedFields`) — mutually exclusive, validated before any data is read
-- Pagination: `count` (limit) and `offset`
+- Pagination: `count` (limit) and `offset`. Note: While `offset` is fully supported, **Cursor Pagination** using the system `_seq` field is the recommended pagination pattern for large datasets to avoid memory/performance overhead.
 - Cross-collection joins with dot-notation foreign keys
 - **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
 - **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.
