@@ -1,6 +1,14 @@
 use serde_json::Value;
 use crate::{engine, query};
 
+/// Returns true if `op` is one of the four numeric range operators that can
+/// be accelerated via the SIMD scan path.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_numeric_range_op(op: &str) -> bool {
+    matches!(op, "$gt" | "$greaterThan" | "$gte" | "$greaterThanOrEqual"
+               | "$lt" | "$lessThan"   | "$lte" | "$lessThanOrEqual")
+}
+
 /// Fetch raw documents from the engine based on the request payload.
 /// - Single key: returns one document.
 /// - Key array: returns a batch.
@@ -46,6 +54,22 @@ pub fn fetch_documents(
                     // and dot-notation paths (e.g. "specs.cpu.brand").
                     // This avoids full rmp_serde deserialization for every document.
                     let fast_pred = extract_single_field_predicate(clause);
+
+                    // SIMD fast path: numeric range predicate with no prefix filter.
+                    // Routes to get_filtered_numeric_simd which batches 4 docs per
+                    // f64x4 SIMD comparison instead of evaluating one-by-one.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if _allowed_prefixes.is_none() {
+                        if let Some((ref field, ref op, ref val)) = fast_pred {
+                            if is_numeric_range_op(op) {
+                                if let Some(threshold) = val.as_f64() {
+                                    return db.get_filtered_numeric_simd(
+                                        col_name, field, op, threshold, offset, Some(count_limit),
+                                    );
+                                }
+                            }
+                        }
+                    }
 
                     let clause = clause.clone();
                     let prefixes = _allowed_prefixes.map(|p| p.to_vec());
@@ -120,7 +144,10 @@ fn extract_single_field_predicate(clause: &Value) -> Option<(String, String, Val
         Value::Object(op_obj) if op_obj.len() == 1 => {
             let (op, op_val) = op_obj.iter().next()?;
             match op.as_str() {
-                "$eq" | "$equals" | "$ne" | "$notEquals" | "$in" | "$oneOf" | "$nin" | "$notIn" => {
+                "$eq" | "$equals" | "$ne" | "$notEquals"
+                | "$in" | "$oneOf" | "$nin" | "$notIn"
+                | "$gt" | "$greaterThan" | "$gte" | "$greaterThanOrEqual"
+                | "$lt" | "$lessThan" | "$lte" | "$lessThanOrEqual" => {
                     Some((field.clone(), op.clone(), op_val.clone()))
                 }
                 _ => None,

@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use super::super::StorageBackend;
 use crate::query::read_msgpack_seq;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::query::evaluate_numeric_simd_batch;
 
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
@@ -119,6 +121,100 @@ pub fn get_filtered(
         }
         results
     }
+}
+
+/// Scan a collection filtering by a single numeric range predicate, using
+/// SIMD (`f64x4`) to evaluate 4 documents per cycle on native targets.
+///
+/// This is the hot path for queries like `{ "price": { "$gt": 100 } }` over
+/// large collections. The field value is extracted from raw MsgPack bytes at
+/// the given dot-notation `field_path`; 4 docs are batched into a `f64x4` and
+/// compared in one SIMD instruction. Docs where the field is missing or
+/// non-numeric are excluded (treated as non-matching).
+///
+/// Falls back to scalar `evaluate_predicate_msgpack` for the tail (< 4 docs).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_filtered_numeric_simd(
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    collection: &str,
+    field_path: &str,
+    operator: &str,
+    threshold: f64,
+    offset: usize,
+    count: Option<usize>,
+) -> Vec<(String, Value)> {
+    use rayon::prelude::*;
+
+    let col = match state.get(collection) {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+
+    // Collect all (key, bytes-ref) pairs so we can chunk them for SIMD.
+    // DashMap shards are already spread across threads via par_iter; we collect
+    // keys first (cheap — just Arc clones) then process in SIMD chunks.
+    let entries: Vec<(String, Box<[u8]>)> = col
+        .par_iter()
+        .map(|e| (e.key().clone(), e.value().clone()))
+        .collect();
+
+    // Process in chunks of 4 using SIMD; handle the tail scalarly.
+    let field_path = field_path.to_string();
+    let operator = operator.to_string();
+
+    let mut matching: Vec<(u64, String)> = entries
+        .par_chunks(4)
+        .flat_map_iter(|chunk| {
+            let mut out = Vec::with_capacity(chunk.len());
+            if chunk.len() == 4 {
+                // Full SIMD batch — 4 docs in one f64x4 comparison.
+                let docs = [
+                    chunk[0].1.as_ref(),
+                    chunk[1].1.as_ref(),
+                    chunk[2].1.as_ref(),
+                    chunk[3].1.as_ref(),
+                ];
+                if let Some(results) = evaluate_numeric_simd_batch(docs, &field_path, &operator, threshold) {
+                    for (i, matched) in results.iter().enumerate() {
+                        if *matched {
+                            let seq = read_msgpack_seq(&chunk[i].1);
+                            out.push((seq, chunk[i].0.clone()));
+                        }
+                    }
+                }
+            } else {
+                // Tail: scalar fallback for remaining 1–3 docs.
+                for (key, bytes) in chunk {
+                    let matched = crate::query::evaluate_predicate_msgpack(
+                        bytes, &field_path, &operator,
+                        &serde_json::Value::Number(
+                            serde_json::Number::from_f64(threshold).unwrap_or(serde_json::Number::from(0))
+                        ),
+                    ).unwrap_or(false);
+                    if matched {
+                        let seq = read_msgpack_seq(bytes);
+                        out.push((seq, key.clone()));
+                    }
+                }
+            }
+            out
+        })
+        .collect();
+
+    matching.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let end = match count {
+        Some(l) => (offset + l).min(matching.len()),
+        None => matching.len(),
+    };
+    let start = offset.min(matching.len());
+    let page = &matching[start..end];
+
+    page.iter()
+        .filter_map(|(_, k)| {
+            let v = decode(col.get(k)?.value())?;
+            Some((k.clone(), v))
+        })
+        .collect()
 }
 
 /// Scan a collection and return the top-N documents according to a comparator,
