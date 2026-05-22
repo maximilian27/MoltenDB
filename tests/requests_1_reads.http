@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTI5NDU5Mywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjUyY2E1MmEzLThjMmUtNDgwOS04NzYwLWViZjgzYzRiMDg3ZSJ9.8fjMQfvmUyEaGbpgrHaMIFc6038clfDKfPU9xR8wCOQ
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTQ3NzE0MSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjM2YWUwZGZhLTM3OWMtNDg4Mi1iNmM0LTgwMmMyZTM5MDczYSJ9.VZ563ptc1wrwh9bpxY4thfZguW-cWSKPNJiqmN4gn2M
 
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
@@ -192,7 +192,7 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model", "price"]
+  "fields": ["brand", "model", "price", "_seq"]
 }
 
 ### §8. Deep nested field selection — only the CPU clock speed buried 3 levels deep

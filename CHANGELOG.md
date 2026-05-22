@@ -1,3 +1,18 @@
+# [1.0.0-rc5] (May 21, 2026)
+
+### Performance
+* **Three-phase scan eliminates deserialization memory spikes** -- `get_filtered` (native path) now runs in three distinct phases: (1) parallel predicate scan collecting only matching `String` keys — no `Value` allocation; (2) sort + page-slice on the key list; (3) MsgPack decode for the page-sized subset only. For `$ne`/`$nin` queries matching 80%+ of a large collection, this avoids materialising hundreds of thousands of decoded `serde_json::Value` objects simultaneously, eliminating the x8–x10 RSS spike previously observed on those operators.
+* **Full MsgPack fast-path for `$ne`, `$in`, `$nin`, and nested-field predicates** -- extended the raw-bytes predicate evaluator (`evaluate_predicate_msgpack`) to cover all four common operators with full dot-notation support (e.g. `specs.cpu.brand`). Previously only `$eq` on plain top-level strings had a fast path; all other operators fell through to `rmp_serde::from_slice` per document, causing rayon workers to materialise the entire collection in memory simultaneously. The new path touches ~16–32 bytes per document for the common case.
+* **`get_all` also uses three-phase paging** -- the unfiltered path mirrors the same (seq, key) collect → sort → page → decode pattern, so sorted full-collection scans no longer decode documents that are outside the requested page window.
+
+### Bug Fixes
+* **Duplicate documents across paginated sorted queries** -- `HeapItem::Ord` previously broke ties by sort-value only, causing non-deterministic heap eviction when multiple documents share the same sort value. Ties are now broken by `key`, making the bounded heap fully deterministic. Both the rayon `push_into` guard and the wasm32 sequential path use the same `HeapItem::cmp` (value + key) comparator, so eviction decisions are consistent with heap ordering.
+
+### Improvements
+* **Default sort order changed from `_key` (alphabetical) to `_seq` (insertion order)** -- when no `sort` field is provided, `get_filtered` and `get_all` now sort results by the document's `_seq` counter before applying `offset`/`count`. This matches the natural-order expectation of every major document database (MongoDB, CouchDB, Firestore) and avoids surprising alphabetical ordering when keys are user-supplied strings. A new `read_msgpack_seq` helper extracts `_seq` directly from raw MsgPack bytes without full deserialization; docs without `_seq` sort last (`u64::MAX` fallback).
+
+---
+
 # [1.0.0-rc4] (May 19, 2026)
 
 ### Performance

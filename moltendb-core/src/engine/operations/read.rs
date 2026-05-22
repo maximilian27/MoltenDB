@@ -13,6 +13,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use super::super::StorageBackend;
+use crate::query::read_msgpack_seq;
 
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
@@ -65,33 +66,34 @@ pub fn get_filtered(
             None => return Vec::new(),
         };
 
-        // Phase 1: collect only the keys (+ raw bytes ref) that pass the predicate.
+        // Phase 1: collect (seq, key) pairs for docs that pass the predicate.
         // We deliberately do NOT decode to Value here so that filtered-out documents
         // (the majority for $ne/$nin queries) never get deserialized.
-        let mut matching_keys: Vec<String> = col
+        let mut matching: Vec<(u64, String)> = col
             .par_iter()
             .filter_map(|entry| {
                 if predicate(entry.key(), entry.value()) {
-                    Some(entry.key().clone())
+                    let seq = read_msgpack_seq(entry.value());
+                    Some((seq, entry.key().clone()))
                 } else {
                     None
                 }
             })
             .collect();
 
-        // Phase 2: sort for deterministic ordering, then slice to the requested page.
-        matching_keys.sort_unstable();
+        // Phase 2: sort by insertion order (_seq), then slice to the requested page.
+        matching.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
         let end = match count {
-            Some(l) => (offset + l).min(matching_keys.len()),
-            None => matching_keys.len(),
+            Some(l) => (offset + l).min(matching.len()),
+            None => matching.len(),
         };
-        let start = offset.min(matching_keys.len());
-        let page_keys = &matching_keys[start..end];
+        let start = offset.min(matching.len());
+        let page = &matching[start..end];
 
         // Phase 3: decode only the documents on the requested page.
-        page_keys
+        page
             .iter()
-            .filter_map(|k| {
+            .filter_map(|(_, k)| {
                 let v = decode(col.get(k)?.value())?;
                 Some((k.clone(), v))
             })
@@ -244,25 +246,25 @@ pub fn get_all(
 ) -> Vec<(String, Value)> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let mut matches: Vec<(String, Value)> = match state.get(collection) {
-            Some(col) => col
-                .par_iter()
-                .filter_map(|entry| {
-                    decode(entry.value()).map(|v| (entry.key().clone(), v))
-                })
-                .collect(),
+        let col = match state.get(collection) {
+            Some(c) => c,
             None => return Vec::new(),
         };
-        // Apply offset / count deterministically by key
-        if offset > 0 || count.is_some() {
-            matches.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        }
+        // Collect (seq, key) so we can sort by insertion order before paging.
+        let mut pairs: Vec<(u64, String)> = col
+            .par_iter()
+            .map(|entry| (read_msgpack_seq(entry.value()), entry.key().clone()))
+            .collect();
+        pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
         let end = match count {
-            Some(l) => (offset + l).min(matches.len()),
-            None => matches.len(),
+            Some(l) => (offset + l).min(pairs.len()),
+            None => pairs.len(),
         };
-        let start = offset.min(matches.len());
-        matches.drain(start..end).collect()
+        let start = offset.min(pairs.len());
+        pairs[start..end]
+            .iter()
+            .filter_map(|(_, k)| decode(col.get(k)?.value()).map(|v| (k.clone(), v)))
+            .collect()
     }
     #[cfg(target_arch = "wasm32")]
     {

@@ -225,6 +225,34 @@ fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
     }
 }
 
+/// Extract the `_seq` field from a MsgPack document as a u64.
+/// Returns `u64::MAX` as fallback so docs without `_seq` sort last.
+pub fn read_msgpack_seq(bytes: &[u8]) -> u64 {
+    find_msgpack_value(bytes, &["_seq"])
+        .and_then(|slice| {
+            let mut b = slice;
+            let marker = read_marker(&mut b).ok()?;
+            match marker {
+                rmp::Marker::FixPos(v) => Some(v as u64),
+                rmp::Marker::U8 => Some(*b.first()? as u64),
+                rmp::Marker::U16 => {
+                    if b.len() < 2 { return None; }
+                    Some(u16::from_be_bytes([b[0], b[1]]) as u64)
+                }
+                rmp::Marker::U32 => {
+                    if b.len() < 4 { return None; }
+                    Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as u64)
+                }
+                rmp::Marker::U64 => {
+                    if b.len() < 8 { return None; }
+                    Some(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                }
+                _ => None,
+            }
+        })
+        .unwrap_or(u64::MAX)
+}
+
 fn read_msgpack_bool(bytes: &[u8]) -> Option<bool> {
     let mut b = bytes;
     match read_marker(&mut b).ok()? {

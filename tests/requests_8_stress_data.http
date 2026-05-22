@@ -382,7 +382,7 @@ Authorization: Bearer {{token}}
   },
   "sort": [{ "field": "price", "order": "desc" }],
   "offset": 20,
-  "count": 10
+  "count": 20
 }
 
 ### §6d. Top 5 most expensive gaming items
