@@ -127,6 +127,10 @@ impl StorageBackend for SyncDiskStorage {
         self.swap_log()
     }
 
+    fn storage_mode(&self) -> &'static str {
+        "sync"
+    }
+
     /// Stream log entries into state using snapshot + delta replay.
     /// Same logic as AsyncDiskStorage::stream_log_into — see that method for details.
     fn stream_log_into(

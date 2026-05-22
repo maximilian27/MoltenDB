@@ -135,6 +135,12 @@ pub trait StorageBackend: Send + Sync {
         Ok(())
     }
 
+    /// Return a short string identifying the storage backend in use.
+    /// Defaults to `"inMemory"`. Disk backends override this.
+    fn storage_mode(&self) -> &'static str {
+        "inMemory"
+    }
+
     /// Stream log entries into state one at a time, without loading the full
     /// log into RAM. Implementations may load a binary snapshot first and only
     /// replay the delta lines written after the snapshot.

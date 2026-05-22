@@ -534,3 +534,8 @@ Authorization: Bearer {{token}}
 "collection": "stress"
 }
 
+### ─── §10. Stats ──────────────────────────────────────────────────────────
+### ✅ Metrics
+GET http://localhost:1538/system/metrics
+Authorization: Bearer {{token}}
+
