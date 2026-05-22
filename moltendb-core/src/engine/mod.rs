@@ -167,27 +167,6 @@ impl Db {
         operations::get_filtered(&self.state, &self.storage, collection, predicate, offset, count)
     }
 
-    /// Scan a collection filtering by a single numeric range predicate using
-    /// SIMD (`f64x4`) to evaluate 4 documents per cycle (native only).
-    ///
-    /// Use this instead of `get_filtered` when the WHERE clause is a single
-    /// numeric comparison (`$gt`, `$gte`, `$lt`, `$lte`) on a known field path.
-    /// On wasm32 this falls back to the scalar `get_filtered` path automatically.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn get_filtered_numeric_simd(
-        &self,
-        collection: &str,
-        field_path: &str,
-        operator: &str,
-        threshold: f64,
-        offset: usize,
-        count: Option<usize>,
-    ) -> Vec<(String, Value)> {
-        operations::get_filtered_numeric_simd(
-            &self.state, collection, field_path, operator, threshold, offset, count,
-        )
-    }
-
     /// Lazily scan a collection and return the top-`cap` documents according
     /// to a comparator, applying an optional predicate (e.g. WHERE) along the
     /// way.
@@ -395,7 +374,7 @@ impl Db {
             schema
         )
     }
-    
+
     /// Wipe all in-memory state.
     /// Used by the WASM layer when a browser tab unloads in in-memory mode,
     /// so that any tab refresh clears the shared RAM store for all tabs.

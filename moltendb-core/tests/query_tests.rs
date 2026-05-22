@@ -32,7 +32,7 @@ fn seed_data(db: &Db) {
 fn test_query_filtering() {
     let db = open_db();
     seed_data(&db);
-    
+
     // Exact match
     let payload = json!({
         "collection": "products",
@@ -40,7 +40,7 @@ fn test_query_filtering() {
     });
     let (_, results) = process_get(&db, &payload, 1024 * 1024, 1000);
     assert_eq!(results.as_array().unwrap().len(), 2);
-    
+
     // Numeric comparison
     let payload = json!({
         "collection": "products",
@@ -54,13 +54,13 @@ fn test_query_filtering() {
 fn test_query_sorting_pagination() {
     let db = open_db();
     seed_data(&db);
-    
+
     let payload = json!({
         "collection": "products",
         "sort": [{"field": "price", "order": "asc"}],
         "count": 2
     });
-    
+
     let (_, results) = process_get(&db, &payload, 1024 * 1024, 1000);
     let arr = results.as_array().unwrap();
     assert_eq!(arr.len(), 2);
@@ -72,12 +72,12 @@ fn test_query_sorting_pagination() {
 fn test_query_projection() {
     let db = open_db();
     seed_data(&db);
-    
+
     let payload = json!({
         "collection": "products",
         "fields": ["name"]
     });
-    
+
     let (_, results) = process_get(&db, &payload, 1024 * 1024, 1000);
     let arr = results.as_array().unwrap();
     let first = &arr[0];

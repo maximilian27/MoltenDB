@@ -2,8 +2,6 @@ use crate::engine::DbError;
 use serde_json::{Value, Map};
 use rmp::decode::read_marker;
 use serde::de::Deserialize;
-#[cfg(not(target_arch = "wasm32"))]
-use wide::{f64x4, CmpGt, CmpGe, CmpLt, CmpLe};
 
 // ─── MsgPack fast-path helpers ───────────────────────────────────────────────
 // These functions walk raw MsgPack bytes to evaluate predicates without
@@ -247,65 +245,6 @@ pub fn evaluate_predicate_msgpack(
     }
 }
 
-/// SIMD batch evaluation for numeric range predicates.
-///
-/// Given 4 raw MsgPack document byte slices, a dot-notation field path, a
-/// numeric comparison operator (`$gt`, `$gte`, `$lt`, `$lte`), and a threshold,
-/// extracts the field value from each document and evaluates all 4 comparisons
-/// in a single `f64x4` SIMD operation.
-///
-/// Returns `[bool; 4]` — one result per document. Documents where the field is
-/// missing or non-numeric yield `false`.
-///
-/// Falls back to scalar evaluation for operators other than the four numeric
-/// range ops (returns `None` so the caller can use the scalar path).
-#[cfg(not(target_arch = "wasm32"))]
-pub fn evaluate_numeric_simd_batch(
-    docs: [&[u8]; 4],
-    field_path: &str,
-    operator: &str,
-    threshold: f64,
-) -> Option<[bool; 4]> {
-    // Only handle the four numeric range operators.
-    match operator {
-        "$gt" | "$greaterThan" | "$gte" | "$greaterThanOrEqual"
-        | "$lt" | "$lessThan" | "$lte" | "$lessThanOrEqual" => {}
-        _ => return None,
-    }
-
-    let parts: Vec<&str> = field_path.split('.').collect();
-
-    // Extract f64 from each doc; use NaN as sentinel for missing/non-numeric.
-    let mut vals = [f64::NAN; 4];
-    for (i, doc) in docs.iter().enumerate() {
-        if let Some(slice) = find_msgpack_value(doc, &parts) {
-            if let Some(v) = read_msgpack_number(slice) {
-                vals[i] = v;
-            }
-        }
-    }
-
-    let simd_vals = f64x4::from(vals);
-    let simd_thresh = f64x4::splat(threshold);
-
-    // SIMD comparison — produces a mask where each lane is all-ones (true) or
-    // all-zeros (false). NaN comparisons always yield false, which is correct.
-    let mask = match operator {
-        "$gt" | "$greaterThan"         => simd_vals.cmp_gt(simd_thresh),
-        "$gte" | "$greaterThanOrEqual" => simd_vals.cmp_ge(simd_thresh),
-        "$lt" | "$lessThan"            => simd_vals.cmp_lt(simd_thresh),
-        "$lte" | "$lessThanOrEqual"    => simd_vals.cmp_le(simd_thresh),
-        _ => unreachable!(),
-    };
-
-    let bits = mask.move_mask();
-    Some([
-        bits & 0b0001 != 0,
-        bits & 0b0010 != 0,
-        bits & 0b0100 != 0,
-        bits & 0b1000 != 0,
-    ])
-}
 
 fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
     let mut b = bytes;
@@ -721,45 +660,4 @@ mod tests {
         );
     }
 
-    #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn test_evaluate_numeric_simd_batch() {
-        // Four docs with different prices: 50, 150, 200, 99
-        let docs: Vec<Vec<u8>> = [50.0f64, 150.0, 200.0, 99.0]
-            .iter()
-            .map(|&p| rmp_serde::to_vec(&json!({ "price": p })).unwrap())
-            .collect();
-        let slices: [&[u8]; 4] = [&docs[0], &docs[1], &docs[2], &docs[3]];
-
-        // $gt 100 → [false, true, true, false]
-        assert_eq!(
-            evaluate_numeric_simd_batch(slices, "price", "$gt", 100.0),
-            Some([false, true, true, false])
-        );
-        // $lte 99 → [true, false, false, true]
-        assert_eq!(
-            evaluate_numeric_simd_batch(slices, "price", "$lte", 99.0),
-            Some([true, false, false, true])
-        );
-        // $gte 200 → [false, false, true, false]
-        assert_eq!(
-            evaluate_numeric_simd_batch(slices, "price", "$gte", 200.0),
-            Some([false, false, true, false])
-        );
-        // $lt 50 → all false
-        assert_eq!(
-            evaluate_numeric_simd_batch(slices, "price", "$lt", 50.0),
-            Some([false, false, false, false])
-        );
-        // Non-numeric op → None (caller uses scalar path)
-        assert_eq!(
-            evaluate_numeric_simd_batch(slices, "price", "$eq", 150.0),
-            None
-        );
-        // Missing field → false for all lanes
-        assert_eq!(
-            evaluate_numeric_simd_batch(slices, "nonexistent", "$gt", 0.0),
-            Some([false, false, false, false])
-        );
-    }
 }

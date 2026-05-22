@@ -1,14 +1,6 @@
 ﻿use serde_json::Value;
 use crate::{engine, query};
 
-/// Returns true if `op` is one of the four numeric range operators that can
-/// be accelerated via the SIMD scan path.
-#[cfg(not(target_arch = "wasm32"))]
-fn is_numeric_range_op(op: &str) -> bool {
-    matches!(op, "$gt" | "$greaterThan" | "$gte" | "$greaterThanOrEqual"
-               | "$lt" | "$lessThan"   | "$lte" | "$lessThanOrEqual")
-}
-
 /// Returns true if `op` is supported by `evaluate_predicate_msgpack`
 /// (i.e. can be evaluated directly on raw MsgPack bytes without full deserialization).
 fn is_fast_path_op(op: &str) -> bool {
@@ -67,21 +59,6 @@ pub fn fetch_documents(
                     // at least one condition requires full deserialization (e.g. $or,
                     // $and, or unknown/unsupported operators).
                     let fast_preds = extract_fast_predicates(clause);
-
-                    // SIMD fast path: single numeric range predicate with no prefix
-                    // filter. Routes to get_filtered_numeric_simd which batches 4
-                    // docs per f64x4 SIMD comparison instead of evaluating one-by-one.
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if _allowed_prefixes.is_none() && fast_preds.len() == 1 {
-                        let (ref field, ref op, ref val) = fast_preds[0];
-                        if is_numeric_range_op(op) {
-                            if let Some(threshold) = val.as_f64() {
-                                return db.get_filtered_numeric_simd(
-                                    col_name, field, op, threshold, offset, Some(count_limit),
-                                );
-                            }
-                        }
-                    }
 
                     let clause = clause.clone();
                     let prefixes = _allowed_prefixes.map(|p| p.to_vec());

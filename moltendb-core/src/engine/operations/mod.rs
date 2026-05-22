@@ -28,8 +28,6 @@ pub mod ttl;
 mod recover;
 
 pub use read::{get, get_all, get_filtered, scan_top_n};
-#[cfg(not(target_arch = "wasm32"))]
-pub use read::get_filtered_numeric_simd;
 pub use insert::{insert, InsertParams};
 pub use update::{update, UpdateParams};
 pub use delete::{delete, delete_filtered, delete_collection, evict_oldest};
