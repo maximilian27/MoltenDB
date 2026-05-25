@@ -1,10 +1,10 @@
 [package]
 name = "moltendb-core"
-version = "1.0.0-rc4"
+version = "1.0.0-rc5"
 edition = "2024"
 authors = ["Maximilian Both <admin@moltendb.dev>"]
 description = "MoltenDB core engine — in-memory DashMap storage, WAL persistence, query evaluation. No HTTP, no auth."
-license-file = "LICENSE.md"
+license = "Apache-2.0"
 repository = "https://github.com/maximilian27/MoltenDB"
 keywords = ["nosql", "embedded", "local-first", "wasm", "json"]
 categories = ["database-implementations", "wasm", "data-structures"]

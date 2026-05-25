@@ -8,8 +8,17 @@ members = [
 resolver = "2"
 
 [profile.release]
+opt-level = 3        # Optimize for maximum runtime performance (speed over size)
+lto = "fat"          # Equivalent to `true`, enables aggressive cross-crate optimization
+codegen-units = 1    # Maximum optimization at the cost of compile time
+strip = true         # Removes symbols (keeps binary small without hurting speed)
+panic = "abort"      # Removes unwinding code, slightly improving performance
+
+[profile.wasm]
+inherits = "release"
 opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+

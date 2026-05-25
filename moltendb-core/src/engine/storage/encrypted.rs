@@ -126,6 +126,10 @@ impl StorageBackend for EncryptedStorage {
         Ok(decrypted)
     }
 
+    fn storage_mode(&self) -> &'static str {
+        self.inner.storage_mode()
+    }
+
     fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
         let mut count = 0u64;
         self.inner.stream_log_into(&mut |enc_entry, length| {

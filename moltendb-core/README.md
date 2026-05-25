@@ -8,7 +8,7 @@
 **The shared core that powers every MoltenDB runtime.**  
 Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 
-[![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](../LICENSE.md)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](../LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![crates.io](https://img.shields.io/crates/v/moltendb-core?style=flat-square)](https://crates.io/crates/moltendb-core)
 [![Status](https://img.shields.io/badge/status-1.0.0--rc4-blue?style=flat-square)](../CHANGELOG.md)
@@ -28,7 +28,7 @@ Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 ### Layer 1: Query Engine
 - **Query evaluator** — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$contains`, `$or`, `$and`
 - **Fine-grained field projection** — include (`fields`) or exclude (`excludedFields`) at any dot-notation depth
-- **Joins, sort, pagination** — cross-collection joins, multi-field sort, `count` / `offset`
+- **Joins, sort, pagination** — cross-collection joins, multi-field sort, `count` / `offset`. (Note: Cursor pagination using the system `_seq` field is recommended over `offset` for optimal performance and memory on deep datasets).
 - **Input validation** — collection name, key, and field name rules enforced before any operation reaches the engine
 
 ### Layer 2: Storage & Runtime Adapters
@@ -60,7 +60,7 @@ WASM-specific code (`OpfsStorage`, `Db::open_wasm`) is gated behind `#[cfg(targe
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc4"
+moltendb-core = "1.0.0-rc5"
 ```
 
 ### Minimal example
@@ -113,6 +113,8 @@ println!("{} — {}", status_code, result);
 ```
 
 > **Pagination defaults:** `count` defaults to `100` if not supplied. Values above `1000` are rejected with a `400 Bad Request` error. This applies to both `/get` and bulk `/delete` (with `where`).
+>
+> 💡 **Recommended Pagination Pattern:** Although `offset` is fully supported, it is **highly recommended** to use **Cursor Pagination** for large or deep datasets. You can query and track the system-managed `_seq` property (monotonically increasing document sequence number) as a cursor (e.g. `where: { "_seq": { "$gt": last_seen_seq } }`) to achieve $O(1)$ query times and zero memory overhead under deep pagination.
 
 ---
 
@@ -160,7 +162,7 @@ Every document automatically receives the following engine-managed fields. Any f
 |---|---|
 | `_key` | The document's own key — injected on read, never stored inside the document body |
 | `_v` | Version counter, incremented on every write by the engine. Always starts at `1` for new documents. |
-| `_seq` | Monotonic insertion sequence number — strictly increasing within a collection. Assigned at first insert and preserved on overwrites. Used for FIFO eviction when `maxSize` is set. **Opt-in** — only returned when explicitly listed in `fields`. |
+| `_seq` | Monotonic insertion sequence number — strictly increasing within a collection. Assigned at first insert and preserved on overwrites. Used for FIFO eviction when `maxSize` is set, and highly recommended as a cursor for Cursor Pagination (O(1) deep pagination). **Opt-in** — only returned when explicitly listed in `fields`. |
 | `_createdAt` | ISO-8601 timestamp set once at first insert and never overwritten. **Opt-in** — only returned when explicitly listed in `fields`. |
 | `_modifiedAt` | ISO-8601 timestamp updated on every write. **Opt-in** — only returned when explicitly listed in `fields`. |
 | `_expiresAt` | ISO-8601 timestamp when the **collection** expires. This is a **virtual field** — never stored inside documents. **Opt-in** — only returned when explicitly listed in `fields` (only relevant for TTL collections). |

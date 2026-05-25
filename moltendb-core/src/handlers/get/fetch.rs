@@ -1,5 +1,17 @@
-use serde_json::Value;
+﻿use serde_json::Value;
 use crate::{engine, query};
+
+/// Returns true if `op` is supported by `evaluate_predicate_msgpack`
+/// (i.e. can be evaluated directly on raw MsgPack bytes without full deserialization).
+fn is_fast_path_op(op: &str) -> bool {
+    matches!(op,
+        "$eq" | "$equals" | "$ne" | "$notEquals"
+        | "$in" | "$oneOf" | "$nin" | "$notIn"
+        | "$gt" | "$greaterThan" | "$gte" | "$greaterThanOrEqual"
+        | "$lt" | "$lessThan"   | "$lte" | "$lessThanOrEqual"
+        | "$ct" | "$contains"
+    )
+}
 
 /// Fetch raw documents from the engine based on the request payload.
 /// - Single key: returns one document.
@@ -41,18 +53,12 @@ pub fn fetch_documents(
             // Full scan -- apply WHERE early when there are no joins (avoids materialising filtered-out docs).
             if let Some(clause) = where_clause {
                 if !has_joins {
-                    // Extract simple $eq condition for binary evaluation
-                    let mut simple_match = None;
-                    if let Some(obj) = clause.as_object() {
-                        if obj.len() == 1 {
-                            let (k, v) = obj.iter().next().unwrap();
-                            if !k.starts_with('$') {
-                                if let Some(v_str) = v.as_str() {
-                                    simple_match = Some((k.clone(), v_str.to_string()));
-                                }
-                            }
-                        }
-                    }
+                    // Extract all AND-conditions that can be evaluated directly on
+                    // raw MsgPack bytes. Returns a non-empty Vec when ALL conditions
+                    // in the WHERE clause are fast-path compatible; empty Vec means
+                    // at least one condition requires full deserialization (e.g. $or,
+                    // $and, or unknown/unsupported operators).
+                    let fast_preds = extract_fast_predicates(clause);
 
                     let clause = clause.clone();
                     let prefixes = _allowed_prefixes.map(|p| p.to_vec());
@@ -64,14 +70,17 @@ pub fn fetch_documents(
                                     return false;
                                 }
                             }
-                            if let Some((ref k, ref v)) = simple_match {
-                                if query::evaluate_binary_predicate(doc_bytes, k, v) {
-                                    return true;
-                                }
-                                return false;
+                            // Fast path: evaluate all conditions directly on MsgPack bytes.
+                            // This covers single-op, multi-op on same field
+                            // (e.g. $gte + $lte), and multi-field predicates —
+                            // all without full rmp_serde deserialization.
+                            if !fast_preds.is_empty() {
+                                return fast_preds.iter().all(|(field, op, val)| {
+                                    query::evaluate_predicate_msgpack(doc_bytes, field, op, val)
+                                        .unwrap_or(false)
+                                });
                             }
-                            
-                            // fallback
+                            // Fallback: full deserialization (logical operators $or/$and, etc.)
                             let doc: Value = match rmp_serde::from_slice(doc_bytes) {
                                 Ok(d) => d,
                                 Err(_) => return false,
@@ -83,7 +92,7 @@ pub fn fetch_documents(
                     );
                 }
             }
-            
+
             // Apply prefix gating even for get_all, or use get_all with offset/limit
             if let Some(prefixes) = _allowed_prefixes {
                 let pfxs = prefixes.to_vec();
@@ -93,11 +102,71 @@ pub fn fetch_documents(
                         pfxs.iter().any(|p| key.starts_with(p))
                     },
                     offset,
-                    Some(count_limit), // we want exactly up to count_limit after offset
-                ); // wait, if we use get_filtered we need to fetch offset + count_limit in get_filtered because offset skips there.
+                    Some(count_limit),
+                );
             }
-            
+
             db.get_all(col_name, offset, Some(count_limit))
         }
     }
+}
+
+/// Extract all AND-conditions from a WHERE clause as a flat list of
+/// `(field_path, operator, value)` triples that can each be evaluated
+/// directly on raw MsgPack bytes via `query::evaluate_predicate_msgpack`.
+///
+/// Returns a **non-empty** Vec when every condition in the clause is
+/// fast-path compatible. Returns an **empty** Vec (fall back to full
+/// deserialization) when:
+///   - Any top-level key starts with `$` (logical operators: `$or`, `$and`, …)
+///   - Any operator is not in the fast-path set (e.g. unknown/custom operators)
+///   - The clause is not a plain JSON object
+///
+/// Examples:
+///   `{ "brand": "Apple" }`
+///       → `[("brand", "$eq", "Apple")]`
+///
+///   `{ "price": { "$gte": 1500, "$lte": 2500 } }`
+///       → `[("price", "$gte", 1500), ("price", "$lte", 2500)]`
+///
+///   `{ "in_stock": true, "price": { "$lt": 1000 } }`
+///       → `[("in_stock", "$eq", true), ("price", "$lt", 1000)]`
+///
+///   - Any operator is not in the fast-path set (e.g. unknown/custom operators)
+///       → `[]`  (requires full deserialization)
+fn extract_fast_predicates(clause: &Value) -> Vec<(String, String, Value)> {
+    let obj = match clause.as_object() {
+        Some(o) => o,
+        None => return Vec::new(),
+    };
+
+    let mut result = Vec::new();
+
+    for (field, condition) in obj {
+        // Logical operators ($or, $and, $not, …) require full deserialization.
+        if field.starts_with('$') {
+            return Vec::new();
+        }
+
+        match condition {
+            // Implicit equality: { "field": scalar }
+            Value::String(_) | Value::Number(_) | Value::Bool(_) => {
+                result.push((field.clone(), "$eq".to_string(), condition.clone()));
+            }
+            // Explicit operator(s): { "field": { "$op": value, … } }
+            Value::Object(op_obj) => {
+                for (op, op_val) in op_obj {
+                    if !is_fast_path_op(op) {
+                        // Unsupported operator — bail out entirely.
+                        return Vec::new();
+                    }
+                    result.push((field.clone(), op.clone(), op_val.clone()));
+                }
+            }
+            // Null, Array, or nested object — not directly comparable; fall back.
+            _ => return Vec::new(),
+        }
+    }
+
+    result
 }
