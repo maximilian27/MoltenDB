@@ -8,7 +8,7 @@
 **The shared core that powers every MoltenDB runtime.**  
 Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 
-[![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](../LICENSE.md)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](../LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![crates.io](https://img.shields.io/crates/v/moltendb-core?style=flat-square)](https://crates.io/crates/moltendb-core)
 [![Status](https://img.shields.io/badge/status-1.0.0--rc4-blue?style=flat-square)](../CHANGELOG.md)
@@ -60,7 +60,7 @@ WASM-specific code (`OpfsStorage`, `Db::open_wasm`) is gated behind `#[cfg(targe
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc4"
+moltendb-core = "1.0.0-rc5"
 ```
 
 ### Minimal example

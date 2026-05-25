@@ -8,7 +8,7 @@
 **JWT minting & validation · Scoped token delegation · Argon2 password hashing · Axum auth middleware**  
 No knowledge of HTTP routing, TLS, or the database engine.
 
-[![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
+[![License](https://img.shields.io/badge/license-Elastic--2.0-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![crates.io](https://img.shields.io/crates/v/moltendb-auth?style=flat-square)](https://crates.io/crates/moltendb-auth)
 [![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](../CHANGELOG.md)

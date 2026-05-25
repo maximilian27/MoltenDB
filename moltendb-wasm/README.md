@@ -8,7 +8,7 @@
 **wasm-bindgen glue · WorkerDb · OPFS storage · Web Worker entry point**  
 Exposes the `moltendb-core` engine to JavaScript. Zero server-side code.
 
-[![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![crates.io](https://img.shields.io/crates/v/moltendb-wasm?style=flat-square)](https://crates.io/crates/moltendb-wasm)
 [![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](../CHANGELOG.md)

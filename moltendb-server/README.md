@@ -8,7 +8,7 @@
 **Axum HTTP server · TLS · Scoped JWT auth · Token delegation · CORS · Rate limiting · WebSocket · CLI config**  
 The runnable binary. Delegates all database logic to `moltendb-core`.
 
-[![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
+[![License](https://img.shields.io/badge/license-Elastic--2.0-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![Tests](https://img.shields.io/badge/tests-59%20passing-brightgreen?style=flat-square)](#testing)
 [![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](../CHANGELOG.md)

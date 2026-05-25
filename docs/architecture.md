@@ -38,7 +38,7 @@ Keeping WASM bindings in a separate crate means `moltendb-core` and `moltendb-se
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "1.0.0-rc4"
+moltendb-core = "1.0.0-rc5"
 ```
 
 ```rust
