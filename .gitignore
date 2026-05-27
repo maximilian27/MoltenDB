@@ -16,3 +16,5 @@
 /my_database.cold.log
 /my_database.log.tmp
 /moltendb-benchmark-app/
+/server-tests/stress_data.json
+/server-tests/stress_keys.json

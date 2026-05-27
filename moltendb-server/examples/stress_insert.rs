@@ -61,8 +61,8 @@ fn main() {
     };
 
     // ── 2. Load and Chunk batches ─────────────────────────────────────────────
-    let raw = std::fs::read_to_string("tests/stress_data.json")
-        .expect("tests/stress_data.json not found — run generate_stress_data first");
+    let raw = std::fs::read_to_string("server-tests/stress_data.json")
+        .expect("server-tests/stress_data.json not found — run generate_stress_data first");
     let original_batches: Vec<Value> =
         serde_json::from_str(&raw).expect("parse stress_data.json");
 
