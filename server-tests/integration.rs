@@ -27,7 +27,7 @@ fn open_db() -> engine::Db {
     engine::Db::open(db_config).expect("open db")
 }
 
-/// Seed the three standard collections used by most tests.
+/// Seed the three standard collections used by most server-tests.
 fn seed(db: &engine::Db) {
     handlers::process_set(db, &json!({
         "collection": "memory",

@@ -85,8 +85,8 @@ async fn main() {
     };
 
     // ── 3. Load keys ─────────────────────────────────────────────────────────
-    let raw = std::fs::read_to_string("tests/stress_keys.json")
-        .expect("tests/stress_keys.json not found — run generate_stress_data first");
+    let raw = std::fs::read_to_string("server-tests/stress_keys.json")
+        .expect("server-tests/stress_keys.json not found — run generate_stress_data first");
     let all_keys: Vec<String> = serde_json::from_str(&raw).expect("parse stress_keys.json");
     let total_keys = all_keys.len();
 

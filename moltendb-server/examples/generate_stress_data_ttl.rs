@@ -1,8 +1,8 @@
 /// Generate 1,000,000 synthetic laptop-like documents for stress testing with TTL expiration.
 /// TTL is collection-level -- register a default TTL on the target collection via POST /schema
 /// before inserting this data so that all documents receive `_expiresAt` automatically.
-/// Writes `tests/stress_data.json` (100 batches of 10,000) and
-/// `tests/stress_keys.json` (flat list of all keys).
+/// Writes `server-tests/stress_data.json` (100 batches of 10,000) and
+/// `server-tests/stress_keys.json` (flat list of all keys).
 use serde_json::{json, Value};
 use std::fs;
 
@@ -79,21 +79,21 @@ fn main() {
         }));
     }
 
-    fs::create_dir_all("tests").expect("create tests dir");
+    fs::create_dir_all("server-tests").expect("create tests dir");
     fs::write(
-        "tests/stress_data.json",
+        "server-tests/stress_data.json",
         serde_json::to_string_pretty(&all_batches).unwrap(),
     )
     .expect("write stress_data.json");
 
     fs::write(
-        "tests/stress_keys.json",
+        "server-tests/stress_keys.json",
         serde_json::to_string_pretty(&all_keys).unwrap(),
     )
     .expect("write stress_keys.json");
 
     println!("Generated {} entries across {} batches (TTL collection).", total, batches);
     println!("  Register a collection TTL first: POST /schema {{ \"collection\": \"stress\", \"ttl\": 60 }}");
-    println!("  -> tests/stress_data.json");
-    println!("  -> tests/stress_keys.json");
+    println!("  -> server-tests/stress_data.json");
+    println!("  -> server-tests/stress_keys.json");
 }
