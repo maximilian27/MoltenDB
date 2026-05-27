@@ -459,7 +459,7 @@ pub async fn handle_metrics(
 
     // Database internals
     let hot_keys_count: usize = db.hot_keys_count();
-    let storage_mode = "tiered";
+    let storage_mode = db.storage.storage_mode();
 
     (StatusCode::OK, Json(json!({
         "uptime_seconds": uptime_seconds,

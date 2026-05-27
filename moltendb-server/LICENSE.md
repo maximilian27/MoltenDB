@@ -1,40 +1,50 @@
 # MoltenDB License
 Copyright (c) 2026 Maximilian Both. All rights reserved.
 
-MoltenDB is dual-licensed:
+This component of MoltenDB is licensed under the Elastic License 2.0.
 
-1. **Free for Startups & Personal Use:** Licensed under the Business Source License (BSL) 1.1 with an Additional Use Grant (see below).
-2. **Commercial/Enterprise Use:** For companies exceeding the revenue threshold, or companies wishing to provide MoltenDB as a managed cloud service, a commercial license is required. Contact: [admin@moltendb.dev](mailto:admin@moltendb.dev)
+For commercial licensing or custom enterprise agreements, please contact: [admin@moltendb.dev](mailto:admin@moltendb.dev).
 
 ---
 
-## Business Source License 1.1
+## Elastic License 2.0
 
-License text copyright (c) 2017 MariaDB Corporation Ab, All Rights Reserved.
-"Business Source License" is a trademark of MariaDB Corporation Ab.
+### Acceptance
 
-**Licensor:** Maximilian Both.
-**Licensed Work:** The MoltenDB source code and compiled binaries.
-**Change Date:** 3 years after the publication of each specific version/release.
-**Change License:** MIT License
+By using the software, you agree to all of the terms and conditions below.
 
-### Additional Use Grant
+### Copyright License
 
-You may make use of the Licensed Work (including running it in production) provided that your organization (including any parent companies, subsidiaries, and affiliates) meets **ALL** of the following conditions:
+The licensor grants you a non-exclusive, royalty-free, worldwide, non-sublicensable, non-transferable license to use, copy, distribute, make available, and prepare derivative works of the software, in each case subject to the limitations and conditions below.
 
-1. **Revenue Limit:** Your organization's total annual gross revenue does not exceed $5,000,000 USD (or equivalent).
-2. **Not a Managed Service:** You do not offer the Licensed Work to third parties as a hosted or managed service (e.g., Database-as-a-Service, Backend-as-a-Service), regardless of your company's revenue.
+### Limitations
 
-If you meet these conditions, the Licensor grants you a non-exclusive, royalty-free, worldwide license to reproduce, use, merge, publish, distribute, and modify the Licensed Work.
+You may not provide the software to third parties as a hosted or managed service, where the service provides users with access to any substantial set of the features or functionality of the software.
 
-If your organization exceeds the Revenue Limit, or if you wish to provide the Licensed Work as a managed service, you must purchase a Commercial License from the Licensor.
+You may not move, change, disable, or circumvent the license key functionality in the software, and you may not remove or obscure any functionality in the software that is protected by the license key.
 
-### Distribution Requirements
+You may not alter, remove, or obscure any licensing, copyright, or other notices of the licensor in the software. Any use of the licensor’s trademarks is subject to applicable law.
 
-Any redistribution of the Licensed Work, whether in source or binary form, must include a copy of this license. You may not distribute the Licensed Work or any derivative works without attaching this license in its entirety.
+### Patents
 
-### BSL General Terms
+The licensor grants you a license, under any patent claims the licensor can license, or becomes able to license, to make, have made, use, sell, offer for sale, import and have imported the software, in each case subject to the limitations and conditions in this license. This license does not cover any patent claims that you cause to be infringed by modifications or additions to the software. If you or your company make any written claim that the software infringes or contributes to infringement of any patent, your patent license for the software granted under these terms ends immediately. If your company makes such a claim, your patent license ends immediately for work on behalf of your company.
 
-If your use of the Licensed Work does not comply with the Additional Use Grant, you may still use the Licensed Work strictly for non-production, internal testing, and development purposes.
+### Notices
 
-Effective on the Change Date, or the fourth anniversary of the first publicly available distribution of a specific version of the Licensed Work under this License, whichever comes first, the Licensor hereby grants you rights under the terms of the Change License (MIT License), and the terms of this Business Source License will terminate for that specific version.
+You must ensure that anyone who gets a copy of any part of the software from you also gets a copy of these terms. If you modify the software, you must include in any modified copies of the software prominent notices stating that you have modified the software.
+
+### No Other Rights
+
+These terms do not imply any licenses other than those expressly granted in these terms.
+
+### Termination
+
+If you use the software in violation of these terms, such use is not licensed, and your licenses will automatically terminate. If the licensor provides you with a notice of your violation, and you cease all violation of this license no later than 30 days after you receive that notice, your licenses will be reinstated retroactively. However, if you violate these terms after such reinstatement, any additional violation of these terms will cause your licenses to terminate automatically and permanently.
+
+### No Liability
+
+As far as the law allows, the software comes as is, without any warranty or condition, and the licensor will not be liable to you for any damages arising out of these terms or the use or nature of the software, under any kind of legal claim.
+
+### Definitions
+
+The licensor is the entity offering these terms, and the software is the software the licensor makes available under these terms, including any portion of it.

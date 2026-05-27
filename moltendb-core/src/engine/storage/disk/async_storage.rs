@@ -288,6 +288,10 @@ impl StorageBackend for AsyncDiskStorage {
         self.swap_log()
     }
 
+    fn storage_mode(&self) -> &'static str {
+        "async"
+    }
+
     /// Stream log entries into state using snapshot + delta replay.
     ///
     /// Fast path (after first compaction):

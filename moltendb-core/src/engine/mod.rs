@@ -374,7 +374,7 @@ impl Db {
             schema
         )
     }
-    
+
     /// Wipe all in-memory state.
     /// Used by the WASM layer when a browser tab unloads in in-memory mode,
     /// so that any tab refresh clears the shared RAM store for all tabs.

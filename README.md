@@ -10,7 +10,7 @@ Same query engine. Same storage semantics. Different execution backends.
 
 **Server binary under 6MB. WASM engine fits on a floppy disk.**
 
-[![License](https://img.shields.io/badge/license-BSL%201.1-blue?style=flat-square)](LICENSE.md)
+[![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20Elastic--2.0-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen?style=flat-square)](./docs/api-reference.md#testing)
 [![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](CHANGELOG.md)
@@ -41,7 +41,7 @@ MoltenDB is a portable document engine written in Rust. It provides a consistent
 - **In-memory store:** the entire dataset lives in RAM (`DashMap`) — reads are pure hashmap lookups with no disk I/O; RAM is the hard dataset size limit
 - `WHERE` clause with: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$contains` / `$ct` (strings and arrays), `$in` / `$oneOf`, `$nin` / `$notIn` — all string comparisons are **case-insensitive**
 - Field projection (`fields`) and field exclusion (`excludedFields`) — mutually exclusive, validated before any data is read
-- Pagination: `count` (limit) and `offset`
+- Pagination: `count` (limit) and `offset`. Note: While `offset` is fully supported, **Cursor Pagination** using the system `_seq` field is the recommended pagination pattern for large datasets to avoid memory/performance overhead.
 - Cross-collection joins with dot-notation foreign keys
 - **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
 - **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.
@@ -136,7 +136,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc4"
+moltendb-core = "1.0.0-rc5"
 ```
 
 ### Download Pre-built Binaries
@@ -211,12 +211,15 @@ The resulting `recovered.snapshot.bin` can then be renamed to `my_database.log.s
 
 ## License
 
-MoltenDB is licensed under the [Business Source License 1.1](LICENSE.md).
+MoltenDB is distributed under a dual-license system:
 
-- **Free** for personal use and organisations with annual revenue under $5 million USD.
-- **Not permitted** to offer MoltenDB as a hosted/managed service (Database-as-a-Service) without a commercial license.
-- **Converts to MIT** automatically 3 years after each version's release date.
+- **Core & WASM Crates:** Licensed under the [Apache License, Version 2.0](LICENSE.md).
+- **Server & Auth Crates:** Licensed under the [Elastic License 2.0](LICENSE.md).
 
-For commercial licensing enquiries: [admin@moltendb.dev](mailto:admin@moltendb.dev)
+Under the Elastic License 2.0:
+- You may use, copy, modify, and redistribute the software for free.
+- **Not permitted:** You may not provide the software to third parties as a hosted or managed service.
+
+For commercial licensing or custom enterprise agreements: [admin@moltendb.dev](mailto:admin@moltendb.dev)
 
 [➡️ View the full API Reference & Documentation](docs/api-reference.md)
