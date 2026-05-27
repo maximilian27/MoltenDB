@@ -60,7 +60,7 @@ WASM-specific code (`OpfsStorage`, `Db::open_wasm`) is gated behind `#[cfg(targe
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc5"
+moltendb-core = "1.0.0-rc6"
 ```
 
 ### Minimal example
