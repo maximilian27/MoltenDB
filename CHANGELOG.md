@@ -1,4 +1,11 @@
-﻿# [1.0.0-rc5] (May 21, 2026)
+﻿# [1.0.0-rc6] (May 27, 2026)
+
+### Docs
+
+* **Added benchmarking docs** 
+* **Added transparency docs** 
+
+# [1.0.0-rc5] (May 21, 2026)
 
 ### Performance
 * **`$ct`/`$contains` added to the MsgPack fast path** -- substring-match predicates (e.g. `{ "model": { "$ct": "Pro" } }`) now evaluate directly on raw MsgPack bytes via `evaluate_predicate_msgpack` instead of falling back to full `rmp_serde` deserialization per document. The check is case-insensitive. Crucially, `$ct` now also works on **array fields** (e.g. `{ "tags": { "$ct": "gaming" } }` where `tags` is a string array) — the evaluator iterates the MsgPack array elements and returns `true` if any element contains the needle. `is_fast_path_op` in `fetch.rs` includes `$ct`/`$contains`, so mixed WHERE clauses also avoid full deserialization.
