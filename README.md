@@ -136,7 +136,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc7"
+moltendb-core = "1.0.0-rc8"
 ```
 
 ### Download Pre-built Binaries
