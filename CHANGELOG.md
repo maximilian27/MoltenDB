@@ -1,4 +1,10 @@
-﻿# [1.0.0-rc7] (May 27, 2026)
+﻿# [1.0.0-rc8] (May 28, 2026)
+
+### Bug Fixes
+
+* **Remove duplicate profiles from wasm build workflow**
+
+# [1.0.0-rc7] (May 28, 2026)
 
 ### CI
 
