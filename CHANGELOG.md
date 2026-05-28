@@ -1,4 +1,10 @@
-﻿# [1.0.0-rc6] (May 27, 2026)
+﻿# [1.0.0-rc7] (May 27, 2026)
+
+### CI
+
+* **Custom build profile for wasm crate when syncing with web repo** 
+
+# [1.0.0-rc6] (May 27, 2026)
 
 ### Docs
 
