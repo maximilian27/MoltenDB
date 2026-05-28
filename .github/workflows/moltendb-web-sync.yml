@@ -5,6 +5,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   build-and-sync:
@@ -31,17 +32,30 @@ jobs:
       - name: Hot-Swap Release Profile for WASM Optimization
         working-directory: ./core-repo
         run: |
-          echo "Overwriting profile.release with wasm optimizations..."
-          # This script uses sed to delete everything from [profile.release] down to [profile.wasm],
-          # then re-inserts [profile.release] with your 'z' size optimizations.
-          sed -i '/\[profile\.release\]/,/\[profile\.wasm\]/c\
-          [profile.release]\
-          opt-level = "z"\
-          lto = true\
-          codegen-units = 1\
-          strip = true\
-          panic = "abort"\
-          ' Cargo.toml
+          echo "Safely overwriting profile.release using inline Python..."
+          python3 -c '
+          with open("Cargo.toml", "r") as f:
+              content = f.read()
+          
+          # Split the file to locate your exact release profile block
+          if "[profile.release]" in content:
+              before, after = content.split("[profile.release]", 1)
+              # If there are other profiles below it, isolate just the release block
+              if "\n[" in after:
+                  target_block, rest = after.split("\n[", 1)
+                  rest = "\n[" + rest
+              else:
+                  target_block, rest = after, ""
+          
+              # Construct the new clean release profile matching your "z" specs
+              new_release = "\nopt-level = \"z\"\nlto = true\ncodegen-units = 1\nstrip = true\npanic = \"abort\"\n"
+          
+              # Reassemble the file
+              content = before + "[profile.release]" + new_release + rest
+          
+          with open("Cargo.toml", "w") as f:
+              f.write(content)
+          '
           
           echo "Verification of temporary Cargo.toml structure:"
           cat Cargo.toml | grep -A 6 "\[profile.release\]"
