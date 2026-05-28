@@ -8,7 +8,7 @@
 **Runs natively on the server (Rust binary), in the browser (WASM + OPFS), and purely in memory.**  
 Same query engine. Same storage semantics. Different execution backends.
 
-**Server binary under 6MB. WASM engine fits on a floppy disk.**
+**Server binary under 10MB. WASM engine fits on a floppy disk.**
 
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20Elastic--2.0-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
