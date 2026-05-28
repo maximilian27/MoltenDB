@@ -28,6 +28,24 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
+      - name: Hot-Swap Release Profile for WASM Optimization
+        working-directory: ./core-repo
+        run: |
+          echo "Overwriting profile.release with wasm optimizations..."
+          # This script uses sed to delete everything from [profile.release] down to [profile.wasm],
+          # then re-inserts [profile.release] with your 'z' size optimizations.
+          sed -i '/\[profile\.release\]/,/\[profile\.wasm\]/c\
+          [profile.release]\
+          opt-level = "z"\
+          lto = true\
+          codegen-units = 1\
+          strip = true\
+          panic = "abort"\
+          ' Cargo.toml
+          
+          echo "Verification of temporary Cargo.toml structure:"
+          cat Cargo.toml | grep -A 6 "\[profile.release\]"
+
       - name: Build WASM
         working-directory: ./core-repo
         run: wasm-pack build moltendb-wasm --target web
