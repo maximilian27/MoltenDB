@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTQ3NzE0MSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjM2YWUwZGZhLTM3OWMtNDg4Mi1iNmM0LTgwMmMyZTM5MDczYSJ9.VZ563ptc1wrwh9bpxY4thfZguW-cWSKPNJiqmN4gn2M
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MDQ3MjI2OCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjM5YjJiNTRmLTQ3ODctNDM4Ni1iNTcxLTYwOTYzYzc4YTQxNiJ9.KGdOqfkGxfYo_SXpbLgTDvMR-1EQfBhzVmX4gD14rak
 
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
@@ -261,10 +261,9 @@ Authorization: Bearer {{token}}
 {
   "collection": "laptops",
   "fields": ["brand", "model", "specs.cpu"],
-  "where": {
+  "where": [{
     "specs.cpu.cores": { "$gte": 12 }
-  },
-  "blabla": true
+  }]
 }
 
 ### §14. Multiple conditions (implicit AND) — Intel laptops under 2kg

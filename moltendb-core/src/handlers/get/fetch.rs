@@ -1,5 +1,6 @@
 ﻿use serde_json::Value;
 use crate::{engine, query};
+use crate::handlers::get::types::FetchParams;
 
 /// Returns true if `op` is supported by `evaluate_predicate_msgpack`
 /// (i.e. can be evaluated directly on raw MsgPack bytes without full deserialization).
@@ -18,52 +19,53 @@ fn is_fast_path_op(op: &str) -> bool {
 /// - Key array: returns a batch.
 /// - No keys + where clause (no joins): uses get_filtered for early pruning.
 /// - No keys, no where / has joins: full collection scan via get_all.
+/// Fetch raw documents from the engine based on the fetch parameters struct.
 pub fn fetch_documents(
     db: &engine::Db,
-    col_name: &str,
-    payload: &Value,
-    where_clause: Option<&Value>,
-    has_joins: bool,
-    offset: usize,
-    count_limit: usize,
-    _allowed_prefixes: Option<&[String]>,
+    params: &FetchParams<'_>, // <-- Expecting the new struct reference here
 ) -> Vec<(String, Value)> {
-    match payload.get("keys") {
+
+    // Helper to map allowed_prefixes from Option<&Vec<Value>> to Option<Vec<String>>
+    let allowed_prefixes_strings: Option<Vec<&str>> = params.allowed_prefixes.map(|pfx_vec| {
+        pfx_vec.iter().filter_map(|v| v.as_str()).collect()
+    });
+
+    match params.payload.get("keys") {
         Some(Value::String(k)) => {
-            if let Some(prefixes) = _allowed_prefixes {
+            if let Some(ref prefixes) = allowed_prefixes_strings {
                 if !prefixes.iter().any(|p| k.starts_with(p)) {
                     return Vec::new();
                 }
             }
-            db.get(col_name, vec![k.clone()]).into_iter().collect()
+            db.get(params.col_name, vec![k.clone()]).into_iter().collect()
         }
         Some(Value::Array(arr)) => {
             let ks = arr.iter().filter_map(|v| {
                 let s = v.as_str()?;
-                if let Some(prefixes) = _allowed_prefixes {
+                if let Some(ref prefixes) = allowed_prefixes_strings {
                     if !prefixes.iter().any(|p| s.starts_with(p)) {
                         return None;
                     }
                 }
                 Some(s.to_string())
             }).collect();
-            db.get(col_name, ks).into_iter().collect()
+            db.get(params.col_name, ks).into_iter().collect()
         }
         _ => {
-            // Full scan -- apply WHERE early when there are no joins (avoids materialising filtered-out docs).
-            if let Some(clause) = where_clause {
-                if !has_joins {
+            // Full scan -- apply WHERE early when there are no joins
+            if let Some(clause) = params.where_clause {
+                if !params.has_joins {
                     // Extract all AND-conditions that can be evaluated directly on
                     // raw MsgPack bytes. Returns a non-empty Vec when ALL conditions
                     // in the WHERE clause are fast-path compatible; empty Vec means
                     // at least one condition requires full deserialization (e.g. $or,
                     // $and, or unknown/unsupported operators).
                     let fast_preds = extract_fast_predicates(clause);
-
                     let clause = clause.clone();
-                    let prefixes = _allowed_prefixes.map(|p| p.to_vec());
+                    let prefixes = allowed_prefixes_strings.clone();
+
                     return db.get_filtered(
-                        col_name,
+                        params.col_name,
                         move |key, doc_bytes| {
                             if let Some(ref pfxs) = prefixes {
                                 if !pfxs.iter().any(|p| key.starts_with(p)) {
@@ -80,7 +82,6 @@ pub fn fetch_documents(
                                         .unwrap_or(false)
                                 });
                             }
-                            // Fallback: full deserialization (logical operators $or/$and, etc.)
                             let doc: Value = match rmp_serde::from_slice(doc_bytes) {
                                 Ok(d) => d,
                                 Err(_) => return false,
@@ -88,25 +89,24 @@ pub fn fetch_documents(
                             query::evaluate_where(&doc, &clause).unwrap_or(false)
                         },
                         0,
-                        Some(offset + count_limit),
+                        Some(params.offset + params.count_limit),
                     );
                 }
             }
 
-            // Apply prefix gating even for get_all, or use get_all with offset/limit
-            if let Some(prefixes) = _allowed_prefixes {
-                let pfxs = prefixes.to_vec();
+            if let Some(ref prefixes) = allowed_prefixes_strings {
+                let pfxs = prefixes.clone();
                 return db.get_filtered(
-                    col_name,
+                    params.col_name,
                     move |key, _| {
                         pfxs.iter().any(|p| key.starts_with(p))
                     },
-                    offset,
-                    Some(count_limit),
+                    params.offset,
+                    Some(params.count_limit),
                 );
             }
 
-            db.get_all(col_name, offset, Some(count_limit))
+            db.get_all(params.col_name, params.offset, Some(params.count_limit))
         }
     }
 }

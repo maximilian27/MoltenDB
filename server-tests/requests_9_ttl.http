@@ -7,7 +7,7 @@ Content-Type: application/json
   "password": "admin123"
 }
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTI5NDU5Mywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjUyY2E1MmEzLThjMmUtNDgwOS04NzYwLWViZjgzYzRiMDg3ZSJ9.8fjMQfvmUyEaGbpgrHaMIFc6038clfDKfPU9xR8wCOQ
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MDQ3MjI2OCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjM5YjJiNTRmLTQ3ODctNDM4Ni1iNTcxLTYwOTYzYzc4YTQxNiJ9.KGdOqfkGxfYo_SXpbLgTDvMR-1EQfBhzVmX4gD14rak
 
 ###
 ### ============================================================

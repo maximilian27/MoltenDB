@@ -3,6 +3,9 @@ use crate::validation;
 use crate::{engine, query};
 use crate::engine::ttl;
 use super::get::{shape_doc, make_comparator, fetch_documents, apply_joins};
+use super::get::types::{FetchParams, GetParams};
+use super::get::constants::{ALLOWED_PROPERTIES};
+
 
 /// Handle a GET (query) request.
 ///
@@ -12,12 +15,12 @@ use super::get::{shape_doc, make_comparator, fetch_documents, apply_joins};
 ///   - `where`            -- filter object; operators: $eq $ne $gt $gte $lt $lte $contains $in $nin $or $and
 ///   - `fields`           -- GraphQL-style inclusion list (dot-notation supported)
 ///   - `excludedFields`   -- exclusion list (mutually exclusive with `fields`)
-///   - `excluded_fields`  -- snake_case alias for `excludedFields`
 ///   - `joins`            -- cross-collection joins: [{ "<alias>": { "from": "<col>", "on": "<fk_field>", "fields": [...] } }]
 ///   - `sort`             -- sort specs: [{ "field": "price", "order": "asc"|"desc" }]
 ///   - `count`            -- max results after sort (pagination limit; default 100, max 1000)
 ///   - `offset`           -- results to skip after sort (pagination offset)
 ///   - `_allowed_prefixes`-- internal: restrict results to keys with these prefixes
+///   - `seq`              -- single seq number (u64) or seq interval list: [{"start": u64, "end": u64}]
 pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     if let Err(e) = validate_get_request(payload, max_body_size, max_keys_per_request) {
         return e;
@@ -42,10 +45,18 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
 
     // Fetch, filter, join.
     let has_joins = params.joins_req.map(|j| !j.is_empty()).unwrap_or(false);
-    let allowed_pfxs_vec = params.allowed_prefixes.map(|arr| {
-        arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
-    });
-    let raw = fetch_documents(db, params.col_name, payload, params.where_clause, has_joins, params.offset, params.count_limit, allowed_pfxs_vec.as_deref());
+
+    let fetch_params = FetchParams {
+        col_name: params.col_name,
+        payload,
+        where_clause: params.where_clause,
+        has_joins,
+        offset: params.offset,
+        count_limit: params.count_limit,
+        allowed_prefixes: params.allowed_prefixes,
+    };
+
+    let raw = fetch_documents(db, &fetch_params);
 
     let results = match filter_and_join_docs(db, raw, &params) {
         Ok(r)  => r,
@@ -59,40 +70,20 @@ pub fn process_get(db: &engine::Db, payload: &Value, max_body_size: usize, max_k
     shape_and_return(results, payload, &params)
 }
 
-// -- Parsed query parameters --------------------------------------------------
-
-struct GetParams<'a> {
-    col_name:         &'a str,
-    where_clause:     Option<&'a Value>,
-    joins_req:        Option<&'a Vec<Value>>,
-    sort_specs:       Option<Vec<Value>>,
-    count_limit:      usize,
-    offset:           usize,
-    fields_req:       Option<&'a Vec<Value>>,
-    excluded_req:     Option<&'a Vec<Value>>,
-    allowed_prefixes: Option<&'a Vec<Value>>,
-    expires_val:      Option<Value>,
-}
-
 // -- Private helpers ----------------------------------------------------------
 
-const ALLOWED: &[&str] = &[
-    "collection", "keys", "where", "fields", "excludedFields", "excluded_fields",
-    "joins", "sort", "count", "offset", "_allowed_prefixes",
-];
 
-/// Validate the raw payload and check for mutually exclusive field options.
+/// Validate the raw payload and check for mutually exclusive options.
 /// Returns `Err((status, body))` on failure.
 fn validate_get_request(payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> Result<(), (u16, Value)> {
     validation::validate_request(payload, max_body_size, max_keys_per_request)
         .map_err(|e| (400, json!({ "error": e.to_string(), "statusCode": 400 })))?;
 
-    validation::validate_allowed_properties(payload, ALLOWED)
+    validation::validate_allowed_properties(payload, ALLOWED_PROPERTIES)
         .map_err(|e| (400, json!({ "error": e.to_string(), "statusCode": 400 })))?;
 
     let fields_req   = payload.get("fields").and_then(|f| f.as_array());
     let excluded_req = payload.get("excludedFields")
-        .or_else(|| payload.get("excluded_fields"))
         .and_then(|f| f.as_array());
     if fields_req.is_some() && excluded_req.is_some() {
         return Err((400, json!({ "error": "'fields' and 'excludedFields' cannot be used together", "statusCode": 400 })));
@@ -113,7 +104,6 @@ fn parse_get_params<'a>(db: &engine::Db, payload: &'a Value) -> Result<GetParams
     let sort_specs   = payload.get("sort").and_then(|s| s.as_array()).cloned();
     let fields_req   = payload.get("fields").and_then(|f| f.as_array());
     let excluded_req = payload.get("excludedFields")
-        .or_else(|| payload.get("excluded_fields"))
         .and_then(|f| f.as_array());
     let allowed_prefixes = payload.get("_allowed_prefixes").and_then(|p| p.as_array());
 
