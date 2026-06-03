@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 use crate::validation;
 use crate::engine;
 use uuid::Uuid;
-
+use super::set::constants::SET_ALLOWED;
 
 fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
     // Only objects can have an `extends` block -- pass everything else through unchanged.
@@ -57,7 +57,6 @@ fn resolve_extends(doc: Value, db: &engine::Db) -> Value {
 ///     Keys are auto-generated as UUIDv7 strings. Returns the generated IDs.
 pub fn process_set(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     // Only "collection" and "data" are valid for a set/insert request.
-    const SET_ALLOWED: &[&str] = &["collection", "data", "ttl", "maxSize"];
     if let Err(e) = validation::validate_allowed_properties(payload, SET_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }

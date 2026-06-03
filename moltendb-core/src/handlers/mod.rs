@@ -1,5 +1,6 @@
 
 pub mod get;
+pub mod set;
 pub mod process_get;
 pub mod process_set;
 pub mod process_update;
