@@ -6,6 +6,7 @@
 
 ### Performance
 * **Store _createdAt and _modifiedAt as unix timestamps and convert to ISO only when the response gets processed**
+* **Shorthand properties for _createdAt, _modifiedAt, _seq and _expiresAt reducing the memory footprint by ~5%**
 
 # [1.0.0-rc8] (May 28, 2026)
 

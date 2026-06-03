@@ -22,7 +22,6 @@ fn open_db() -> engine::Db {
         max_body_size: 10485760,
         max_keys_per_request: 1000,
         encryption_key: None,
-        post_backup_script: None,
     };
     engine::Db::open(db_config).expect("open db")
 }
@@ -703,7 +702,6 @@ fn test_persistence_survives_reopen() {
             rate_limit_window: Some(60),
             max_body_size: 10485760,
             encryption_key: None,
-            post_backup_script: None,
         };
         let db = engine::Db::open(db_config).unwrap();
         set(&db, json!({
@@ -721,7 +719,6 @@ fn test_persistence_survives_reopen() {
         max_body_size: 10485760,
         max_keys_per_request: 1000,
         encryption_key: None,
-        post_backup_script: None,
     };
     let db2 = engine::Db::open(db_config2).unwrap();
     let r = get(&db2, json!({ "collection": "items", "keys": "k1" }));
@@ -745,7 +742,6 @@ fn test_compaction_preserves_data() {
         max_body_size: 10485760,
         max_keys_per_request: 1000,
         encryption_key: None,
-        post_backup_script: None,
     };
     let db = engine::Db::open(db_config).unwrap();
     seed(&db);
@@ -761,7 +757,6 @@ fn test_compaction_preserves_data() {
         max_body_size: 10485760,
         max_keys_per_request: 1000,
         encryption_key: None,
-        post_backup_script: None,
     };
     let db2 = engine::Db::open(db_config2).unwrap();
     let all = get(&db2, json!({ "collection": "laptops" }));
@@ -788,7 +783,6 @@ fn test_concurrent_writes() {
         max_body_size: 10485760,
         max_keys_per_request: 1000,
         encryption_key: None,
-        post_backup_script: None,
     };
     let db = Arc::new(engine::Db::open(db_config).unwrap());
     let n_threads = 8;
@@ -827,7 +821,6 @@ fn test_concurrent_reads_during_writes() {
         max_body_size: 10485760,
         max_keys_per_request: 1000,
         encryption_key: None,
-        post_backup_script: None,
     };
     let db = Arc::new(engine::Db::open(db_config).unwrap());
     // Pre-seed

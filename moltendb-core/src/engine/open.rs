@@ -37,7 +37,6 @@ impl Db {
         let max_body_size = config.max_body_size;
         let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
-        let post_backup_script = config.post_backup_script;
         let in_memory = config.in_memory;
 
         // Create the shared in-memory state containers.
@@ -110,7 +109,6 @@ impl Db {
             ttl_expiry,
             seq_counters,
             max_sizes,
-            post_backup_script,
             io_fault: io_fault_arc,
             #[cfg(not(target_arch = "wasm32"))]
             started_at: std::time::Instant::now(),

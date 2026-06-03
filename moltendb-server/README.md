@@ -93,7 +93,6 @@ All options can be set via CLI flags or environment variables. CLI flags take pr
 | `--key` | `MOLTENDB_TLS_KEY` | `key.pem` | TLS private key PEM file |
 | `--max-body-size` | `MOLTENDB_MAX_BODY_SIZE` | `10485760` | Max request body size in bytes (default 10 MB) |
 | `--port` | `MOLTENDB_PORT` | `1538` | Port to listen on |
-| `--post-backup-script` | `MOLTENDB_POST_BACKUP_SCRIPT` | `None` | Path to a script file to run after backup |
 | `--rate-limit-requests` | `MOLTENDB_RATE_LIMIT_REQS` | `100` | Max requests per IP per window |
 | `--rate-limit-window` | `MOLTENDB_RATE_LIMIT_WINDOW` | `60` | Rate limit sliding window in seconds |
 | `--root-password` | `MOLTENDB_ROOT_PASSWORD` | — | Root password seeded at startup |

@@ -106,7 +106,6 @@ pub trait StorageBackend: Send + Sync {
         &self,
         state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
         schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
-        hook: Option<String>,
     ) -> Result<(), DbError> {
         let doc_count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
         let count = doc_count + schemas.len() as u64;
@@ -121,7 +120,7 @@ pub trait StorageBackend: Send + Sync {
             let (schema_json, _) = &**schema_ref.value();
             LogEntry::new("SCHEMA".to_string(), schema_ref.key().to_string(), "".to_string(), schema_json.clone())
         }).collect::<Vec<_>>().into_iter();
-        let _ = (count, doc_iter.chain(schema_iter), hook);
+        let _ = (count, doc_iter.chain(schema_iter));
         Ok(())
     }
 

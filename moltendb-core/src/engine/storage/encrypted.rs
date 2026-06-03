@@ -100,9 +100,8 @@ impl StorageBackend for EncryptedStorage {
         &self,
         state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
         schemas: &dashmap::DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
-        hook: Option<String>,
     ) -> Result<(), DbError> {
-        self.inner.compact_from_maps(state, schemas, hook)
+        self.inner.compact_from_maps(state, schemas)
     }
 
     fn write_entry(&self, entry: &LogEntry) -> Result<(), DbError> {

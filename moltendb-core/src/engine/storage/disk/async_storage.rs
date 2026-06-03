@@ -13,7 +13,7 @@
 
 use super::super::StorageBackend;
 use super::log::{write_compacted_log_no_tx, stream_log_entries, read_log_from_disk};
-use super::snapshot::{write_snapshot_from_maps, load_snapshot, snapshot_path};
+use super::snapshot::{write_snapshot_from_maps, load_snapshot};
 use dashmap::DashMap;
 use serde_json::Value;
 use crate::engine::types::{DbError, LogEntry};
@@ -199,33 +199,6 @@ impl Drop for AsyncDiskStorage {
 }
 
 impl AsyncDiskStorage {
-    fn run_backup_hook(&self, script_path: String) {
-        let snapshot_path = snapshot_path(&self.path);
-        let abs_snapshot_path = match std::fs::canonicalize(&snapshot_path) {
-            Ok(p) => p.to_string_lossy().to_string(),
-            Err(_) => snapshot_path,
-        };
-        tokio::spawn(async move {
-            let res = if cfg!(target_os = "windows") {
-                tokio::process::Command::new("powershell")
-                    .arg("-ExecutionPolicy").arg("Bypass").arg("-Command")
-                    .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
-                    .output().await
-            } else {
-                tokio::process::Command::new("sh")
-                    .arg(script_path).arg(abs_snapshot_path)
-                    .output().await
-            };
-            match res {
-                Ok(output) if !output.status.success() => {
-                    tracing::error!("❌ Post-backup hook failed: {}", String::from_utf8_lossy(&output.stderr));
-                }
-                Ok(_) => tracing::info!("✅ Post-backup hook executed successfully"),
-                Err(e) => tracing::error!("❌ Failed to spawn post-backup hook: {}", e),
-            }
-        });
-    }
-
     fn swap_log(&self) -> Result<(), DbError> {
         let temp_path = format!("{}.tmp", self.path);
         write_compacted_log_no_tx(&temp_path, &[])?;
@@ -279,12 +252,10 @@ impl StorageBackend for AsyncDiskStorage {
     }
 
     #[cfg(feature = "schema")]
-    fn compact_from_maps(&self, state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>, hook: Option<String>) -> Result<(), DbError> {
+    fn compact_from_maps(&self, state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, schemas, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
-        } else if let Some(script_path) = hook {
-            self.run_backup_hook(script_path);
-        }
+        } 
         self.swap_log()
     }
 

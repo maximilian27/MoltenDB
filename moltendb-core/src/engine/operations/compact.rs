@@ -9,15 +9,14 @@ pub fn compact(
     #[cfg(feature = "schema")]
     schemas: &DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
     storage: &dyn StorageBackend,
-    post_backup_script: Option<String>,
 ) -> Result<(), DbError> {
     info!("🔨 Starting Log Compaction...");
 
     #[cfg(not(feature = "schema"))]
-    storage.compact_from_maps(state, post_backup_script)?;
+    storage.compact_from_maps(state)?;
 
     #[cfg(feature = "schema")]
-    storage.compact_from_maps(state, schemas, post_backup_script)?;
+    storage.compact_from_maps(state, schemas)?;
 
     info!("✅ Log Compaction Finished!");
     Ok(())

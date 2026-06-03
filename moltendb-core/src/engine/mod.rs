@@ -111,11 +111,7 @@ pub struct Db {
     /// When a collection exceeds this limit after an insert batch, the oldest
     /// documents (lowest `_seq`) are evicted to bring it back to `maxSize`.
     pub max_sizes: Arc<DashMap<String, usize>>,
-
-    /// Optional shell command to execute after a successful backup.
-    /// Supports the {SNAPSHOT_PATH} placeholder.
-    pub post_backup_script: Option<String>,
-
+    
     /// Circuit-breaker flag shared with `AsyncDiskStorage`.
     /// When the background writer encounters a fatal I/O error it sets this to
     /// `true`. All subsequent write operations return `DbError::StorageFault`
@@ -393,7 +389,6 @@ impl Db {
             &self.state,
             #[cfg(feature = "schema")] &self.schemas,
             &*self.storage,
-            self.post_backup_script.clone(),
         )?;
         Ok(())
     }
