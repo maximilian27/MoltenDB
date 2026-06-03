@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::debug;
-use super::common::now_iso;
+use super::common::now_unix_ms;
 use super::super::StorageBackend;
 use super::super::types::{DbError, LogEntry};
 
@@ -83,7 +83,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
                     doc_obj.insert("_v".to_string(), serde_json::json!(existing_v + 1));
                     // Stamp the modification time. _createdAt is already in the
                     // document and is intentionally left untouched.
-                    doc_obj.insert("_modifiedAt".to_string(), serde_json::json!(now_iso()));
+                    doc_obj.insert("_modifiedAt".to_string(), serde_json::json!(now_unix_ms()));
                 }
             }
 

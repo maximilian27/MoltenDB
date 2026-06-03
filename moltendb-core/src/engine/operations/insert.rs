@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use super::common::now_iso;
+use super::common::now_unix_ms;
 use super::super::StorageBackend;
 use super::super::types::{DbError, LogEntry};
 
@@ -62,7 +62,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
     ))?;
 
     for (key, mut value) in items {
-        let now = now_iso();
+        let now_ms = now_unix_ms();
 
         // Assign a monotonic sequence number for this document.
         // New docs get a fresh seq; overwrites preserve the existing seq.
@@ -78,14 +78,17 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         if let Some(existing) = existing_val {
             let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-            let orig_created = existing.get("_createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string();
+            // Preserve original _createdAt; support both legacy ISO strings and new u64 ms values.
+            let orig_created: Value = existing.get("_createdAt")
+                .and_then(|v| v.as_u64()).map(|ms| serde_json::json!(ms))
+                .unwrap_or_else(|| serde_json::json!(now_ms));
             // Preserve the original _seq so overwritten docs keep their insertion order.
             let orig_seq = existing.get("_seq").and_then(|v| v.as_u64()).unwrap_or(seq);
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("_v".to_string(), serde_json::json!(new_v));
-                obj.insert("_createdAt".to_string(), serde_json::json!(orig_created));
-                obj.insert("_modifiedAt".to_string(), serde_json::json!(now));
+                obj.insert("_createdAt".to_string(), orig_created);
+                obj.insert("_modifiedAt".to_string(), serde_json::json!(now_ms));
                 obj.insert("_seq".to_string(), serde_json::json!(orig_seq));
             }
 
@@ -95,8 +98,8 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         } else if let Some(obj) = value.as_object_mut() {
             obj.insert("_v".to_string(), serde_json::json!(1u64));
-            obj.insert("_createdAt".to_string(), serde_json::json!(now.clone()));
-            obj.insert("_modifiedAt".to_string(), serde_json::json!(now));
+            obj.insert("_createdAt".to_string(), serde_json::json!(now_ms));
+            obj.insert("_modifiedAt".to_string(), serde_json::json!(now_ms));
             obj.insert("_seq".to_string(), serde_json::json!(seq));
 
             // Schema Validation: Check the document BEFORE index update and WAL write.

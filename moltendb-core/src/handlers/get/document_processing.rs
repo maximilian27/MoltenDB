@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::cmp::Ordering;
 use crate::{engine, query};
+use crate::engine::ttl::ms_to_iso;
 use crate::handlers::get::constants::SystemFields;
 // -- Sort----------------------------------------------------------
 
@@ -94,6 +95,19 @@ pub fn apply_joins(db: &engine::Db, doc: &mut Value, joins: &[Value]) -> Vec<Str
     join_aliases
 }
 
+// -- Timestamp conversion -------------------------------------------------------
+
+/// Convert a timestamp value to an ISO 8601 string `Value`.
+/// If the value is a `u64` Unix millisecond timestamp, convert it.
+/// If it is already a string (legacy ISO format), return it unchanged.
+fn ts_to_iso_val(v: Value) -> Value {
+    if let Some(ms) = v.as_u64() {
+        Value::String(ms_to_iso(ms))
+    } else {
+        v
+    }
+}
+
 // -- Shape doc response----------------------------------------------------------
 
 /// Apply field projection or exclusion to a document, preserving `_v`, `_seq`, `_createdAt`,
@@ -113,8 +127,10 @@ pub fn shape_doc(
     // explicitly listed in a `fields` projection. They are stripped in all other cases.
     let v_val        = doc.get(SystemFields::VERSION).cloned();
     let seq_val      = doc.get(SystemFields::SEQ).cloned();
-    let created_val  = doc.get(SystemFields::CREATED_AT).cloned();
-    let modified_val = doc.get(SystemFields::MODIFIED_AT).cloned();
+    // Convert u64 Unix ms timestamps to ISO 8601 strings for the API response.
+    // Legacy docs may already have ISO strings -- leave those unchanged.
+    let created_val  = doc.get(SystemFields::CREATED_AT).cloned().map(ts_to_iso_val);
+    let modified_val = doc.get(SystemFields::MODIFIED_AT).cloned().map(ts_to_iso_val);
 
     let mut out = if let Some(f) = fields {
         let mut projected = query::project(&doc, f);
