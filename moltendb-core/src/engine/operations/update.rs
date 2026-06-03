@@ -74,16 +74,16 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
 
                 if let Some(doc_obj) = doc.as_object_mut() {
                     for (k, v) in update_obj {
-                        // _v and _createdAt are managed exclusively by the engine.
+                        // _v and _createdAt (and compact aliases) are managed exclusively by the engine.
                         // Callers cannot set them directly -- silently skip if present.
-                        if k == "_v" || k == "_createdAt" { continue; }
+                        if k == "_v" || k == "_createdAt" || k == "_ca" { continue; }
                         doc_obj.insert(k.clone(), v.clone());
                     }
                     // Bump the version counter on every update.
                     doc_obj.insert("_v".to_string(), serde_json::json!(existing_v + 1));
-                    // Stamp the modification time. _createdAt is already in the
+                    // Stamp the modification time. _createdAt/_ca is already in the
                     // document and is intentionally left untouched.
-                    doc_obj.insert("_modifiedAt".to_string(), serde_json::json!(now_unix_ms()));
+                    doc_obj.insert("_ma".to_string(), serde_json::json!(now_unix_ms()));
                 }
             }
 

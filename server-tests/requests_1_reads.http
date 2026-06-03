@@ -192,7 +192,7 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model", "price", "_seq", "_createdAt", "_modifiedAt"]
+  "fields": ["brand", "model", "price", "_seq", "_ma"]
 }
 
 ### §8. Deep nested field selection — only the CPU clock speed buried 3 levels deep

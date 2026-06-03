@@ -126,11 +126,12 @@ pub fn shape_doc(
     // _seq, _createdAt, _modifiedAt, _expiresAt are opt-in: only returned when
     // explicitly listed in a `fields` projection. They are stripped in all other cases.
     let v_val        = doc.get(SystemFields::VERSION).cloned();
-    let seq_val      = doc.get(SystemFields::SEQ).cloned();
+    // Read compact storage names first, fall back to legacy long names for old docs.
+    let seq_val      = doc.get(SystemFields::STORE_SEQ).or_else(|| doc.get(SystemFields::SEQ)).cloned();
     // Convert u64 Unix ms timestamps to ISO 8601 strings for the API response.
     // Legacy docs may already have ISO strings -- leave those unchanged.
-    let created_val  = doc.get(SystemFields::CREATED_AT).cloned().map(ts_to_iso_val);
-    let modified_val = doc.get(SystemFields::MODIFIED_AT).cloned().map(ts_to_iso_val);
+    let created_val  = doc.get(SystemFields::STORE_CREATED_AT).or_else(|| doc.get(SystemFields::CREATED_AT)).cloned().map(ts_to_iso_val);
+    let modified_val = doc.get(SystemFields::STORE_MODIFIED_AT).or_else(|| doc.get(SystemFields::MODIFIED_AT)).cloned().map(ts_to_iso_val);
 
     let mut out = if let Some(f) = fields {
         let mut projected = query::project(&doc, f);
@@ -145,7 +146,8 @@ pub fn shape_doc(
         // Fields projection: re-attach optional metadata only if explicitly listed in `fields`.
         if let Some(dst) = projected.as_object_mut() {
             let requested: Vec<&str> = f.iter().filter_map(|v| v.as_str()).collect();
-            if requested.contains(&SystemFields::SEQ)       { if let Some(v) = seq_val      { dst.insert(SystemFields::SEQ.to_string(), v); } }
+            // Always insert under the public API name regardless of how it was stored.
+            if requested.contains(&SystemFields::SEQ)        { if let Some(v) = seq_val      { dst.insert(SystemFields::SEQ.to_string(), v); } }
             if requested.contains(&SystemFields::CREATED_AT) { if let Some(v) = created_val  { dst.insert(SystemFields::CREATED_AT.to_string(), v); } }
             if requested.contains(&SystemFields::MODIFIED_AT){ if let Some(v) = modified_val { dst.insert(SystemFields::MODIFIED_AT.to_string(), v); } }
             if requested.contains(&SystemFields::EXPIRES_AT) { if let Some(v) = expires_val  { dst.insert(SystemFields::EXPIRES_AT.to_string(), v); } }
@@ -155,9 +157,9 @@ pub fn shape_doc(
         let mut shaped = query::exclude(&doc, ex);
         // Strip optional metadata fields -- they are opt-in via `fields` only.
         if let Some(obj) = shaped.as_object_mut() {
-            obj.remove(SystemFields::SEQ);
-            obj.remove(SystemFields::CREATED_AT);
-            obj.remove(SystemFields::MODIFIED_AT);
+            obj.remove(SystemFields::SEQ);          obj.remove(SystemFields::STORE_SEQ);
+            obj.remove(SystemFields::CREATED_AT);   obj.remove(SystemFields::STORE_CREATED_AT);
+            obj.remove(SystemFields::MODIFIED_AT);  obj.remove(SystemFields::STORE_MODIFIED_AT);
             obj.remove(SystemFields::EXPIRES_AT);
         }
         shaped
@@ -165,9 +167,9 @@ pub fn shape_doc(
         // No projection -- strip optional metadata fields (opt-in via `fields` only).
         let mut d = doc;
         if let Some(obj) = d.as_object_mut() {
-            obj.remove(SystemFields::SEQ);
-            obj.remove(SystemFields::CREATED_AT);
-            obj.remove(SystemFields::MODIFIED_AT);
+            obj.remove(SystemFields::SEQ);          obj.remove(SystemFields::STORE_SEQ);
+            obj.remove(SystemFields::CREATED_AT);   obj.remove(SystemFields::STORE_CREATED_AT);
+            obj.remove(SystemFields::MODIFIED_AT);  obj.remove(SystemFields::STORE_MODIFIED_AT);
             obj.remove(SystemFields::EXPIRES_AT);
         }
         d

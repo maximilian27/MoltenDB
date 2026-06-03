@@ -4,6 +4,9 @@
 
 * **Refactor handlers. Improved naming convention and structure**
 
+### Performance
+* **Store _createdAt and _modifiedAt as unix timestamps and convert to ISO only when the response gets processed**
+
 # [1.0.0-rc8] (May 28, 2026)
 
 ### Bug Fixes

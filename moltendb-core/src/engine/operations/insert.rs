@@ -78,18 +78,18 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         if let Some(existing) = existing_val {
             let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-            // Preserve original _createdAt; support both legacy ISO strings and new u64 ms values.
-            let orig_created: Value = existing.get("_createdAt")
+            // Preserve original _createdAt; support compact (_ca) and legacy (_createdAt) field names.
+            let orig_created: Value = existing.get("_ca").or_else(|| existing.get("_createdAt"))
                 .and_then(|v| v.as_u64()).map(|ms| serde_json::json!(ms))
                 .unwrap_or_else(|| serde_json::json!(now_ms));
             // Preserve the original _seq so overwritten docs keep their insertion order.
-            let orig_seq = existing.get("_seq").and_then(|v| v.as_u64()).unwrap_or(seq);
+            let orig_seq = existing.get("_s").or_else(|| existing.get("_seq")).and_then(|v| v.as_u64()).unwrap_or(seq);
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("_v".to_string(), serde_json::json!(new_v));
-                obj.insert("_createdAt".to_string(), orig_created);
-                obj.insert("_modifiedAt".to_string(), serde_json::json!(now_ms));
-                obj.insert("_seq".to_string(), serde_json::json!(orig_seq));
+                obj.insert("_ca".to_string(), orig_created);
+                obj.insert("_ma".to_string(), serde_json::json!(now_ms));
+                obj.insert("_s".to_string(), serde_json::json!(orig_seq));
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
@@ -98,9 +98,9 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         } else if let Some(obj) = value.as_object_mut() {
             obj.insert("_v".to_string(), serde_json::json!(1u64));
-            obj.insert("_createdAt".to_string(), serde_json::json!(now_ms));
-            obj.insert("_modifiedAt".to_string(), serde_json::json!(now_ms));
-            obj.insert("_seq".to_string(), serde_json::json!(seq));
+            obj.insert("_ca".to_string(), serde_json::json!(now_ms));
+            obj.insert("_ma".to_string(), serde_json::json!(now_ms));
+            obj.insert("_s".to_string(), serde_json::json!(seq));
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]
@@ -123,7 +123,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         // Step 4: Broadcast a lean change event to WebSocket subscribers.
         let new_v = value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-        let expires_at_ms = value.get("_expiresAt").and_then(|v| v.as_u64());
+        let expires_at_ms = value.get("_expiresAt").or_else(|| value.get("_ea")).and_then(|v| v.as_u64());
         let mut event = json!({
             "event": "change",
             "collection": collection,

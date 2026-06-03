@@ -290,10 +290,13 @@ fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
     }
 }
 
-/// Extract the `_seq` field from a MsgPack document as a u64.
-/// Returns `u64::MAX` as fallback so docs without `_seq` sort last.
+/// Extract the `_seq` / `_s` field from a MsgPack document as a u64.
+/// Checks the compact storage name `"_s"` first, then falls back to the
+/// legacy long name `"_seq"` for documents written before the rename.
+/// Returns `u64::MAX` as fallback so docs without a seq field sort last.
 pub fn read_msgpack_seq(bytes: &[u8]) -> u64 {
-    find_msgpack_value(bytes, &["_seq"])
+    find_msgpack_value(bytes, &["_s"])
+        .or_else(|| find_msgpack_value(bytes, &["_seq"]))
         .and_then(|slice| {
             let mut b = slice;
             let marker = read_marker(&mut b).ok()?;
