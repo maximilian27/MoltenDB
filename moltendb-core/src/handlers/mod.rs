@@ -8,6 +8,7 @@ pub mod process_snapshot;
 pub mod process_stats;
 #[cfg(feature = "schema")]
 pub mod process_schema;
+mod delete;
 
 pub use process_get::process_get;
 pub use process_set::process_set;
