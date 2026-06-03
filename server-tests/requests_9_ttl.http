@@ -59,7 +59,7 @@ Authorization: Bearer {{token}}
     },
     "required": ["userId", "token"]
   },
-  "ttl": 1800
+  "ttl": 60
 }
 
 ### §3. Insert documents into a TTL collection
@@ -107,8 +107,9 @@ Content-Type: application/json
 Authorization: Bearer {{token}}
 
 {
-  "collection": "sessions",
-  "keys": "sess_abc"
+  "collection": "cache",
+  "fields": ["value", "_expiresAt"],
+  "keys": "hot_item"
 }
 
 ### §6. Inserting more documents resets the expiry clock from now

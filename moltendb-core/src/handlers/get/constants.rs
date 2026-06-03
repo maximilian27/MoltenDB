@@ -22,4 +22,5 @@ impl SystemFields {
     pub const STORE_SEQ: &'static str         = "_s";
     pub const STORE_CREATED_AT: &'static str  = "_ca";
     pub const STORE_MODIFIED_AT: &'static str = "_ma";
+    pub const STORE_EXPIRES_AT: &'static str  = "_ea";
 }

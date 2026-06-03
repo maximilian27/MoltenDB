@@ -160,7 +160,7 @@ pub fn shape_doc(
             obj.remove(SystemFields::SEQ);          obj.remove(SystemFields::STORE_SEQ);
             obj.remove(SystemFields::CREATED_AT);   obj.remove(SystemFields::STORE_CREATED_AT);
             obj.remove(SystemFields::MODIFIED_AT);  obj.remove(SystemFields::STORE_MODIFIED_AT);
-            obj.remove(SystemFields::EXPIRES_AT);
+            obj.remove(SystemFields::EXPIRES_AT);  obj.remove(SystemFields::STORE_EXPIRES_AT);
         }
         shaped
     } else {
@@ -170,7 +170,7 @@ pub fn shape_doc(
             obj.remove(SystemFields::SEQ);          obj.remove(SystemFields::STORE_SEQ);
             obj.remove(SystemFields::CREATED_AT);   obj.remove(SystemFields::STORE_CREATED_AT);
             obj.remove(SystemFields::MODIFIED_AT);  obj.remove(SystemFields::STORE_MODIFIED_AT);
-            obj.remove(SystemFields::EXPIRES_AT);
+            obj.remove(SystemFields::EXPIRES_AT);  obj.remove(SystemFields::STORE_EXPIRES_AT);
         }
         d
     };
