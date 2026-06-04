@@ -1,7 +1,7 @@
 pub mod document_processing;
+mod errors;
 pub mod fetch;
-pub(crate) mod types;
-pub(crate) mod constants;
-
-pub use document_processing::{compare_values, make_comparator, apply_joins, shape_doc};
+pub use document_processing::{apply_joins, compare_values, make_comparator, shape_doc};
 pub use fetch::fetch_documents;
+pub(crate) mod constants;
+pub(crate) mod types;
