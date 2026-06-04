@@ -1,6 +1,6 @@
 use super::update::constants::UPDATE_ALLOWED;
 use crate::engine;
-use crate::handlers::common::errors::{HttpError, ValidationError};
+use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::handlers::update::errors::UpdateError;
 use crate::handlers::update::responses::UpdateSuccess;
 use crate::validation;

@@ -19,7 +19,7 @@ impl Error for ValidationError {}
 // ---------------------------------------------------------
 // 2. The Shared HTTP Trait
 // ---------------------------------------------------------
-pub trait HttpError: Error {
+pub trait OperationError: Error {
     /// Each specific error only needs to define its status code.
     fn status_code(&self) -> u16;
 
@@ -34,7 +34,7 @@ pub trait HttpError: Error {
 }
 
 // 3. Make ValidationError implement our new trait
-impl HttpError for ValidationError {
+impl OperationError for ValidationError {
     fn status_code(&self) -> u16 {
         400 // Validation errors are always 400 Bad Request
     }

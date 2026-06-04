@@ -1,7 +1,7 @@
 use super::delete::constants::{DEFAULT_DELETE_COUNT, DELETE_ALLOWED, MAX_DELETE_COUNT};
 use super::delete::errors::DeleteError;
 use crate::engine;
-use crate::handlers::common::errors::{HttpError, ValidationError};
+use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::handlers::delete::responses::DeleteSuccess;
 use crate::query;
 use crate::validation;

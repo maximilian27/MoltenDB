@@ -1,4 +1,4 @@
-use crate::handlers::common::errors::HttpError;
+use crate::handlers::common::errors::OperationError;
 use std::error::Error;
 use std::fmt;
 
@@ -25,7 +25,7 @@ impl Error for UpdateError {}
 
 // All you have to do is define the codes.
 // The `.into_response()` method is automatically inherited!
-impl HttpError for UpdateError {
+impl OperationError for UpdateError {
     fn status_code(&self) -> u16 {
         match self {
             UpdateError::ReservedFields | UpdateError::MissingDataMap => 400,

@@ -1,4 +1,4 @@
-use crate::handlers::common::errors::HttpError;
+use crate::handlers::common::errors::OperationError;
 use std::error::Error;
 use std::fmt;
 
@@ -45,7 +45,7 @@ impl fmt::Display for DeleteError {
 impl Error for DeleteError {}
 
 // 2. Implement your custom HTTP Trait
-impl HttpError for DeleteError {
+impl OperationError for DeleteError {
     fn status_code(&self) -> u16 {
         match self {
             // Client errors
