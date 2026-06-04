@@ -1,8 +1,7 @@
 use serde_json::{Value, json};
 use crate::engine;
 use crate::engine::ttl;
-
-const STATS_ALLOWED: &[&str] = &["collection"];
+use crate::handlers::stats::constants::STATS_ALLOWED;
 
 pub fn process_stats(db: &engine::Db, payload: &Value) -> (u16, Value) {
     if let Err(e) = crate::validation::validate_allowed_properties(payload, STATS_ALLOWED) {

@@ -1,12 +1,16 @@
-﻿# [1.0.0-rc8] (Jun 3, 2026)
+﻿# [1.0.0-rc9] (Jun 3, 2026)
 
 ### Refactor
 
 * **Refactor handlers. Improved naming convention and structure**
 
 ### Performance
+
 * **Store _createdAt and _modifiedAt as unix timestamps and convert to ISO only when the response gets processed**
 * **Shorthand properties for _createdAt, _modifiedAt, _seq and _expiresAt reducing the memory footprint by ~5%**
+
+### Breaking Changes (Security)
+* **Remove post snapshot hook script for security reasons**
 
 # [1.0.0-rc8] (May 28, 2026)
 

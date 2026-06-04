@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use crate::validation;
 use crate::engine;
+use super::schema::constants::SCHEMA_ALLOWED;
 
 /// Handle a SCHEMA (register/update schema) request.
 ///
@@ -8,7 +9,6 @@ use crate::engine;
 /// `ttl` is optional — sets a default TTL in seconds for all documents in the collection.
 pub fn process_schema(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     // "collection", "schema", and "ttl" are valid for a schema request.
-    const SCHEMA_ALLOWED: &[&str] = &["collection", "schema", "ttl", "maxSize"];
     if let Err(e) = validation::validate_allowed_properties(payload, SCHEMA_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }

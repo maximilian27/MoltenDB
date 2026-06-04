@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use crate::validation;
 use crate::engine;
+use super::update::constants::UPDATE_ALLOWED;
 
 /// Handle an UPDATE (partial merge) request.
 ///
@@ -10,7 +11,6 @@ use crate::engine;
 /// Format: { "collection": "users", "data": { "u1": { "role": "admin" } } }
 pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
     // Only "collection" and "data" are valid for an update/patch request.
-    const UPDATE_ALLOWED: &[&str] = &["collection", "data"];
     if let Err(e) = validation::validate_allowed_properties(payload, UPDATE_ALLOWED) {
         return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
     }
