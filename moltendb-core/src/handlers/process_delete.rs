@@ -1,9 +1,11 @@
 use super::delete::constants::{DEFAULT_DELETE_COUNT, DELETE_ALLOWED, MAX_DELETE_COUNT};
 use super::delete::errors::DeleteError;
 use crate::engine;
+use crate::handlers::common::errors::{HttpError, ValidationError};
+use crate::handlers::delete::responses::DeleteSuccess;
 use crate::query;
 use crate::validation;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 /// Handle a DELETE request.
 ///
@@ -19,11 +21,11 @@ pub fn process_delete(
     max_keys_per_request: usize,
 ) -> (u16, Value) {
     if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
-        return DeleteError::ValidationError(e.to_string()).into_response();
+        return ValidationError(e.to_string()).into_response();
     }
     // Only "collection", "keys", "where", "count", and "drop" are valid for a delete request.
     if let Err(e) = validation::validate_allowed_properties(payload, DELETE_ALLOWED) {
-        return DeleteError::ValidationError(e.to_string()).into_response();
+        return ValidationError(e.to_string()).into_response();
     }
 
     let col = payload["collection"].as_str().unwrap_or("default");
@@ -31,7 +33,7 @@ pub fn process_delete(
     // Check for drop: true — this removes the entire collection.
     if payload["drop"].as_bool().unwrap_or(false) {
         return match db.delete_collection(col) {
-            Ok(_) => (200, json!({ "status": "ok", "dropped": true })),
+            Ok(_) => DeleteSuccess::Dropped.into_response(),
             Err(e) => DeleteError::FailedToDropCollection(e.to_string()).into_response(), // Clean, 1-line exit!
         };
     }
@@ -55,7 +57,7 @@ pub fn process_delete(
             move |doc| query::evaluate_where(doc, &clause).unwrap_or(false),
             count_limit,
         ) {
-            Ok(count) => (200, json!({ "status": "ok", "deleted": count })),
+            Ok(count) => DeleteSuccess::Deleted(count).into_response(),
             Err(e) => DeleteError::FailedToDelete(e.to_string()).into_response(), // Clean, 1-line exit!
         };
     }
@@ -63,7 +65,7 @@ pub fn process_delete(
     match payload.get("keys") {
         // Single key delete.
         Some(Value::String(k)) => match db.delete(col, vec![k.to_string()]) {
-            Ok(_) => (200, json!({ "status": "ok", "deleted": 1 })),
+            Ok(_) => DeleteSuccess::Deleted(1).into_response(),
             Err(e) => DeleteError::FailedToDeleteKey(e.to_string()).into_response(), // Clean, 1-line exit!
         },
 
@@ -77,7 +79,7 @@ pub fn process_delete(
             }
             let count = keys.len();
             match db.delete(col, keys) {
-                Ok(_) => (200, json!({ "status": "ok", "deleted": count })),
+                Ok(_) => DeleteSuccess::Deleted(count).into_response(),
                 Err(e) => DeleteError::FailedToDeleteBatch(e.to_string()).into_response(), // Clean, 1-line exit!
             }
         }

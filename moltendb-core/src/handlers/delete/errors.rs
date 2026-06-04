@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use crate::handlers::common::errors::HttpError;
 use std::error::Error;
 use std::fmt;
 
@@ -10,7 +10,7 @@ pub enum DeleteError {
     FailedToDeleteBatch(String),
     CountExceedsMax(usize),
     MissingFields,
-    ValidationError(String),
+    // ValidationError(String) is GONE!
 }
 
 impl fmt::Display for DeleteError {
@@ -37,9 +37,6 @@ impl fmt::Display for DeleteError {
                     "Missing 'keys' (string or array), 'where', or 'drop': true"
                 )
             }
-            DeleteError::ValidationError(details) => {
-                write!(f, "{details}")
-            }
         }
     }
 }
@@ -47,15 +44,12 @@ impl fmt::Display for DeleteError {
 // 1. Hook into the Rust standard library error ecosystem
 impl Error for DeleteError {}
 
-// 2. FFI and JSON Response Helpers
-impl DeleteError {
-    /// Maps the internal engine error to a standard HTTP status code
-    pub fn status_code(&self) -> u16 {
+// 2. Implement your custom HTTP Trait
+impl HttpError for DeleteError {
+    fn status_code(&self) -> u16 {
         match self {
             // Client errors
-            DeleteError::CountExceedsMax(_)
-            | DeleteError::MissingFields
-            | DeleteError::ValidationError(_) => 400,
+            DeleteError::CountExceedsMax(_) | DeleteError::MissingFields => 400,
 
             // Engine/Storage errors
             DeleteError::FailedToDropCollection(_)
@@ -63,15 +57,5 @@ impl DeleteError {
             | DeleteError::FailedToDeleteKey(_)
             | DeleteError::FailedToDeleteBatch(_) => 500,
         }
-    }
-
-    /// Consumes the error and formats it directly into the exact tuple
-    /// required by the Node/Python/WASM HTTP wrappers.
-    pub fn into_response(&self) -> (u16, Value) {
-        let code = self.status_code();
-        (
-            code,
-            json!({ "error": self.to_string(), "statusCode": code }),
-        )
     }
 }
