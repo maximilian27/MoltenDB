@@ -42,7 +42,7 @@ pub fn process_delete(
     if let Some(clause) = payload.get("where").cloned() {
         if let Some(n) = payload.get("count").and_then(|c| c.as_u64()) {
             if n as usize > MAX_DELETE_COUNT {
-                return DeleteError::CountExceedsMax(MAX_DELETE_COUNT).into_response();
+                return DeleteError::CountExceeded(MAX_DELETE_COUNT).into_response();
             }
         }
         let count_limit = Some(

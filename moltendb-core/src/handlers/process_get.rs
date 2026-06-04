@@ -1,10 +1,12 @@
 use super::get::constants::GET_ALLOWED;
+use super::get::errors::GetError;
 use super::get::types::{FetchParams, GetParams};
 use super::get::{apply_joins, fetch_documents, make_comparator, shape_doc};
 use crate::engine::ttl;
+use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::validation;
 use crate::{engine, query};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 /// Handle a GET (query) request.
 ///
@@ -71,10 +73,7 @@ pub fn process_get(
     };
 
     if results.is_empty() {
-        return (
-            404,
-            json!({ "error": "No documents found", "statusCode": 404 }),
-        );
+        return GetError::NoDocumentsFound.into_response();
     }
 
     shape_and_return(results, payload, &params)
@@ -90,18 +89,18 @@ fn validate_get_request(
     max_keys_per_request: usize,
 ) -> Result<(), (u16, Value)> {
     validation::validate_request(payload, max_body_size, max_keys_per_request)
-        .map_err(|e| (400, json!({ "error": e.to_string(), "statusCode": 400 })))?;
+        .map_err(|e| ValidationError(e.to_string()).into_response())?;
 
     validation::validate_allowed_properties(payload, GET_ALLOWED)
-        .map_err(|e| (400, json!({ "error": e.to_string(), "statusCode": 400 })))?;
+        .map_err(|e| ValidationError(e.to_string()).into_response())?;
 
     let fields_req = payload.get("fields").and_then(|f| f.as_array());
     let excluded_req = payload.get("excludedFields").and_then(|f| f.as_array());
     if fields_req.is_some() && excluded_req.is_some() {
-        return Err((
-            400,
-            json!({ "error": "'fields' and 'excludedFields' cannot be used together", "statusCode": 400 }),
-        ));
+        return Err(ValidationError(
+            "'fields' and 'excludedFields' cannot be used together".to_string(),
+        )
+        .into_response());
     }
 
     Ok(())
@@ -126,10 +125,7 @@ fn parse_get_params<'a>(
 
     if let Some(n) = payload.get("count").and_then(|c| c.as_u64()) {
         if n as usize > MAX_COUNT {
-            return Err((
-                400,
-                json!({ "error": format!("'count' cannot exceed {MAX_COUNT}"), "statusCode": 400 }),
-            ));
+            return Err(GetError::CountExceeded(MAX_COUNT).into_response());
         }
     }
     let count_limit = payload
@@ -149,10 +145,7 @@ fn parse_get_params<'a>(
     // Check collection-level TTL expiry -- O(1), not per-document.
     if let Some(exp) = db.get_ttl_expiry(col_name) {
         if ttl::collection_is_expired(exp, query_time) {
-            return Err((
-                404,
-                json!({ "error": "No documents found", "statusCode": 404 }),
-            ));
+            return Err(GetError::CollectionExpired.into_response());
         }
     }
 
@@ -216,10 +209,7 @@ fn run_fast_sort_path(
         .collect();
 
     if array.is_empty() {
-        Some((
-            404,
-            json!({ "error": "No documents found", "statusCode": 404 }),
-        ))
+        Some(GetError::NoDocumentsFound.into_response())
     } else {
         Some((200, Value::Array(array)))
     }
@@ -261,7 +251,7 @@ fn filter_and_join_docs(
             match query::evaluate_where(&doc, clause) {
                 Ok(true) => {}
                 Ok(false) => continue,
-                Err(e) => return Err((400, json!({ "error": e.to_string(), "statusCode": 400 }))),
+                Err(e) => return Err(GetError::WhereEvalError(e.to_string()).into_response()),
             }
         }
 
@@ -289,10 +279,7 @@ fn shape_and_return(
             &aliases,
             params.expires_val.clone(),
         ) {
-            None => (
-                404,
-                json!({ "error": "No documents found", "statusCode": 404 }),
-            ),
+            None => GetError::NoDocumentsFound.into_response(),
             Some(mut out) => {
                 if let Some(obj) = out.as_object_mut() {
                     let _ = obj.remove("_key");
@@ -328,10 +315,7 @@ fn shape_and_return(
         .collect();
 
     if array.is_empty() {
-        return (
-            404,
-            json!({ "error": "No documents found", "statusCode": 404 }),
-        );
+        return GetError::NoDocumentsFound.into_response();
     }
 
     (200, Value::Array(array))

@@ -8,7 +8,7 @@ pub enum DeleteError {
     FailedToDelete(String),
     FailedToDeleteKey(String),
     FailedToDeleteBatch(String),
-    CountExceedsMax(usize),
+    CountExceeded(usize),
     MissingFields,
     // ValidationError(String) is GONE!
 }
@@ -28,7 +28,7 @@ impl fmt::Display for DeleteError {
             DeleteError::FailedToDeleteBatch(details) => {
                 write!(f, "Failed to delete batch: {details}")
             }
-            DeleteError::CountExceedsMax(max) => {
+            DeleteError::CountExceeded(max) => {
                 write!(f, "'count' cannot exceed {max}")
             }
             DeleteError::MissingFields => {
@@ -49,7 +49,7 @@ impl OperationError for DeleteError {
     fn status_code(&self) -> u16 {
         match self {
             // Client errors
-            DeleteError::CountExceedsMax(_) | DeleteError::MissingFields => 400,
+            DeleteError::CountExceeded(_) | DeleteError::MissingFields => 400,
 
             // Engine/Storage errors
             DeleteError::FailedToDropCollection(_)
