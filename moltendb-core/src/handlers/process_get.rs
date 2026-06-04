@@ -1,5 +1,6 @@
 use super::get::constants::GET_ALLOWED;
 use super::get::errors::GetError;
+use super::get::responses::GetSuccess;
 use super::get::types::{FetchParams, GetParams};
 use super::get::{apply_joins, fetch_documents, make_comparator, shape_doc};
 use crate::engine::ttl;
@@ -211,7 +212,7 @@ fn run_fast_sort_path(
     if array.is_empty() {
         Some(GetError::NoDocumentsFound.into_response())
     } else {
-        Some((200, Value::Array(array)))
+        Some(GetSuccess::Documents(array).into_response())
     }
 }
 
@@ -284,7 +285,7 @@ fn shape_and_return(
                 if let Some(obj) = out.as_object_mut() {
                     let _ = obj.remove("_key");
                 }
-                (200, out)
+                GetSuccess::Document(out).into_response()
             }
         };
     }
@@ -318,5 +319,5 @@ fn shape_and_return(
         return GetError::NoDocumentsFound.into_response();
     }
 
-    (200, Value::Array(array))
+    GetSuccess::Documents(array).into_response()
 }
