@@ -11,6 +11,7 @@ pub mod process_stats;
 pub mod process_update;
 pub mod schema;
 pub mod set;
+pub mod snapshot;
 pub mod stats;
 mod update;
 

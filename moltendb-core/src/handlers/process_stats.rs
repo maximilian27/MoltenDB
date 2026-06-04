@@ -1,11 +1,14 @@
-use serde_json::{Value, json};
 use crate::engine;
 use crate::engine::ttl;
+use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::handlers::stats::constants::STATS_ALLOWED;
+use crate::handlers::stats::errors::StatsError;
+use crate::handlers::stats::responses::StatsSuccess;
+use serde_json::{json, Value};
 
 pub fn process_stats(db: &engine::Db, payload: &Value) -> (u16, Value) {
     if let Err(e) = crate::validation::validate_allowed_properties(payload, STATS_ALLOWED) {
-        return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
+        return ValidationError(e.to_string()).into_response();
     }
 
     let now = ttl::now_ms();
@@ -13,10 +16,10 @@ pub fn process_stats(db: &engine::Db, payload: &Value) -> (u16, Value) {
     if let Some(col) = payload.get("collection").and_then(|v| v.as_str()) {
         // Single collection stats
         match db.collection_count(col) {
-            None => (404, json!({ "error": "Collection not found", "statusCode": 404 })),
+            None => StatsError::CollectionNotFound.into_response(),
             Some(count) => {
                 let max_size = db.max_sizes.get(col).map(|v| *v);
-                let expiry   = db.get_ttl_expiry(col);
+                let expiry = db.get_ttl_expiry(col);
 
                 if let Some(exp) = expiry {
                     if now >= exp {
@@ -29,7 +32,7 @@ pub fn process_stats(db: &engine::Db, payload: &Value) -> (u16, Value) {
                         if let Some(max) = max_size {
                             resp["maxSize"] = json!(max);
                         }
-                        return (200, resp);
+                        return StatsSuccess::Collection(resp).into_response();
                     }
                     let mut resp = json!({
                         "collection": col,
@@ -39,13 +42,13 @@ pub fn process_stats(db: &engine::Db, payload: &Value) -> (u16, Value) {
                     if let Some(max) = max_size {
                         resp["maxSize"] = json!(max);
                     }
-                    (200, resp)
+                    StatsSuccess::Collection(resp).into_response()
                 } else {
                     let mut resp = json!({ "collection": col, "count": count });
                     if let Some(max) = max_size {
                         resp["maxSize"] = json!(max);
                     }
-                    (200, resp)
+                    StatsSuccess::Collection(resp).into_response()
                 }
             }
         }
@@ -85,6 +88,6 @@ pub fn process_stats(db: &engine::Db, payload: &Value) -> (u16, Value) {
             total += count;
         }
 
-        (200, json!({ "collections": collections, "total": total }))
+        StatsSuccess::AllCollections { collections, total }.into_response()
     }
 }
