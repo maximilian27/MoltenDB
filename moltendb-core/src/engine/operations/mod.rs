@@ -18,19 +18,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 mod common;
-mod read;
-mod insert;
-mod update;
-mod delete;
 mod compact;
-pub mod ttl;
+mod delete;
+mod insert;
+mod read;
 #[cfg(not(target_arch = "wasm32"))]
 mod recover;
-
-pub use read::{get, get_all, get_filtered, scan_top_n};
-pub use insert::{insert, InsertParams};
-pub use update::{update, UpdateParams};
-pub use delete::{delete, delete_filtered, delete_collection, evict_oldest};
+pub mod ttl;
+mod update;
+pub use common::{InsertParams, UpdateParams};
 pub use compact::compact;
+pub use delete::{delete, delete_collection, delete_filtered, evict_oldest};
+pub use insert::insert;
+pub use read::{get, get_all, get_filtered, scan_top_n};
 #[cfg(not(target_arch = "wasm32"))]
 pub use recover::recover_to;
+pub use update::update;

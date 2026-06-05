@@ -2,28 +2,14 @@
 // Insert operation: insert.
 // ─────────────────────────────────────────────────────────────────────────────
 
+use super::super::types::{DbError, LogEntry};
+use super::common::{now_unix_ms, InsertParams};
+use crate::common::system_fields::SystemFields;
 use dashmap::DashMap;
 use serde_json::{json, Value};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use super::common::now_unix_ms;
-use super::super::StorageBackend;
-use super::super::types::{DbError, LogEntry};
+use std::sync::Arc;
 
-/// Parameters for the [`insert`] operation.
-///
-/// Grouping these into a struct keeps the function signature within Clippy's
-/// argument-count limit and makes call sites more readable.
-pub struct InsertParams<'a> {
-    pub state: &'a DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
-    pub storage: &'a Arc<dyn StorageBackend>,
-    pub tx: &'a tokio::sync::broadcast::Sender<String>,
-    #[cfg(feature = "schema")]
-    pub schemas: &'a DashMap<String, Arc<(Value, jsonschema::Validator)>>,
-    pub seq_counters: &'a DashMap<String, AtomicU64>,
-    pub collection: &'a str,
-    pub items: Vec<(String, Value)>,
-}
 
 /// Insert or overwrite multiple documents in a single batch operation.
 ///
@@ -74,33 +60,56 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         };
 
         // Decode existing MsgPack bytes → Value for versioning check.
-        let existing_val: Option<Value> = col.get(&key).and_then(|b| rmp_serde::from_slice::<Value>(&b).ok());
+        let existing_val: Option<Value> = col
+            .get(&key)
+            .and_then(|b| rmp_serde::from_slice::<Value>(&b).ok());
 
         if let Some(existing) = existing_val {
-            let existing_v = existing.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
+            let existing_v = existing
+                .get(SystemFields::VERSION)
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             // Preserve original _createdAt; support compact (_ca) and legacy (_createdAt) field names.
-            let orig_created: Value = existing.get("_ca").or_else(|| existing.get("_createdAt"))
-                .and_then(|v| v.as_u64()).map(|ms| serde_json::json!(ms))
+            let orig_created: Value = existing
+                .get(SystemFields::STORE_CREATED_AT)
+                .or_else(|| existing.get("_createdAt"))
+                .and_then(|v| v.as_u64())
+                .map(|ms| serde_json::json!(ms))
                 .unwrap_or_else(|| serde_json::json!(now_ms));
             // Preserve the original _seq so overwritten docs keep their insertion order.
-            let orig_seq = existing.get("_s").or_else(|| existing.get("_seq")).and_then(|v| v.as_u64()).unwrap_or(seq);
+            let orig_seq = existing
+                .get(SystemFields::STORE_SEQ)
+                .or_else(|| existing.get("_seq"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(seq);
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
-                obj.insert("_v".to_string(), serde_json::json!(new_v));
-                obj.insert("_ca".to_string(), orig_created);
-                obj.insert("_ma".to_string(), serde_json::json!(now_ms));
-                obj.insert("_s".to_string(), serde_json::json!(orig_seq));
+                obj.insert(SystemFields::VERSION.to_string(), serde_json::json!(new_v));
+                obj.insert(SystemFields::STORE_CREATED_AT.to_string(), orig_created);
+                obj.insert(
+                    SystemFields::STORE_MODIFIED_AT.to_string(),
+                    serde_json::json!(now_ms),
+                );
+                obj.insert(
+                    SystemFields::STORE_SEQ.to_string(),
+                    serde_json::json!(orig_seq),
+                );
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &value)?;
-
         } else if let Some(obj) = value.as_object_mut() {
-            obj.insert("_v".to_string(), serde_json::json!(1u64));
-            obj.insert("_ca".to_string(), serde_json::json!(now_ms));
-            obj.insert("_ma".to_string(), serde_json::json!(now_ms));
-            obj.insert("_s".to_string(), serde_json::json!(seq));
+            obj.insert(SystemFields::VERSION.to_string(), serde_json::json!(1u64));
+            obj.insert(
+                SystemFields::STORE_CREATED_AT.to_string(),
+                serde_json::json!(now_ms),
+            );
+            obj.insert(
+                SystemFields::STORE_MODIFIED_AT.to_string(),
+                serde_json::json!(now_ms),
+            );
+            obj.insert(SystemFields::STORE_SEQ.to_string(), serde_json::json!(seq));
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]
@@ -122,8 +131,14 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         storage.write_entry(&entry)?;
 
         // Step 4: Broadcast a lean change event to WebSocket subscribers.
-        let new_v = value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
-        let expires_at_ms = value.get("_expiresAt").or_else(|| value.get("_ea")).and_then(|v| v.as_u64());
+        let new_v = value
+            .get(SystemFields::VERSION)
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let expires_at_ms = value
+            .get(SystemFields::EXPIRES_AT)
+            .or_else(|| value.get(SystemFields::STORE_EXPIRES_AT))
+            .and_then(|v| v.as_u64());
         let mut event = json!({
             "event": "change",
             "collection": collection,
