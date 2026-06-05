@@ -151,11 +151,6 @@ struct Config {
     #[arg(long, default_value = "false", env = "MOLTENDB_DEV_MODE")]
     dev_mode: bool,
 
-    /// Path to a script file to execute after a successful backup.
-    /// The script will be called with the absolute path of the snapshot as its first argument. [env: MOLTENDB_POST_BACKUP_SCRIPT]
-    #[arg(long, env = "MOLTENDB_POST_BACKUP_SCRIPT")]
-    pub post_backup_script: Option<String>,
-    
     /// Run entirely in RAM — bypass the WAL and disk storage completely.
     /// All data is lost when the server exits. Ideal for ephemeral caches,
     /// CI environments, or Redis-like use cases. [env: MOLTENDB_IN_MEMORY]
@@ -264,7 +259,7 @@ async fn main() {
                         }
                     }
                     let schemas = dashmap::DashMap::new();
-                    recovered_storage.compact_from_maps(&state, &schemas, None).expect("Failed to compact recovery log");
+                    recovered_storage.compact_from_maps(&state, &schemas).expect("Failed to compact recovery log");
                 }
                 
                 // The snapshot is now at temp_log.snapshot.bin
@@ -400,7 +395,6 @@ async fn main() {
         max_body_size: cfg.max_body_size,
         max_keys_per_request: cfg.max_keys_per_request,
         encryption_key: encryption_key.cloned(),
-        post_backup_script: cfg.post_backup_script,
         in_memory: cfg.in_memory,
     };
 

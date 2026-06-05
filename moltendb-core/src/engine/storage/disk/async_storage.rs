@@ -12,14 +12,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use super::super::StorageBackend;
-use super::log::{write_compacted_log_no_tx, stream_log_entries, read_log_from_disk};
-use super::snapshot::{write_snapshot_from_maps, load_snapshot, snapshot_path};
+use super::log::{read_log_from_disk, stream_log_entries, write_compacted_log_no_tx};
+use super::snapshot::{load_snapshot, write_snapshot_from_maps};
+use crate::engine::types::{DbError, LogEntry};
 use dashmap::DashMap;
 use serde_json::Value;
-use crate::engine::types::{DbError, LogEntry};
 use std::fs::OpenOptions;
-use std::ops::ControlFlow;
 use std::io::{BufWriter, Write};
+use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use tokio::sync::mpsc;
@@ -101,11 +101,8 @@ impl AsyncDiskStorage {
                 // Wait up to 50 ms for the next message.
                 // If a message arrives within 50 ms → process it immediately.
                 // If the timeout fires → flush the BufWriter to disk.
-                match tokio::time::timeout(
-                    std::time::Duration::from_millis(50),
-                    log_rx.recv(),
-                )
-                .await
+                match tokio::time::timeout(std::time::Duration::from_millis(50), log_rx.recv())
+                    .await
                 {
                     // A message arrived within the timeout window.
                     Ok(Some(msg)) => match msg {
@@ -113,7 +110,10 @@ impl AsyncDiskStorage {
                             // Flush and close the current file before renaming.
                             // On Windows, a file cannot be renamed while it's open.
                             if let Err(e) = w.flush() {
-                                tracing::error!("Failed to flush log before compaction swap: {}", e);
+                                tracing::error!(
+                                    "Failed to flush log before compaction swap: {}",
+                                    e
+                                );
                             }
                             drop(w); // Release the file handle / Windows lock
 
@@ -132,7 +132,11 @@ impl AsyncDiskStorage {
                             {
                                 Ok(f) => f,
                                 Err(e) => {
-                                    tracing::error!("Failed to reopen log file '{}' after compaction: {}", path_clone, e);
+                                    tracing::error!(
+                                        "Failed to reopen log file '{}' after compaction: {}",
+                                        path_clone,
+                                        e
+                                    );
                                     return;
                                 }
                             };
@@ -147,7 +151,10 @@ impl AsyncDiskStorage {
                         WriterMsg::Write(bytes) => {
                             // MessagePack entry — write raw length-prefixed bytes.
                             if let Err(e) = w.write_all(&bytes) {
-                                tracing::error!("Fatal disk write error — entering read-only mode: {}", e);
+                                tracing::error!(
+                                    "Fatal disk write error — entering read-only mode: {}",
+                                    e
+                                );
                                 fault_flag.store(true, Ordering::Relaxed);
                                 break;
                             }
@@ -159,7 +166,10 @@ impl AsyncDiskStorage {
                     // Timeout fired — no message in the last 50 ms. Flush buffered data.
                     Err(_) => {
                         if let Err(e) = w.flush() {
-                            tracing::error!("Fatal disk flush error — entering read-only mode: {}", e);
+                            tracing::error!(
+                                "Fatal disk flush error — entering read-only mode: {}",
+                                e
+                            );
                             fault_flag.store(true, Ordering::Relaxed);
                             break;
                         }
@@ -190,53 +200,29 @@ impl Drop for AsyncDiskStorage {
         // Now await the writer task so we don't return until all queued lines
         // have been written and flushed to the OS.
         if let Some(handle) = self.writer_task.take() {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(handle)
-            })
-            .ok();
+            tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(handle)).ok();
         }
     }
 }
 
 impl AsyncDiskStorage {
-    fn run_backup_hook(&self, script_path: String) {
-        let snapshot_path = snapshot_path(&self.path);
-        let abs_snapshot_path = match std::fs::canonicalize(&snapshot_path) {
-            Ok(p) => p.to_string_lossy().to_string(),
-            Err(_) => snapshot_path,
-        };
-        tokio::spawn(async move {
-            let res = if cfg!(target_os = "windows") {
-                tokio::process::Command::new("powershell")
-                    .arg("-ExecutionPolicy").arg("Bypass").arg("-Command")
-                    .arg(format!("& '{}' '{}'", script_path, abs_snapshot_path))
-                    .output().await
-            } else {
-                tokio::process::Command::new("sh")
-                    .arg(script_path).arg(abs_snapshot_path)
-                    .output().await
-            };
-            match res {
-                Ok(output) if !output.status.success() => {
-                    tracing::error!("❌ Post-backup hook failed: {}", String::from_utf8_lossy(&output.stderr));
-                }
-                Ok(_) => tracing::info!("✅ Post-backup hook executed successfully"),
-                Err(e) => tracing::error!("❌ Failed to spawn post-backup hook: {}", e),
-            }
-        });
-    }
-
     fn swap_log(&self) -> Result<(), DbError> {
         let temp_path = format!("{}.tmp", self.path);
         write_compacted_log_no_tx(&temp_path, &[])?;
         if let Some(ref sender) = self.sender {
             let done = Arc::new((Mutex::new(false), Condvar::new()));
-            sender.send(WriterMsg::Compact { temp_path, done: Arc::clone(&done) })
+            sender
+                .send(WriterMsg::Compact {
+                    temp_path,
+                    done: Arc::clone(&done),
+                })
                 .map_err(|_| DbError::WriteError)?;
             tokio::task::block_in_place(|| {
                 let (lock, cvar) = &*done;
                 let mut finished = lock.lock().unwrap();
-                while !*finished { finished = cvar.wait(finished).unwrap(); }
+                while !*finished {
+                    finished = cvar.wait(finished).unwrap();
+                }
             });
         } else {
             // No async writer — rename directly on the calling thread.
@@ -256,7 +242,9 @@ impl StorageBackend for AsyncDiskStorage {
         bytes.extend_from_slice(&len);
         bytes.extend_from_slice(&encoded);
         if let Some(ref sender) = self.sender {
-            sender.send(WriterMsg::Write(bytes)).map_err(|_| DbError::WriteError)?;
+            sender
+                .send(WriterMsg::Write(bytes))
+                .map_err(|_| DbError::WriteError)?;
         }
         Ok(())
     }
@@ -269,21 +257,24 @@ impl StorageBackend for AsyncDiskStorage {
 
     /// Override: write snapshot directly from DashMaps — no LogEntry allocation, no Value cloning.
     #[cfg(not(feature = "schema"))]
-    fn compact_from_maps(&self, state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>, hook: Option<String>) -> Result<(), DbError> {
+    fn compact_from_maps(
+        &self,
+        state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    ) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
-        } else if let Some(script_path) = hook {
-            self.run_backup_hook(script_path);
         }
         self.swap_log()
     }
 
     #[cfg(feature = "schema")]
-    fn compact_from_maps(&self, state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>, hook: Option<String>) -> Result<(), DbError> {
+    fn compact_from_maps(
+        &self,
+        state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+        schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    ) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, schemas, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
-        } else if let Some(script_path) = hook {
-            self.run_backup_hook(script_path);
         }
         self.swap_log()
     }

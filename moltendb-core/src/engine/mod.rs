@@ -22,32 +22,32 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Declare the sub-modules of the engine.
-mod types;      // LogEntry, DbError
-mod storage;    // StorageBackend trait + concrete implementations
-mod config;     // DbConfig struct
+mod config; // DbConfig struct
+mod operations;
 #[cfg(feature = "schema")]
-mod schema;     // JSON Schema validation
-mod operations; // get, get_all, insert, update, delete, etc.
+mod schema; // JSON Schema validation
+mod storage; // StorageBackend trait + concrete implementations
+mod types; // LogEntry, DbError // get, get_all, insert, update, delete, etc.
 pub use operations::ttl;
-mod open;       // Db::open() — native constructor
-mod open_wasm;  // Db::open_wasm() — WASM constructor
+mod open; // Db::open() — native constructor
+mod open_wasm; // Db::open_wasm() — WASM constructor
 
-// Re-export LogEntry so it can be used by tests and other crates.
-pub use types::{DbError, LogEntry};
 // Re-export DbConfig
 pub use config::DbConfig;
 // Re-export the StorageBackend trait so callers can use it without knowing
 // the internal module structure.
-pub use storage::{StorageBackend, EncryptedStorage};
 #[cfg(not(target_arch = "wasm32"))]
 pub use storage::{AsyncDiskStorage, SyncDiskStorage};
+pub use storage::{EncryptedStorage, StorageBackend};
+// Re-export LogEntry so it can be used by tests and other crates.
+pub use types::{DbError, LogEntry};
 
 use dashmap::DashMap;
 use serde_json::Value;
 #[allow(unused_imports)]
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 
 /// The central database handle. Cheap to clone — all clones share the same state.
@@ -60,7 +60,7 @@ pub struct Db {
     /// Outer map: collection name (e.g. "users") → inner map.
     /// Inner map: document key (e.g. "u1") → document value (always in RAM).
     /// DashMap allows concurrent reads and writes from multiple threads.
-    state: Arc<DashMap<Arc<str>, DashMap<String, Box<[u8]>>>>,  // documents stored as MsgPack bytes
+    state: Arc<DashMap<Arc<str>, DashMap<String, Box<[u8]>>>>, // documents stored as MsgPack bytes
 
     /// The storage backend — handles persistence to disk or OPFS.
     /// `pub` so handlers can access it directly if needed (e.g. for compaction).
@@ -72,7 +72,6 @@ pub struct Db {
     /// on this channel. WebSocket handlers subscribe to receive these events.
     /// `pub` so the WebSocket handler in main.rs can call subscribe().
     pub tx: broadcast::Sender<String>,
-
 
     /// Max requests per window.
     pub rate_limit_requests: u32,
@@ -112,10 +111,6 @@ pub struct Db {
     /// documents (lowest `_seq`) are evicted to bring it back to `maxSize`.
     pub max_sizes: Arc<DashMap<String, usize>>,
 
-    /// Optional shell command to execute after a successful backup.
-    /// Supports the {SNAPSHOT_PATH} placeholder.
-    pub post_backup_script: Option<String>,
-
     /// Circuit-breaker flag shared with `AsyncDiskStorage`.
     /// When the background writer encounters a fatal I/O error it sets this to
     /// `true`. All subsequent write operations return `DbError::StorageFault`
@@ -130,7 +125,10 @@ pub struct Db {
 impl Db {
     /// Returns the total number of hot (in-memory) keys across all collections.
     pub fn hot_keys_count(&self) -> usize {
-        self.state.iter().map(|c: dashmap::mapref::multiple::RefMulti<_, _>| c.value().len()).sum::<usize>()
+        self.state
+            .iter()
+            .map(|c: dashmap::mapref::multiple::RefMulti<_, _>| c.value().len())
+            .sum::<usize>()
     }
 
     /// Create a new broadcast receiver for real-time change notifications.
@@ -147,7 +145,12 @@ impl Db {
     }
 
     /// Retrieve all documents in a collection.
-    pub fn get_all(&self, collection: &str, offset: usize, count: Option<usize>) -> Vec<(String, Value)> {
+    pub fn get_all(
+        &self,
+        collection: &str,
+        offset: usize,
+        count: Option<usize>,
+    ) -> Vec<(String, Value)> {
         operations::get_all(&self.state, &self.storage, collection, offset, count)
     }
 
@@ -164,7 +167,14 @@ impl Db {
         offset: usize,
         count: Option<usize>,
     ) -> Vec<(String, Value)> {
-        operations::get_filtered(&self.state, &self.storage, collection, predicate, offset, count)
+        operations::get_filtered(
+            &self.state,
+            &self.storage,
+            collection,
+            predicate,
+            offset,
+            count,
+        )
     }
 
     /// Lazily scan a collection and return the top-`cap` documents according
@@ -198,13 +208,14 @@ impl Db {
         }
         // If the collection has expired, physically evict all its documents before
         // inserting. Without this, re-inserted documents inherit the old _v counter
-        // (e.g. _v:2 instead of _v:1) because insert.rs finds the stale docs in memory.
+        // (e.g. _v:2 instead of _v:1) because set finds the stale docs in memory.
         // We also write a DROP entry to the WAL so the eviction is durable — without
         // this, a restart before compaction would replay the old INSERT entries and
         // restore the stale documents, causing the same _v counter bug after reload.
         if let Some(exp) = self.ttl_expiry.get(collection).map(|v| *v) {
             if operations::ttl::collection_is_expired(exp, operations::ttl::now_ms()) {
-                let _ = operations::delete_collection(&self.state, &self.storage, &self.tx, collection);
+                let _ =
+                    operations::delete_collection(&self.state, &self.storage, &self.tx, collection);
                 self.ttl_expiry.remove(collection);
             }
         }
@@ -212,7 +223,8 @@ impl Db {
             state: &self.state,
             storage: &self.storage,
             tx: &self.tx,
-            #[cfg(feature = "schema")] schemas: &self.schemas,
+            #[cfg(feature = "schema")]
+            schemas: &self.schemas,
             seq_counters: &self.seq_counters,
             collection,
             items,
@@ -222,7 +234,13 @@ impl Db {
             let current = self.state.get(collection).map(|m| m.len()).unwrap_or(0);
             if current > max {
                 let overflow = current - max;
-                operations::evict_oldest(&self.state, &self.storage, &self.tx, collection, overflow);
+                operations::evict_oldest(
+                    &self.state,
+                    &self.storage,
+                    &self.tx,
+                    collection,
+                    overflow,
+                );
             }
         }
         // Reset collection expiry AFTER the batch commits -- TTL clock starts
@@ -231,12 +249,14 @@ impl Db {
             let expires_at = operations::ttl::now_ms() + secs * 1_000;
             self.ttl_expiry.insert(collection.to_string(), expires_at);
             // Persist the expiry to the WAL so it survives restarts.
-            let _ = self.storage.write_entry(&crate::engine::types::LogEntry::new(
-                "TTL_EXPIRY".to_string(),
-                collection.to_string(),
-                expires_at.to_string(),
-                serde_json::Value::Null,
-            ));
+            let _ = self
+                .storage
+                .write_entry(&crate::engine::types::LogEntry::new(
+                    "TTL_EXPIRY".to_string(),
+                    collection.to_string(),
+                    expires_at.to_string(),
+                    serde_json::Value::Null,
+                ));
             // Broadcast the new expiry so the sweep task can update its heap.
             let event = serde_json::json!({
                 "event": "ttl_expiry",
@@ -260,7 +280,8 @@ impl Db {
             state: &self.state,
             storage: &self.storage,
             tx: &self.tx,
-            #[cfg(feature = "schema")] schemas: &self.schemas,
+            #[cfg(feature = "schema")]
+            schemas: &self.schemas,
             collection,
             key,
             updates,
@@ -283,7 +304,14 @@ impl Db {
                 "Background disk I/O failed. System is in read-only mode.".into(),
             ));
         }
-        operations::delete_filtered(&self.state, &self.storage, &self.tx, collection, predicate, count_limit)
+        operations::delete_filtered(
+            &self.state,
+            &self.storage,
+            &self.tx,
+            collection,
+            predicate,
+            count_limit,
+        )
     }
 
     /// Delete one or more documents by key. Pass a single key to delete one document.
@@ -293,23 +321,12 @@ impl Db {
                 "Background disk I/O failed. System is in read-only mode.".into(),
             ));
         }
-        operations::delete(
-            &self.state,
-            &self.storage,
-            &self.tx,
-            collection,
-            keys,
-        )
+        operations::delete(&self.state, &self.storage, &self.tx, collection, keys)
     }
 
     /// Drop an entire collection — removes all documents.
     pub fn delete_collection(&self, collection: &str) -> Result<(), DbError> {
-        operations::delete_collection(
-            &self.state,
-            &self.storage,
-            &self.tx,
-            collection,
-        )
+        operations::delete_collection(&self.state, &self.storage, &self.tx, collection)
     }
 
     /// Returns the next sequence number for a collection (atomic fetch-and-add).
@@ -337,13 +354,19 @@ impl Db {
 
     /// Returns a map of collection name -> document count for all collections.
     pub fn all_collection_counts(&self) -> Vec<(String, usize)> {
-        self.state.iter().map(|r| (r.key().to_string(), r.value().len())).collect()
+        self.state
+            .iter()
+            .map(|r| (r.key().to_string(), r.value().len()))
+            .collect()
     }
 
     /// Returns all (collection, expires_at_ms) pairs from the TTL expiry map.
     /// Used by the TTL sweep task on startup to pre-populate its heap.
     pub fn all_ttl_expiries(&self) -> Vec<(String, u64)> {
-        self.ttl_expiry.iter().map(|r| (r.key().clone(), *r.value())).collect()
+        self.ttl_expiry
+            .iter()
+            .map(|r| (r.key().clone(), *r.value()))
+            .collect()
     }
 
     /// Returns the absolute expiry timestamp (Unix ms) for a collection, if any.
@@ -366,13 +389,7 @@ impl Db {
     /// All subsequent writes to this collection must conform to this schema.
     #[cfg(feature = "schema")]
     pub fn set_schema(&self, collection: &str, schema: Value) -> Result<(), DbError> {
-        schema::set_schema(
-            &self.schemas,
-            &self.storage,
-            &self.tx,
-            collection,
-            schema
-        )
+        schema::set_schema(&self.schemas, &self.storage, &self.tx, collection, schema)
     }
 
     /// Wipe all in-memory state.
@@ -391,9 +408,9 @@ impl Db {
     pub fn compact(&self) -> Result<(), DbError> {
         operations::compact(
             &self.state,
-            #[cfg(feature = "schema")] &self.schemas,
+            #[cfg(feature = "schema")]
+            &self.schemas,
             &*self.storage,
-            self.post_backup_script.clone(),
         )?;
         Ok(())
     }

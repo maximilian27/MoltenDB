@@ -66,7 +66,7 @@ fn main() {
     let original_batches: Vec<Value> =
         serde_json::from_str(&raw).expect("parse stress_data.json");
 
-    let chunk_size = 10000; // ⚠️ SAFE LIMIT: 500 docs per HTTP request
+    let chunk_size = 25000; // ⚠️ SAFE LIMIT: 500 docs per HTTP request
     let mut safe_batches = Vec::new();
 
     for batch in original_batches {

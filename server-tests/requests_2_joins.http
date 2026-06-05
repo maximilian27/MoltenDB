@@ -11,8 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTQ3NzE0MSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjM2YWUwZGZhLTM3OWMtNDg4Mi1iNmM0LTgwMmMyZTM5MDczYSJ9.VZ563ptc1wrwh9bpxY4thfZguW-cWSKPNJiqmN4gn2M
-
+@token = @token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MDc2NzU2Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI4MmE2ZTc2LWE2ODYtNGM3ZC05ZjE4LTIyNzBmYTBmNDllZCJ9.Q9ysF1UhBXIECfUxf_Qio--ZvIJvas7QQ7vcQvYiMtk
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
@@ -28,11 +27,36 @@ Authorization: Bearer {{token}}
 {
   "collection": "memory",
   "data": {
-    "mem1": { "capacity_gb": 8,  "type": "LPDDR5", "speed_mhz": 4266, "upgradeable": false },
-    "mem2": { "capacity_gb": 16, "type": "LPDDR5", "speed_mhz": 4266, "upgradeable": false },
-    "mem3": { "capacity_gb": 32, "type": "DDR5",   "speed_mhz": 5600, "upgradeable": true  },
-    "mem4": { "capacity_gb": 64, "type": "DDR5",   "speed_mhz": 5600, "upgradeable": true  },
-    "mem5": { "capacity_gb": 36, "type": "Unified", "speed_mhz": 6400, "upgradeable": false }
+    "mem1": {
+      "capacity_gb": 8,
+      "type": "LPDDR5",
+      "speed_mhz": 4266,
+      "upgradeable": false
+    },
+    "mem2": {
+      "capacity_gb": 16,
+      "type": "LPDDR5",
+      "speed_mhz": 4266,
+      "upgradeable": false
+    },
+    "mem3": {
+      "capacity_gb": 32,
+      "type": "DDR5",
+      "speed_mhz": 5600,
+      "upgradeable": true
+    },
+    "mem4": {
+      "capacity_gb": 64,
+      "type": "DDR5",
+      "speed_mhz": 5600,
+      "upgradeable": true
+    },
+    "mem5": {
+      "capacity_gb": 36,
+      "type": "Unified",
+      "speed_mhz": 6400,
+      "upgradeable": false
+    }
   }
 }
 
@@ -45,11 +69,46 @@ Authorization: Bearer {{token}}
 {
   "collection": "display",
   "data": {
-    "dsp1": { "size_inch": 13.3, "resolution": "2560x1600", "panel": "IPS",  "refresh_hz": 60,  "touchscreen": false, "hdr": false },
-    "dsp2": { "size_inch": 14.0, "resolution": "2880x1800", "panel": "OLED", "refresh_hz": 90,  "touchscreen": false, "hdr": true  },
-    "dsp3": { "size_inch": 15.6, "resolution": "1920x1080", "panel": "IPS",  "refresh_hz": 144, "touchscreen": false, "hdr": false },
-    "dsp4": { "size_inch": 16.2, "resolution": "3456x2234", "panel": "Mini-LED", "refresh_hz": 120, "touchscreen": false, "hdr": true },
-    "dsp5": { "size_inch": 14.0, "resolution": "2560x1600", "panel": "IPS",  "refresh_hz": 165, "touchscreen": true,  "hdr": false }
+    "dsp1": {
+      "size_inch": 13.3,
+      "resolution": "2560x1600",
+      "panel": "IPS",
+      "refresh_hz": 60,
+      "touchscreen": false,
+      "hdr": false
+    },
+    "dsp2": {
+      "size_inch": 14.0,
+      "resolution": "2880x1800",
+      "panel": "OLED",
+      "refresh_hz": 90,
+      "touchscreen": false,
+      "hdr": true
+    },
+    "dsp3": {
+      "size_inch": 15.6,
+      "resolution": "1920x1080",
+      "panel": "IPS",
+      "refresh_hz": 144,
+      "touchscreen": false,
+      "hdr": false
+    },
+    "dsp4": {
+      "size_inch": 16.2,
+      "resolution": "3456x2234",
+      "panel": "Mini-LED",
+      "refresh_hz": 120,
+      "touchscreen": false,
+      "hdr": true
+    },
+    "dsp5": {
+      "size_inch": 14.0,
+      "resolution": "2560x1600",
+      "panel": "IPS",
+      "refresh_hz": 165,
+      "touchscreen": true,
+      "hdr": false
+    }
   }
 }
 
@@ -70,9 +129,17 @@ Authorization: Bearer {{token}}
       "in_stock": true,
       "memory_id": "mem2",
       "display_id": "dsp2",
-      "tags": ["business", "ultrabook", "lightweight"],
+      "tags": [
+        "business",
+        "ultrabook",
+        "lightweight"
+      ],
       "specs": {
-        "cpu": { "brand": "Intel", "cores": 12, "ghz": 3.5 },
+        "cpu": {
+          "brand": "Intel",
+          "cores": 12,
+          "ghz": 3.5
+        },
         "battery_wh": 57,
         "weight_kg": 1.12
       }
@@ -84,9 +151,17 @@ Authorization: Bearer {{token}}
       "in_stock": true,
       "memory_id": "mem5",
       "display_id": "dsp4",
-      "tags": ["creative", "professional", "macos"],
+      "tags": [
+        "creative",
+        "professional",
+        "macos"
+      ],
       "specs": {
-        "cpu": { "brand": "Apple", "cores": 12, "ghz": 4.05 },
+        "cpu": {
+          "brand": "Apple",
+          "cores": 12,
+          "ghz": 4.05
+        },
         "battery_wh": 100,
         "weight_kg": 2.15
       }
@@ -98,9 +173,17 @@ Authorization: Bearer {{token}}
       "in_stock": true,
       "memory_id": "mem3",
       "display_id": "dsp5",
-      "tags": ["gaming", "amd", "portable"],
+      "tags": [
+        "gaming",
+        "amd",
+        "portable"
+      ],
       "specs": {
-        "cpu": { "brand": "AMD", "cores": 8, "ghz": 4.9 },
+        "cpu": {
+          "brand": "AMD",
+          "cores": 8,
+          "ghz": 4.9
+        },
         "battery_wh": 76,
         "weight_kg": 1.65
       }
@@ -112,9 +195,17 @@ Authorization: Bearer {{token}}
       "in_stock": false,
       "memory_id": "mem3",
       "display_id": "dsp4",
-      "tags": ["creative", "windows", "4k"],
+      "tags": [
+        "creative",
+        "windows",
+        "4k"
+      ],
       "specs": {
-        "cpu": { "brand": "Intel", "cores": 14, "ghz": 3.8 },
+        "cpu": {
+          "brand": "Intel",
+          "cores": 14,
+          "ghz": 3.8
+        },
         "battery_wh": 86,
         "weight_kg": 1.86
       }
@@ -126,9 +217,17 @@ Authorization: Bearer {{token}}
       "in_stock": true,
       "memory_id": "mem4",
       "display_id": "dsp3",
-      "tags": ["gaming", "windows", "rgb"],
+      "tags": [
+        "gaming",
+        "windows",
+        "rgb"
+      ],
       "specs": {
-        "cpu": { "brand": "Intel", "cores": 14, "ghz": 4.1 },
+        "cpu": {
+          "brand": "Intel",
+          "cores": 14,
+          "ghz": 4.1
+        },
         "battery_wh": 80,
         "weight_kg": 2.01
       }
@@ -140,9 +239,17 @@ Authorization: Bearer {{token}}
       "in_stock": true,
       "memory_id": "mem1",
       "display_id": "dsp1",
-      "tags": ["modular", "linux", "budget"],
+      "tags": [
+        "modular",
+        "linux",
+        "budget"
+      ],
       "specs": {
-        "cpu": { "brand": "Intel", "cores": 10, "ghz": 3.3 },
+        "cpu": {
+          "brand": "Intel",
+          "cores": 10,
+          "ghz": 3.3
+        },
         "battery_wh": 55,
         "weight_kg": 1.3
       }
@@ -160,9 +267,18 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model", "price"],
+  "fields": [
+    "brand",
+    "model",
+    "price"
+  ],
   "joins": [
-    { "ram": { "from": "memory", "on": "memory_id" } }
+    {
+      "ram": {
+        "from": "memory",
+        "on": "memory_id"
+      }
+    }
   ]
 }
 
@@ -173,9 +289,22 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model"],
+  "fields": [
+    "brand",
+    "model"
+  ],
   "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz", "panel", "size_inch"] } }
+    {
+      "screen": {
+        "from": "display",
+        "on": "display_id",
+        "fields": [
+          "refresh_hz",
+          "panel",
+          "size_inch"
+        ]
+      }
+    }
   ]
 }
 
@@ -186,10 +315,33 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model", "price"],
+  "fields": [
+    "brand",
+    "model",
+    "price"
+  ],
   "joins": [
-    { "ram":    { "from": "memory",  "on": "memory_id",  "fields": ["capacity_gb", "type"] } },
-    { "screen": { "from": "display", "on": "display_id", "fields": ["size_inch", "refresh_hz", "panel"] } }
+    {
+      "ram": {
+        "from": "memory",
+        "on": "memory_id",
+        "fields": [
+          "capacity_gb",
+          "type"
+        ]
+      }
+    },
+    {
+      "screen": {
+        "from": "display",
+        "on": "display_id",
+        "fields": [
+          "size_inch",
+          "refresh_hz",
+          "panel"
+        ]
+      }
+    }
   ]
 }
 
@@ -200,10 +352,26 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model", "price"],
-  "where": { "in_stock": true },
+  "fields": [
+    "brand",
+    "model",
+    "price"
+  ],
+  "where": {
+    "in_stock": true
+  },
   "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz", "panel", "hdr"] } }
+    {
+      "screen": {
+        "from": "display",
+        "on": "display_id",
+        "fields": [
+          "refresh_hz",
+          "panel",
+          "hdr"
+        ]
+      }
+    }
   ]
 }
 
@@ -214,12 +382,31 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model", "price"],
+  "fields": [
+    "brand",
+    "model",
+    "price"
+  ],
   "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["panel", "refresh_hz", "hdr"] } }
+    {
+      "screen": {
+        "from": "display",
+        "on": "display_id",
+        "fields": [
+          "panel",
+          "refresh_hz",
+          "hdr"
+        ]
+      }
+    }
   ],
   "where": {
-    "screen.panel": { "$in": ["OLED", "Mini-LED"] }
+    "screen.panel": {
+      "$in": [
+        "OLED",
+        "Mini-LED"
+      ]
+    }
   }
 }
 
@@ -230,12 +417,27 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model", "price"],
+  "fields": [
+    "brand",
+    "model",
+    "price"
+  ],
   "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz", "panel"] } }
+    {
+      "screen": {
+        "from": "display",
+        "on": "display_id",
+        "fields": [
+          "refresh_hz",
+          "panel"
+        ]
+      }
+    }
   ],
   "where": {
-    "screen.refresh_hz": { "$gte": 120 }
+    "screen.refresh_hz": {
+      "$gte": 120
+    }
   }
 }
 
@@ -246,9 +448,23 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model", "price"],
+  "fields": [
+    "brand",
+    "model",
+    "price"
+  ],
   "joins": [
-    { "ram": { "from": "memory", "on": "memory_id", "fields": ["capacity_gb", "type", "upgradeable"] } }
+    {
+      "ram": {
+        "from": "memory",
+        "on": "memory_id",
+        "fields": [
+          "capacity_gb",
+          "type",
+          "upgradeable"
+        ]
+      }
+    }
   ],
   "where": {
     "ram.upgradeable": true
@@ -262,10 +478,28 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "laptops",
-  "fields": ["brand", "model", "price"],
-  "joins": [
-    { "screen": { "from": "display", "on": "display_id", "fields": ["refresh_hz", "panel"] } }
+  "fields": [
+    "brand",
+    "model",
+    "price"
   ],
-  "sort": [{ "field": "screen.refresh_hz", "order": "desc" }]
+  "joins": [
+    {
+      "screen": {
+        "from": "display",
+        "on": "display_id",
+        "fields": [
+          "refresh_hz",
+          "panel"
+        ]
+      }
+    }
+  ],
+  "sort": [
+    {
+      "field": "screen.refresh_hz",
+      "order": "desc"
+    }
+  ]
 }
 

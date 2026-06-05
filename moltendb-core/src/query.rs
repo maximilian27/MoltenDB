@@ -1,7 +1,8 @@
+use crate::common::where_operators::WhereOperator;
 use crate::engine::DbError;
-use serde_json::{Value, Map};
 use rmp::decode::read_marker;
 use serde::de::Deserialize;
+use serde_json::{Map, Value};
 
 // ─── MsgPack fast-path helpers ───────────────────────────────────────────────
 // These functions walk raw MsgPack bytes to evaluate predicates without
@@ -14,26 +15,34 @@ fn read_msgpack_str<'a>(bytes: &mut &'a [u8]) -> Option<&'a str> {
     let len = match marker {
         rmp::Marker::FixStr(l) => l as usize,
         rmp::Marker::Str8 => {
-            if bytes.is_empty() { return None; }
+            if bytes.is_empty() {
+                return None;
+            }
             let l = bytes[0] as usize;
             *bytes = &bytes[1..];
             l
         }
         rmp::Marker::Str16 => {
-            if bytes.len() < 2 { return None; }
+            if bytes.len() < 2 {
+                return None;
+            }
             let l = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
             *bytes = &bytes[2..];
             l
         }
         rmp::Marker::Str32 => {
-            if bytes.len() < 4 { return None; }
+            if bytes.len() < 4 {
+                return None;
+            }
             let l = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
             *bytes = &bytes[4..];
             l
         }
         _ => return None,
     };
-    if bytes.len() < len { return None; }
+    if bytes.len() < len {
+        return None;
+    }
     let s = std::str::from_utf8(&bytes[..len]).ok()?;
     *bytes = &bytes[len..];
     Some(s)
@@ -46,13 +55,17 @@ fn read_msgpack_map_len(bytes: &mut &[u8]) -> Option<u32> {
     match marker {
         rmp::Marker::FixMap(l) => Some(l as u32),
         rmp::Marker::Map16 => {
-            if bytes.len() < 2 { return None; }
+            if bytes.len() < 2 {
+                return None;
+            }
             let l = u16::from_be_bytes([bytes[0], bytes[1]]) as u32;
             *bytes = &bytes[2..];
             Some(l)
         }
         rmp::Marker::Map32 => {
-            if bytes.len() < 4 { return None; }
+            if bytes.len() < 4 {
+                return None;
+            }
             let l = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             *bytes = &bytes[4..];
             Some(l)
@@ -68,13 +81,17 @@ fn read_msgpack_array_len(bytes: &mut &[u8]) -> Option<u32> {
     match marker {
         rmp::Marker::FixArray(l) => Some(l as u32),
         rmp::Marker::Array16 => {
-            if bytes.len() < 2 { return None; }
+            if bytes.len() < 2 {
+                return None;
+            }
             let l = u16::from_be_bytes([bytes[0], bytes[1]]) as u32;
             *bytes = &bytes[2..];
             Some(l)
         }
         rmp::Marker::Array32 => {
-            if bytes.len() < 4 { return None; }
+            if bytes.len() < 4 {
+                return None;
+            }
             let l = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             *bytes = &bytes[4..];
             Some(l)
@@ -147,43 +164,38 @@ pub fn evaluate_predicate_msgpack(
     let parts: Vec<&str> = field_path.split('.').collect();
     let value_slice = find_msgpack_value(msgpack_bytes, &parts)?;
 
-    match operator {
-        "$eq" | "$equals" => {
-            match op_value {
-                Value::String(expected) => {
-                    let actual = read_str_value(value_slice)?;
-                    Some(actual == expected.to_lowercase())
-                }
-                Value::Number(n) => {
-                    // Read numeric value from msgpack
-                    let actual = read_msgpack_number(value_slice)?;
-                    Some((actual - n.as_f64()?).abs() < f64::EPSILON)
-                }
-                Value::Bool(b) => {
-                    let actual = read_msgpack_bool(value_slice)?;
-                    Some(actual == *b)
-                }
-                _ => None,
+    match WhereOperator::from_str(operator)? {
+        WhereOperator::Eq => match op_value {
+            Value::String(expected) => {
+                let actual = read_str_value(value_slice)?;
+                Some(actual == expected.to_lowercase())
             }
-        }
-        "$ne" | "$notEquals" => {
-            match op_value {
-                Value::String(expected) => {
-                    let actual = read_str_value(value_slice)?;
-                    Some(actual != expected.to_lowercase())
-                }
-                Value::Number(n) => {
-                    let actual = read_msgpack_number(value_slice)?;
-                    Some((actual - n.as_f64()?).abs() >= f64::EPSILON)
-                }
-                Value::Bool(b) => {
-                    let actual = read_msgpack_bool(value_slice)?;
-                    Some(actual != *b)
-                }
-                _ => None,
+            Value::Number(n) => {
+                let actual = read_msgpack_number(value_slice)?;
+                Some((actual - n.as_f64()?).abs() < f64::EPSILON)
             }
-        }
-        "$in" | "$oneOf" => {
+            Value::Bool(b) => {
+                let actual = read_msgpack_bool(value_slice)?;
+                Some(actual == *b)
+            }
+            _ => None,
+        },
+        WhereOperator::NotEq => match op_value {
+            Value::String(expected) => {
+                let actual = read_str_value(value_slice)?;
+                Some(actual != expected.to_lowercase())
+            }
+            Value::Number(n) => {
+                let actual = read_msgpack_number(value_slice)?;
+                Some((actual - n.as_f64()?).abs() >= f64::EPSILON)
+            }
+            Value::Bool(b) => {
+                let actual = read_msgpack_bool(value_slice)?;
+                Some(actual != *b)
+            }
+            _ => None,
+        },
+        WhereOperator::In => {
             let allowed = op_value.as_array()?;
             let actual = read_str_value(value_slice);
             Some(allowed.iter().any(|v| match (actual.as_deref(), v) {
@@ -191,7 +203,7 @@ pub fn evaluate_predicate_msgpack(
                 _ => false,
             }))
         }
-        "$nin" | "$notIn" => {
+        WhereOperator::NotIn => {
             let excluded = op_value.as_array()?;
             let actual = read_str_value(value_slice);
             Some(!excluded.iter().any(|v| match (actual.as_deref(), v) {
@@ -199,27 +211,27 @@ pub fn evaluate_predicate_msgpack(
                 _ => false,
             }))
         }
-        "$gt" | "$greaterThan" => {
+        WhereOperator::Gt => {
             let threshold = op_value.as_f64()?;
             let actual = read_msgpack_number(value_slice)?;
             Some(actual > threshold)
         }
-        "$gte" | "$greaterThanOrEqual" => {
+        WhereOperator::Gte => {
             let threshold = op_value.as_f64()?;
             let actual = read_msgpack_number(value_slice)?;
             Some(actual >= threshold)
         }
-        "$lt" | "$lessThan" => {
+        WhereOperator::Lt => {
             let threshold = op_value.as_f64()?;
             let actual = read_msgpack_number(value_slice)?;
             Some(actual < threshold)
         }
-        "$lte" | "$lessThanOrEqual" => {
+        WhereOperator::Lte => {
             let threshold = op_value.as_f64()?;
             let actual = read_msgpack_number(value_slice)?;
             Some(actual <= threshold)
         }
-        "$ct" | "$contains" => {
+        WhereOperator::Contains => {
             let needle = op_value.as_str()?.to_lowercase();
             // Try plain string first.
             if let Some(haystack) = read_str_value(value_slice) {
@@ -241,10 +253,9 @@ pub fn evaluate_predicate_msgpack(
             }
             None
         }
-        _ => None,
+        WhereOperator::Or | WhereOperator::And => None,
     }
 }
-
 
 fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
     let mut b = bytes;
@@ -252,48 +263,75 @@ fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
     match marker {
         rmp::Marker::FixPos(v) => Some(v as f64),
         rmp::Marker::FixNeg(v) => Some(v as f64),
-        rmp::Marker::U8 => { let v = b.first().copied()? as f64; Some(v) }
+        rmp::Marker::U8 => {
+            let v = b.first().copied()? as f64;
+            Some(v)
+        }
         rmp::Marker::U16 => {
-            if b.len() < 2 { return None; }
+            if b.len() < 2 {
+                return None;
+            }
             Some(u16::from_be_bytes([b[0], b[1]]) as f64)
         }
         rmp::Marker::U32 => {
-            if b.len() < 4 { return None; }
+            if b.len() < 4 {
+                return None;
+            }
             Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f64)
         }
         rmp::Marker::U64 => {
-            if b.len() < 8 { return None; }
+            if b.len() < 8 {
+                return None;
+            }
             Some(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f64)
         }
-        rmp::Marker::I8 => { let v = b.first().copied()? as i8 as f64; Some(v) }
+        rmp::Marker::I8 => {
+            let v = b.first().copied()? as i8 as f64;
+            Some(v)
+        }
         rmp::Marker::I16 => {
-            if b.len() < 2 { return None; }
+            if b.len() < 2 {
+                return None;
+            }
             Some(i16::from_be_bytes([b[0], b[1]]) as f64)
         }
         rmp::Marker::I32 => {
-            if b.len() < 4 { return None; }
+            if b.len() < 4 {
+                return None;
+            }
             Some(i32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f64)
         }
         rmp::Marker::I64 => {
-            if b.len() < 8 { return None; }
+            if b.len() < 8 {
+                return None;
+            }
             Some(i64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f64)
         }
         rmp::Marker::F32 => {
-            if b.len() < 4 { return None; }
+            if b.len() < 4 {
+                return None;
+            }
             Some(f32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f64)
         }
         rmp::Marker::F64 => {
-            if b.len() < 8 { return None; }
-            Some(f64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+            if b.len() < 8 {
+                return None;
+            }
+            Some(f64::from_be_bytes([
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+            ]))
         }
         _ => None,
     }
 }
 
-/// Extract the `_seq` field from a MsgPack document as a u64.
-/// Returns `u64::MAX` as fallback so docs without `_seq` sort last.
+/// Extract the `_seq` / `_s` field from a MsgPack document as a u64.
+/// Checks the compact storage name `"_s"` first, then falls back to the
+/// legacy long name `"_seq"` for documents written before the rename.
+/// Returns `u64::MAX` as fallback so docs without a seq field sort last.
 pub fn read_msgpack_seq(bytes: &[u8]) -> u64 {
-    find_msgpack_value(bytes, &["_seq"])
+    find_msgpack_value(bytes, &["_s"])
+        .or_else(|| find_msgpack_value(bytes, &["_seq"]))
         .and_then(|slice| {
             let mut b = slice;
             let marker = read_marker(&mut b).ok()?;
@@ -301,16 +339,24 @@ pub fn read_msgpack_seq(bytes: &[u8]) -> u64 {
                 rmp::Marker::FixPos(v) => Some(v as u64),
                 rmp::Marker::U8 => Some(*b.first()? as u64),
                 rmp::Marker::U16 => {
-                    if b.len() < 2 { return None; }
+                    if b.len() < 2 {
+                        return None;
+                    }
                     Some(u16::from_be_bytes([b[0], b[1]]) as u64)
                 }
                 rmp::Marker::U32 => {
-                    if b.len() < 4 { return None; }
+                    if b.len() < 4 {
+                        return None;
+                    }
                     Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as u64)
                 }
                 rmp::Marker::U64 => {
-                    if b.len() < 8 { return None; }
-                    Some(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                    if b.len() < 8 {
+                        return None;
+                    }
+                    Some(u64::from_be_bytes([
+                        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                    ]))
                 }
                 _ => None,
             }
@@ -332,14 +378,15 @@ fn read_msgpack_bool(bytes: &[u8]) -> Option<bool> {
 pub fn evaluate_binary_predicate(
     msgpack_bytes: &[u8],
     target_key: &str,
-    target_value: &str
+    target_value: &str,
 ) -> bool {
     evaluate_predicate_msgpack(
         msgpack_bytes,
         target_key,
-        "$eq",
+        WhereOperator::Eq.as_str(),
         &Value::String(target_value.to_string()),
-    ).unwrap_or(false)
+    )
+    .unwrap_or(false)
 }
 
 // ─── Projection / exclusion ──────────────────────────────────────────────────
@@ -372,12 +419,16 @@ pub fn get_nested_value(doc: &Value, parts: &[&str]) -> Option<Value> {
 }
 
 fn insert_nested_value(target: &mut Map<String, Value>, parts: &[&str], value: Value) {
-    if parts.is_empty() { return; }
+    if parts.is_empty() {
+        return;
+    }
     let key = parts[0].to_string();
     if parts.len() == 1 {
         target.insert(key, value);
     } else {
-        let next_target = target.entry(key).or_insert_with(|| Value::Object(Map::new()));
+        let next_target = target
+            .entry(key)
+            .or_insert_with(|| Value::Object(Map::new()));
         if let Some(next_map) = next_target.as_object_mut() {
             insert_nested_value(next_map, &parts[1..], value);
         }
@@ -400,7 +451,9 @@ pub fn exclude(doc: &Value, fields: &[Value]) -> Value {
 }
 
 fn remove_nested_value(target: &mut Map<String, Value>, parts: &[&str]) {
-    if parts.is_empty() { return; }
+    if parts.is_empty() {
+        return;
+    }
     let key = parts[0];
     if parts.len() == 1 {
         target.remove(key);
@@ -408,7 +461,12 @@ fn remove_nested_value(target: &mut Map<String, Value>, parts: &[&str]) {
         if let Some(child_map) = child.as_object_mut() {
             remove_nested_value(child_map, &parts[1..]);
         }
-        if target.get(key).and_then(|v| v.as_object()).map(|o| o.is_empty()).unwrap_or(false) {
+        if target
+            .get(key)
+            .and_then(|v| v.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(false)
+        {
             target.remove(key);
         }
     }
@@ -426,10 +484,15 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
     };
 
     for (key, condition) in query_obj {
-        if key == "$or" {
+        if key == WhereOperator::Or.as_str() {
             let sub_queries = match condition.as_array() {
                 Some(arr) => arr,
-                None => return Err(DbError::InvalidQuery("$or expects an array".to_string())),
+                None => {
+                    return Err(DbError::InvalidQuery(format!(
+                        "{} expects an array",
+                        WhereOperator::Or.as_str()
+                    )));
+                }
             };
             let mut any_passed = false;
             for sub in sub_queries {
@@ -438,17 +501,26 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
                     break;
                 }
             }
-            if !any_passed { return Ok(false); }
+            if !any_passed {
+                return Ok(false);
+            }
             continue;
         }
 
-        if key == "$and" {
+        if key == WhereOperator::And.as_str() {
             let sub_queries = match condition.as_array() {
                 Some(arr) => arr,
-                None => return Err(DbError::InvalidQuery("$and expects an array".to_string())),
+                None => {
+                    return Err(DbError::InvalidQuery(format!(
+                        "{} expects an array",
+                        WhereOperator::And.as_str()
+                    )));
+                }
             };
             for sub in sub_queries {
-                if !evaluate_where(doc, sub)? { return Ok(false); }
+                if !evaluate_where(doc, sub)? {
+                    return Ok(false);
+                }
             }
             continue;
         }
@@ -462,7 +534,9 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
                     (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
                     _ => dv == condition,
                 };
-                if !matches { return Ok(false); }
+                if !matches {
+                    return Ok(false);
+                }
             } else {
                 return Ok(false);
             }
@@ -470,70 +544,95 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
         }
 
         let cond_obj = condition.as_object().ok_or_else(|| {
-            DbError::InvalidQuery(format!("Field condition for '{}' must be an object or plain value", key))
+            DbError::InvalidQuery(format!(
+                "Field condition for '{}' must be an object or plain value",
+                key
+            ))
         })?;
         let doc_val_ref = doc_val_opt.as_ref().unwrap_or(&Value::Null);
 
         for (op, op_val) in cond_obj {
-            let passed: bool = match op.as_str() {
-                "$eq" | "$equals" => match (doc_val_ref, op_val) {
+            let parsed_op = WhereOperator::from_str(op.as_str());
+            let passed: bool = match parsed_op {
+                Some(WhereOperator::Eq) => match (doc_val_ref, op_val) {
                     (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
                     _ => doc_val_ref == op_val,
                 },
-                "$ne" | "$notEquals" => match (doc_val_ref, op_val) {
+                Some(WhereOperator::NotEq) => match (doc_val_ref, op_val) {
                     (Value::String(a), Value::String(b)) => a.to_lowercase() != b.to_lowercase(),
                     _ => doc_val_ref != op_val,
                 },
-                "$gt" | "$greaterThan" | "$gte" | "$lt" | "$lessThan" | "$lte" => {
+                Some(WhereOperator::Gt) => {
                     if let (Some(d_num), Some(o_num)) = (doc_val_ref.as_f64(), op_val.as_f64()) {
-                        match op.as_str() {
-                            "$gt" | "$greaterThan" => d_num > o_num,
-                            "$gte"                 => d_num >= o_num,
-                            "$lt" | "$lessThan"    => d_num < o_num,
-                            "$lte"                 => d_num <= o_num,
-                            _ => false,
-                        }
+                        d_num > o_num
                     } else {
                         false
                     }
-                },
-                "$contains" | "$ct" => {
-                    match doc_val_ref {
-                        Value::String(d_str) => {
-                            if let Some(o_str) = op_val.as_str() {
-                                d_str.to_lowercase().contains(&o_str.to_lowercase())
-                            } else {
-                                false
-                            }
-                        }
-                        Value::Array(arr) => arr.contains(op_val),
-                        _ => false,
+                }
+                Some(WhereOperator::Gte) => {
+                    if let (Some(d_num), Some(o_num)) = (doc_val_ref.as_f64(), op_val.as_f64()) {
+                        d_num >= o_num
+                    } else {
+                        false
                     }
+                }
+                Some(WhereOperator::Lt) => {
+                    if let (Some(d_num), Some(o_num)) = (doc_val_ref.as_f64(), op_val.as_f64()) {
+                        d_num < o_num
+                    } else {
+                        false
+                    }
+                }
+                Some(WhereOperator::Lte) => {
+                    if let (Some(d_num), Some(o_num)) = (doc_val_ref.as_f64(), op_val.as_f64()) {
+                        d_num <= o_num
+                    } else {
+                        false
+                    }
+                }
+                Some(WhereOperator::Contains) => match doc_val_ref {
+                    Value::String(d_str) => {
+                        if let Some(o_str) = op_val.as_str() {
+                            d_str.to_lowercase().contains(&o_str.to_lowercase())
+                        } else {
+                            false
+                        }
+                    }
+                    Value::Array(arr) => arr.contains(op_val),
+                    _ => false,
                 },
-                "$in" | "$oneOf" => {
+                Some(WhereOperator::In) => {
                     if let Some(allowed) = op_val.as_array() {
                         allowed.iter().any(|v| match (doc_val_ref, v) {
-                            (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
+                            (Value::String(a), Value::String(b)) => {
+                                a.to_lowercase() == b.to_lowercase()
+                            }
                             _ => doc_val_ref == v,
                         })
                     } else {
                         return Err(DbError::InvalidQuery(format!("{} expects an array", op)));
                     }
-                },
-                "$nin" | "$notIn" => {
+                }
+                Some(WhereOperator::NotIn) => {
                     if let Some(excluded) = op_val.as_array() {
                         !excluded.iter().any(|v| match (doc_val_ref, v) {
-                            (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
+                            (Value::String(a), Value::String(b)) => {
+                                a.to_lowercase() == b.to_lowercase()
+                            }
                             _ => doc_val_ref == v,
                         })
                     } else {
                         return Err(DbError::InvalidQuery(format!("{} expects an array", op)));
                     }
-                },
-                _ => return Err(DbError::InvalidQuery(format!("Unknown operator: {}", op))),
+                }
+                Some(WhereOperator::Or) | Some(WhereOperator::And) | None => {
+                    return Err(DbError::InvalidQuery(format!("Unknown operator: {}", op)));
+                }
             };
 
-            if !passed { return Ok(false); }
+            if !passed {
+                return Ok(false);
+            }
         }
     }
 
@@ -541,123 +640,5 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn test_evaluate_where_basic() {
-        let doc = json!({ "name": "Alice", "age": 30 });
-        assert!(evaluate_where(&doc, &json!({ "name": "Alice" })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "name": "Bob" })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "name": { "$eq": "Alice" } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "name": "alice" })).unwrap());
-    }
-
-    #[test]
-    fn test_evaluate_where_numeric() {
-        let doc = json!({ "age": 30 });
-        assert!(evaluate_where(&doc, &json!({ "age": { "$gt": 20 } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "age": { "$gte": 30 } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "age": { "$lt": 40 } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "age": { "$lte": 30 } })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "age": { "$gt": 30 } })).unwrap());
-    }
-
-    #[test]
-    fn test_evaluate_where_invalid_ops() {
-        let doc = json!({ "name": "Alice" });
-        let res = evaluate_where(&doc, &json!({ "name": { "$invalid": "val" } }));
-        assert!(res.is_err());
-        if let Err(DbError::InvalidQuery(msg)) = res {
-            assert!(msg.contains("Unknown operator"));
-        } else {
-            panic!("Expected InvalidQuery error");
-        }
-    }
-
-    #[test]
-    fn test_evaluate_where_logical() {
-        let doc = json!({ "name": "Alice", "age": 30 });
-        assert!(evaluate_where(&doc, &json!({ "$or": [{ "name": "Alice" }, { "name": "Bob" }] })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "$or": [{ "name": "Bob" }, { "age": 30 }] })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "$or": [{ "name": "Bob" }, { "age": 20 }] })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "$and": [{ "name": "Alice" }, { "age": 30 }] })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "$and": [{ "name": "Alice" }, { "age": 20 }] })).unwrap());
-    }
-
-    #[test]
-    fn test_evaluate_where_in_nin() {
-        let doc = json!({ "role": "admin" });
-        assert!(evaluate_where(&doc, &json!({ "role": { "$in": ["admin", "user"] } })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "role": { "$in": ["guest", "user"] } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "role": { "$nin": ["guest", "user"] } })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "role": { "$nin": ["admin", "user"] } })).unwrap());
-    }
-
-    #[test]
-    fn test_evaluate_predicate_msgpack_eq_ne() {
-        let doc = json!({ "brand": "Apple", "price": 999.0 });
-        let bytes = rmp_serde::to_vec(&doc).unwrap();
-
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$eq", &json!("Apple")),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$eq", &json!("apple")),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$ne", &json!("Intel")),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$ne", &json!("Apple")),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn test_evaluate_predicate_msgpack_in_nin() {
-        let doc = json!({ "brand": "Dell" });
-        let bytes = rmp_serde::to_vec(&doc).unwrap();
-
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$in", &json!(["Apple", "Dell", "Razer"])),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$in", &json!(["Apple", "Razer"])),
-            Some(false)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$nin", &json!(["Framework", "Lenovo"])),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$nin", &json!(["Dell", "Lenovo"])),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn test_evaluate_predicate_msgpack_nested() {
-        let doc = json!({ "specs": { "cpu": { "brand": "Intel" } } });
-        let bytes = rmp_serde::to_vec(&doc).unwrap();
-
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "specs.cpu.brand", "$eq", &json!("Intel")),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "specs.cpu.brand", "$ne", &json!("Intel")),
-            Some(false)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "specs.cpu.brand", "$nin", &json!(["AMD", "Apple"]),),
-            Some(true)
-        );
-    }
-
-}
+#[path = "query_tests.rs"]
+mod tests;

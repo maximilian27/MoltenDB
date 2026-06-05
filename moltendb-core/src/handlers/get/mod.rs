@@ -1,9 +1,8 @@
-pub mod projection;
-pub mod sort;
+pub mod document_processing;
+pub mod errors;
 pub mod fetch;
-pub mod joins;
-
-pub use projection::shape_doc;
-pub use sort::{compare_values, make_comparator};
+pub use document_processing::{apply_joins, compare_values, make_comparator, shape_doc};
 pub use fetch::fetch_documents;
-pub use joins::apply_joins;
+pub(crate) mod constants;
+pub mod responses;
+pub(crate) mod types;
