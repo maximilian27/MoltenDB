@@ -47,7 +47,7 @@ impl EncryptedStorage {
     // Serialises the entry to MessagePack, encrypts it, and wraps the result in an "ENC" log entry.
     // Layout: [24-byte nonce][ciphertext], base64-encoded as the entry value.
     fn encrypt_entry(&self, entry: &LogEntry) -> Result<LogEntry, DbError> {
-        let plain_bytes = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let plain_bytes = crate::common::system_field_tokens::log_entry_to_msgpack(entry).map_err(|_| DbError::WriteError)?;
 
         let mut nonce_bytes = [0u8; 24];
         OsRng.fill_bytes(&mut nonce_bytes);
@@ -86,7 +86,7 @@ impl EncryptedStorage {
             .decrypt(nonce, cipher_text)
             .map_err(|_| DbError::WriteError)?;
 
-        rmp_serde::from_slice::<LogEntry>(&plain_bytes).map_err(|_| DbError::WriteError)
+        crate::common::system_field_tokens::log_entry_from_msgpack(&plain_bytes).ok_or(DbError::WriteError)
     }
 }
 
@@ -170,3 +170,4 @@ impl StorageBackend for EncryptedStorage {
         Ok(count)
     }
 }
+

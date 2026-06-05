@@ -5,6 +5,7 @@
 use super::super::types::{DbError, LogEntry};
 use super::common::now_unix_ms;
 use super::types::UpdateParams;
+use crate::common::system_field_tokens::{msgpack_to_value, value_to_msgpack};
 use crate::common::system_fields::SystemFields;
 use serde_json::{json, Value};
 use tracing::debug;
@@ -40,9 +41,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
     ))?;
 
     if let Some(col) = state.get(collection)
-        && let Some(doc) = col
-            .get(key)
-            .and_then(|b| rmp_serde::from_slice::<Value>(&b).ok())
+        && let Some(doc) = col.get(key).and_then(|b| msgpack_to_value(&b))
     {
         let mut doc = doc;
 
@@ -72,10 +71,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
                 for (k, v) in update_obj {
                     // _v and _createdAt (and compact aliases) are managed exclusively by the engine.
                     // Callers cannot set them directly -- silently skip if present.
-                    if k == SystemFields::VERSION
-                        || k == SystemFields::CREATED_AT
-                        || k == SystemFields::STORE_CREATED_AT
-                    {
+                    if k == SystemFields::VERSION || k == SystemFields::CREATED_AT {
                         continue;
                     }
                     doc_obj.insert(k.clone(), v.clone());
@@ -88,7 +84,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
                 // Stamp the modification time. _createdAt/_ca is already in the
                 // document and is intentionally left untouched.
                 doc_obj.insert(
-                    SystemFields::STORE_MODIFIED_AT.to_string(),
+                    SystemFields::MODIFIED_AT.to_string(),
                     serde_json::json!(now_unix_ms()),
                 );
             }
@@ -100,7 +96,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
         crate::engine::schema::validate_document(schemas, collection, &new_value)?;
 
         // Step 2: Update state as MsgPack-encoded bytes.
-        if let Ok(bytes) = rmp_serde::to_vec(&new_value) {
+        if let Ok(bytes) = value_to_msgpack(&new_value) {
             col.insert(key.to_string(), bytes.into_boxed_slice());
         }
 
@@ -122,7 +118,10 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
         ))?;
 
         // Step 7: Broadcast a lean change event to WebSocket subscribers.
-        let new_v = new_value.get("_v").and_then(|v| v.as_u64()).unwrap_or(0);
+        let new_v = new_value
+            .get(SystemFields::VERSION)
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let event = json!({
             "event": "change",
             "collection": collection,

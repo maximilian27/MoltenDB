@@ -15,15 +15,28 @@ fn open_db() -> Db {
         path: path.to_str().unwrap().to_string(),
         sync_mode: true,
         ..Default::default()
-    }).expect("Failed to open db")
+    })
+    .expect("Failed to open db")
 }
 
 fn seed_data(db: &Db) {
     let items = vec![
-        ("p1".to_string(), json!({"type": "fruit", "name": "apple", "price": 1.5})),
-        ("p2".to_string(), json!({"type": "fruit", "name": "banana", "price": 1.0})),
-        ("p3".to_string(), json!({"type": "vegetable", "name": "carrot", "price": 0.8})),
-        ("p4".to_string(), json!({"type": "vegetable", "name": "broccoli", "price": 1.2})),
+        (
+            "p1".to_string(),
+            json!({"type": "fruit", "name": "apple", "price": 1.5}),
+        ),
+        (
+            "p2".to_string(),
+            json!({"type": "fruit", "name": "banana", "price": 1.0}),
+        ),
+        (
+            "p3".to_string(),
+            json!({"type": "vegetable", "name": "carrot", "price": 0.8}),
+        ),
+        (
+            "p4".to_string(),
+            json!({"type": "vegetable", "name": "broccoli", "price": 1.2}),
+        ),
     ];
     db.insert("products", items).unwrap();
 }
@@ -88,7 +101,7 @@ fn test_query_projection() {
 #[test]
 fn test_query_deep_pagination_zero_string_scan() {
     let db = open_db();
-    
+
     // Insert 6000 small items to test both bounded heap and flat vector select_nth_unstable_by paths
     let items: Vec<(String, serde_json::Value)> = (0..6000)
         .map(|i| {
@@ -101,9 +114,9 @@ fn test_query_deep_pagination_zero_string_scan() {
             )
         })
         .collect();
-    
+
     db.insert("items", items).unwrap();
-    
+
     // 1. Small offset + limit (<= 5000), using bounded heap path
     let payload_small = json!({
         "collection": "items",
@@ -114,7 +127,7 @@ fn test_query_deep_pagination_zero_string_scan() {
     let (_, results_small) = process_get(&db, &payload_small, 1024 * 1024, 1000);
     let arr_small = results_small.as_array().unwrap();
     assert_eq!(arr_small.len(), 5);
-    
+
     // 2. Large offset + limit (> 5000), using flat vec select_nth_unstable_by path
     let payload_large = json!({
         "collection": "items",

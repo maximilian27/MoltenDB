@@ -1,15 +1,13 @@
+﻿#[cfg(not(target_arch = "wasm32"))]
+use crate::engine::storage::StorageBackend;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::engine::types::{DbError, LogEntry};
+#[cfg(not(target_arch = "wasm32"))]
+use dashmap::DashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::ops::ControlFlow;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
-use dashmap::DashMap;
-#[cfg(not(target_arch = "wasm32"))]
-use serde_json::Value;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::engine::types::{DbError, LogEntry};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::engine::storage::StorageBackend;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn recover_to(
@@ -26,10 +24,14 @@ pub fn recover_to(
     let mut current_tx_id = None;
 
     storage.stream_log_into(&mut |entry, _length| {
-        if let Some(t) = to_time && entry._t > t {
+        if let Some(t) = to_time
+            && entry._t > t
+        {
             return ControlFlow::Break(());
         }
-        if let Some(s) = to_seq && count >= s {
+        if let Some(s) = to_seq
+            && count >= s
+        {
             return ControlFlow::Break(());
         }
         match entry.cmd.as_str() {
@@ -43,7 +45,8 @@ pub fn recover_to(
                         crate::engine::storage::apply_entry(
                             &e,
                             &state,
-                            #[cfg(feature = "schema")] &schemas,
+                            #[cfg(feature = "schema")]
+                            &schemas,
                             &ttl_expiry,
                         );
                     }
@@ -57,7 +60,8 @@ pub fn recover_to(
                     crate::engine::storage::apply_entry(
                         &entry,
                         &state,
-                        #[cfg(feature = "schema")] &schemas,
+                        #[cfg(feature = "schema")]
+                        &schemas,
                         &ttl_expiry,
                     );
                 }
@@ -72,7 +76,9 @@ pub fn recover_to(
     for col_ref in state.iter() {
         let col_name = col_ref.key();
         for item_ref in col_ref.value().iter() {
-            if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
+            if let Some(value) =
+                crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
+            {
                 entries.push(LogEntry::new(
                     "INSERT".to_string(),
                     col_name.to_string(),

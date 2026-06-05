@@ -6,10 +6,11 @@
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
+use crate::common::system_field_tokens::{log_entry_from_msgpack, log_entry_to_msgpack};
 use crate::engine::types::{DbError, LogEntry};
 use std::fs::{File, OpenOptions};
-use std::ops::ControlFlow;
 use std::io::{BufWriter, Read, Write};
+use std::ops::ControlFlow;
 
 pub fn write_compacted_log_no_tx(path: &str, entries: &[LogEntry]) -> Result<(), DbError> {
     let temp_file = OpenOptions::new()
@@ -27,17 +28,20 @@ pub fn write_compacted_log_no_tx(path: &str, entries: &[LogEntry]) -> Result<(),
 
 /// Encode one entry as a 4-byte LE length prefix followed by MessagePack bytes.
 fn write_msgpack_entry<W: Write>(w: &mut W, entry: &LogEntry) -> Result<(), DbError> {
-    let encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+    let encoded = log_entry_to_msgpack(entry).map_err(|_| DbError::WriteError)?;
     let len = encoded.len() as u32;
     w.write_all(&len.to_le_bytes())?;
     w.write_all(&encoded)?;
     Ok(())
 }
 
-
 /// Stream all log entries, calling `f` for each one.
 /// Skips the first `skip_lines` entries (already covered by a loaded snapshot).
-pub fn stream_log_entries<F>(path: &str, skip_lines: u64, mut f: F) -> Result<ControlFlow<(), ()>, DbError>
+pub fn stream_log_entries<F>(
+    path: &str,
+    skip_lines: u64,
+    mut f: F,
+) -> Result<ControlFlow<(), ()>, DbError>
 where
     F: FnMut(LogEntry, u32) -> ControlFlow<(), ()>,
 {
@@ -60,13 +64,18 @@ where
     let mut pos = 0usize;
     let mut idx: u64 = 0;
     while pos + 4 <= buf.len() {
-        let len = u32::from_le_bytes([buf[pos], buf[pos+1], buf[pos+2], buf[pos+3]]) as usize;
+        let len = u32::from_le_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]]) as usize;
         pos += 4;
-        if pos + len > buf.len() { break; }
+        if pos + len > buf.len() {
+            break;
+        }
         let payload = &buf[pos..pos + len];
         pos += len;
-        if idx < skip_lines { idx += 1; continue; }
-        if let Ok(entry) = rmp_serde::from_slice::<LogEntry>(payload) {
+        if idx < skip_lines {
+            idx += 1;
+            continue;
+        }
+        if let Some(entry) = log_entry_from_msgpack(payload) {
             if let ControlFlow::Break(_) = f(entry, (len + 4) as u32) {
                 return Ok(ControlFlow::Break(()));
             }

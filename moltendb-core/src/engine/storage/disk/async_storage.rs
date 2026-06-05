@@ -236,7 +236,7 @@ impl StorageBackend for AsyncDiskStorage {
     /// Serialize `entry` to MessagePack and send it to the background writer.
     /// This call returns immediately — it never blocks waiting for disk I/O.
     fn write_entry(&self, entry: &LogEntry) -> Result<(), DbError> {
-        let encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let encoded = crate::common::system_field_tokens::log_entry_to_msgpack(entry).map_err(|_| DbError::WriteError)?;
         let len = (encoded.len() as u32).to_le_bytes();
         let mut bytes = Vec::with_capacity(4 + encoded.len());
         bytes.extend_from_slice(&len);
@@ -331,3 +331,4 @@ impl StorageBackend for AsyncDiskStorage {
         Ok(count)
     }
 }
+

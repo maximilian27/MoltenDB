@@ -83,7 +83,7 @@ pub fn delete_filtered(
 ) -> Result<usize, DbError> {
     #[inline]
     fn decode(bytes: &[u8]) -> Option<Value> {
-        rmp_serde::from_slice(bytes).ok()
+        crate::common::system_field_tokens::msgpack_to_value(bytes)
     }
 
     let keys: Vec<String> = {
@@ -144,7 +144,7 @@ pub fn evict_oldest(
 ) {
     #[inline]
     fn decode(bytes: &[u8]) -> Option<Value> {
-        rmp_serde::from_slice(bytes).ok()
+        crate::common::system_field_tokens::msgpack_to_value(bytes)
     }
 
     let col = match state.get(collection) {

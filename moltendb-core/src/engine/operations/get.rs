@@ -9,7 +9,7 @@
 // gives a near-linear speedup. On wasm32 we fall back to a sequential scan.
 // ─────────────────────────────────────────────────────────────────────────────
 use super::super::StorageBackend;
-use crate::query::read_msgpack_seq;
+use crate::common::system_field_tokens::{msgpack_to_value, read_msgpack_seq_token};
 use dashmap::DashMap;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ use rayon::prelude::*;
 /// Returns None if deserialization fails (should never happen for well-formed data).
 #[inline]
 fn decode(bytes: &[u8]) -> Option<Value> {
-    rmp_serde::from_slice(bytes).ok()
+    msgpack_to_value(bytes)
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -109,7 +109,7 @@ pub fn get_filtered(
                     || BinaryHeap::<CompactItem>::with_capacity(offset + limit + 1),
                     |mut h, entry| {
                         if predicate(entry.key(), entry.value()) {
-                            let seq = read_msgpack_seq(entry.value());
+                            let seq = read_msgpack_seq_token(entry.value());
                             let item = CompactItem {
                                 sort_value: seq as f64,
                                 seq,
@@ -154,7 +154,7 @@ pub fn get_filtered(
                 .par_iter()
                 .filter_map(|entry| {
                     if predicate(entry.key(), entry.value()) {
-                        let seq = read_msgpack_seq(entry.value());
+                        let seq = read_msgpack_seq_token(entry.value());
                         Some(CompactItem {
                             sort_value: seq as f64,
                             seq,
@@ -196,7 +196,7 @@ pub fn get_filtered(
         let hydrated: HashMap<u64, String> = col
             .par_iter()
             .filter_map(|entry| {
-                let seq = read_msgpack_seq(entry.value());
+                let seq = read_msgpack_seq_token(entry.value());
                 if seq_set.contains(&seq) {
                     Some((seq, entry.key().clone()))
                 } else {
@@ -230,7 +230,7 @@ pub fn get_filtered(
             let mut heap = std::collections::BinaryHeap::with_capacity(offset + limit + 1);
             for entry in col.iter() {
                 if predicate(entry.key(), entry.value()) {
-                    let seq = read_msgpack_seq(entry.value());
+                    let seq = read_msgpack_seq_token(entry.value());
                     let item = CompactItem {
                         sort_value: seq as f64,
                         seq,
@@ -255,7 +255,7 @@ pub fn get_filtered(
                 .iter()
                 .filter_map(|entry| {
                     if predicate(entry.key(), entry.value()) {
-                        let seq = read_msgpack_seq(entry.value());
+                        let seq = read_msgpack_seq_token(entry.value());
                         Some(CompactItem {
                             sort_value: seq as f64,
                             seq,
@@ -296,7 +296,7 @@ pub fn get_filtered(
         let hydrated: std::collections::HashMap<u64, String> = col
             .iter()
             .filter_map(|entry| {
-                let seq = read_msgpack_seq(entry.value());
+                let seq = read_msgpack_seq_token(entry.value());
                 if seq_set.contains(&seq) {
                     Some((seq, entry.key().clone()))
                 } else {
@@ -485,7 +485,7 @@ pub fn get_all(
                 .fold(
                     || BinaryHeap::<CompactItem>::with_capacity(offset + limit + 1),
                     |mut h, entry| {
-                        let seq = read_msgpack_seq(entry.value());
+                        let seq = read_msgpack_seq_token(entry.value());
                         let item = CompactItem {
                             sort_value: seq as f64,
                             seq,
@@ -528,7 +528,7 @@ pub fn get_all(
             let mut matching: Vec<CompactItem> = col
                 .par_iter()
                 .map(|entry| {
-                    let seq = read_msgpack_seq(entry.value());
+                    let seq = read_msgpack_seq_token(entry.value());
                     CompactItem {
                         sort_value: seq as f64,
                         seq,
@@ -567,7 +567,7 @@ pub fn get_all(
         let hydrated: HashMap<u64, String> = col
             .par_iter()
             .filter_map(|entry| {
-                let seq = read_msgpack_seq(entry.value());
+                let seq = read_msgpack_seq_token(entry.value());
                 if seq_set.contains(&seq) {
                     Some((seq, entry.key().clone()))
                 } else {
@@ -600,7 +600,7 @@ pub fn get_all(
         let page_items: Vec<CompactItem> = if !deep {
             let mut heap = std::collections::BinaryHeap::with_capacity(offset + limit + 1);
             for entry in col.iter() {
-                let seq = read_msgpack_seq(entry.value());
+                let seq = read_msgpack_seq_token(entry.value());
                 let item = CompactItem {
                     sort_value: seq as f64,
                     seq,
@@ -623,7 +623,7 @@ pub fn get_all(
             let mut matching: Vec<CompactItem> = col
                 .iter()
                 .map(|entry| {
-                    let seq = read_msgpack_seq(entry.value());
+                    let seq = read_msgpack_seq_token(entry.value());
                     CompactItem {
                         sort_value: seq as f64,
                         seq,
@@ -661,7 +661,7 @@ pub fn get_all(
         let hydrated: std::collections::HashMap<u64, String> = col
             .iter()
             .filter_map(|entry| {
-                let seq = read_msgpack_seq(entry.value());
+                let seq = read_msgpack_seq_token(entry.value());
                 if seq_set.contains(&seq) {
                     Some((seq, entry.key().clone()))
                 } else {

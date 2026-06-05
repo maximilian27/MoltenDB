@@ -1,4 +1,4 @@
-// ─── storage/mod.rs ──────────────────────────────────────────────────────────
+﻿// ─── storage/mod.rs ──────────────────────────────────────────────────────────
 // This is the root module for all storage backends. It does three things:
 //
 //   1. Declares and conditionally exposes the concrete backend modules
@@ -114,7 +114,7 @@ pub trait StorageBackend: Send + Sync {
                 .value()
                 .iter()
                 .filter_map(move |item_ref| {
-                    let value: Value = rmp_serde::from_slice(item_ref.value()).ok()?;
+                    let value: Value = crate::common::system_field_tokens::msgpack_to_value(item_ref.value())?;
                     Some(LogEntry::new(
                         "INSERT".to_string(),
                         col_name.to_string(),
@@ -282,7 +282,7 @@ pub fn apply_entry(
             let col = state
                 .entry(Arc::from(entry.collection.as_str()))
                 .or_default();
-            if let Ok(bytes) = rmp_serde::to_vec(&entry.value) {
+            if let Ok(bytes) = crate::common::system_field_tokens::value_to_msgpack(&entry.value) {
                 col.insert(entry.key.clone(), bytes.into_boxed_slice());
             }
         }

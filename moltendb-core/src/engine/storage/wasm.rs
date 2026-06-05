@@ -1,4 +1,4 @@
-// ─── wasm.rs ─────────────────────────────────────────────────────────────────
+﻿// ─── wasm.rs ─────────────────────────────────────────────────────────────────
 // This file implements OpfsStorage — the browser-side StorageBackend that
 // persists the database log using the Origin Private File System (OPFS) API.
 //
@@ -206,7 +206,9 @@ impl StorageBackend for OpfsStorage {
                 }
 
                 let entry_data = &remaining[4..4 + msg_len];
-                if let Ok(entry) = rmp_serde::from_slice::<LogEntry>(entry_data) {
+                if let Some(entry) =
+                    crate::common::system_field_tokens::log_entry_from_msgpack(entry_data)
+                {
                     if let ControlFlow::Break(_) = f(entry, msg_len as u32) {
                         return Ok(count); // Break out completely
                     }
@@ -227,7 +229,8 @@ impl StorageBackend for OpfsStorage {
     /// flush() is called after every write to ensure the data is durable.
     fn write_entry(&self, entry: &LogEntry) -> Result<(), DbError> {
         // Serialize the entry to MessagePack and prefix with length.
-        let mut encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let mut encoded = crate::common::system_field_tokens::log_entry_to_msgpack(entry)
+            .map_err(|_| DbError::WriteError)?;
         let mut bytes = (encoded.len() as u32).to_le_bytes().to_vec();
         bytes.append(&mut encoded);
 
@@ -333,14 +336,18 @@ impl OpfsStorage {
         for col_ref in state.iter() {
             let col_name = col_ref.key().clone();
             for item_ref in col_ref.value().iter() {
-                if let Ok(value) = rmp_serde::from_slice::<serde_json::Value>(item_ref.value()) {
+                if let Some(value) =
+                    crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
+                {
                     let entry = LogEntry::new(
                         "INSERT".to_string(),
                         col_name.to_string(),
                         item_ref.key().clone(),
                         value,
                     );
-                    if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
+                    if let Ok(mut encoded) =
+                        crate::common::system_field_tokens::log_entry_to_msgpack(&entry)
+                    {
                         buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
                         buffer.append(&mut encoded);
 
@@ -396,14 +403,18 @@ impl OpfsStorage {
         for col_ref in state.iter() {
             let col_name = col_ref.key().clone();
             for item_ref in col_ref.value().iter() {
-                if let Ok(value) = rmp_serde::from_slice::<serde_json::Value>(item_ref.value()) {
+                if let Some(value) =
+                    crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
+                {
                     let entry = LogEntry::new(
                         "INSERT".to_string(),
                         col_name.to_string(),
                         item_ref.key().clone(),
                         value,
                     );
-                    if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
+                    if let Ok(mut encoded) =
+                        crate::common::system_field_tokens::log_entry_to_msgpack(&entry)
+                    {
                         buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
                         buffer.append(&mut encoded);
 
@@ -426,7 +437,9 @@ impl OpfsStorage {
                     "".to_string(),
                     schema_json.clone(),
                 );
-                if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
+                if let Ok(mut encoded) =
+                    crate::common::system_field_tokens::log_entry_to_msgpack(&entry)
+                {
                     buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
                     buffer.append(&mut encoded);
 

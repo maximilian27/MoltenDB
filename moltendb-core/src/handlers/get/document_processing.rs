@@ -154,20 +154,14 @@ pub fn shape_doc(
     // explicitly listed in a `fields` projection. They are stripped in all other cases.
     let v_val = doc.get(SystemFields::VERSION).cloned();
     // Read compact storage names first, fall back to legacy long names for old docs.
-    let seq_val = doc
-        .get(SystemFields::STORE_SEQ)
-        .or_else(|| doc.get(SystemFields::SEQ))
-        .cloned();
+    let seq_val = doc.get(SystemFields::SEQ).cloned();
     // Convert u64 Unix ms timestamps to ISO 8601 strings for the API response.
-    // Legacy docs may already have ISO strings -- leave those unchanged.
     let created_val = doc
-        .get(SystemFields::STORE_CREATED_AT)
-        .or_else(|| doc.get(SystemFields::CREATED_AT))
+        .get(SystemFields::CREATED_AT)
         .cloned()
         .map(ts_to_iso_val);
     let modified_val = doc
-        .get(SystemFields::STORE_MODIFIED_AT)
-        .or_else(|| doc.get(SystemFields::MODIFIED_AT))
+        .get(SystemFields::MODIFIED_AT)
         .cloned()
         .map(ts_to_iso_val);
 
@@ -212,13 +206,9 @@ pub fn shape_doc(
         // Strip optional metadata fields -- they are opt-in via `fields` only.
         if let Some(obj) = shaped.as_object_mut() {
             obj.remove(SystemFields::SEQ);
-            obj.remove(SystemFields::STORE_SEQ);
             obj.remove(SystemFields::CREATED_AT);
-            obj.remove(SystemFields::STORE_CREATED_AT);
             obj.remove(SystemFields::MODIFIED_AT);
-            obj.remove(SystemFields::STORE_MODIFIED_AT);
             obj.remove(SystemFields::EXPIRES_AT);
-            obj.remove(SystemFields::STORE_EXPIRES_AT);
         }
         shaped
     } else {
@@ -226,13 +216,9 @@ pub fn shape_doc(
         let mut d = doc;
         if let Some(obj) = d.as_object_mut() {
             obj.remove(SystemFields::SEQ);
-            obj.remove(SystemFields::STORE_SEQ);
             obj.remove(SystemFields::CREATED_AT);
-            obj.remove(SystemFields::STORE_CREATED_AT);
             obj.remove(SystemFields::MODIFIED_AT);
-            obj.remove(SystemFields::STORE_MODIFIED_AT);
             obj.remove(SystemFields::EXPIRES_AT);
-            obj.remove(SystemFields::STORE_EXPIRES_AT);
         }
         d
     };

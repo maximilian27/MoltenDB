@@ -69,7 +69,7 @@ impl StorageBackend for SyncDiskStorage {
     /// Serialize `entry` to MessagePack, write it to the BufWriter, and flush immediately.
     /// This call blocks until the OS has accepted the data.
     fn write_entry(&self, entry: &LogEntry) -> Result<(), DbError> {
-        let encoded = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let encoded = crate::common::system_field_tokens::log_entry_to_msgpack(entry).map_err(|_| DbError::WriteError)?;
         let len = (encoded.len() as u32).to_le_bytes();
         let mut w = self.writer.lock().map_err(|_| DbError::LockPoisoned)?;
         w.write_all(&len)?;
@@ -150,3 +150,4 @@ impl StorageBackend for SyncDiskStorage {
         Ok(count)
     }
 }
+

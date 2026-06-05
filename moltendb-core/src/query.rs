@@ -115,11 +115,23 @@ fn skip_value(bytes: &mut &[u8]) {
 /// segment is not found or the intermediate value is not a map.
 ///
 /// `path_parts` must have at least one element.
+///
+/// Handles both regular string keys and single-byte negative FixInt token keys
+/// (0xe0..=0xff) used for system fields in v1 storage format. Token keys are
+/// skipped (they are system fields, never user-queryable by path).
 fn find_msgpack_value<'a>(mut bytes: &'a [u8], path_parts: &[&str]) -> Option<&'a [u8]> {
     for (depth, &segment) in path_parts.iter().enumerate() {
         let map_len = read_msgpack_map_len(&mut bytes)?;
         let mut found = false;
         for _ in 0..map_len {
+            // Peek at the key byte to detect negative FixInt token keys.
+            let key_byte = *bytes.first()?;
+            if key_byte >= 0xe0 {
+                // Single-byte negative FixInt token key — skip it and its value.
+                bytes = &bytes[1..];
+                skip_value(&mut bytes);
+                continue;
+            }
             let key = read_msgpack_str(&mut bytes)?;
             if key == segment {
                 if depth == path_parts.len() - 1 {
@@ -325,44 +337,11 @@ fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
     }
 }
 
-/// Extract the `_seq` / `_s` field from a MsgPack document as a u64.
-/// Checks the compact storage name `"_s"` first, then falls back to the
-/// legacy long name `"_seq"` for documents written before the rename.
+/// Extract the `_seq` token (-3) from a MsgPack document as a u64.
+/// Uses the v1 negative FixInt token key (0xfd = -3).
 /// Returns `u64::MAX` as fallback so docs without a seq field sort last.
-pub fn read_msgpack_seq(bytes: &[u8]) -> u64 {
-    find_msgpack_value(bytes, &["_s"])
-        .or_else(|| find_msgpack_value(bytes, &["_seq"]))
-        .and_then(|slice| {
-            let mut b = slice;
-            let marker = read_marker(&mut b).ok()?;
-            match marker {
-                rmp::Marker::FixPos(v) => Some(v as u64),
-                rmp::Marker::U8 => Some(*b.first()? as u64),
-                rmp::Marker::U16 => {
-                    if b.len() < 2 {
-                        return None;
-                    }
-                    Some(u16::from_be_bytes([b[0], b[1]]) as u64)
-                }
-                rmp::Marker::U32 => {
-                    if b.len() < 4 {
-                        return None;
-                    }
-                    Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as u64)
-                }
-                rmp::Marker::U64 => {
-                    if b.len() < 8 {
-                        return None;
-                    }
-                    Some(u64::from_be_bytes([
-                        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-                    ]))
-                }
-                _ => None,
-            }
-        })
-        .unwrap_or(u64::MAX)
-}
+pub use crate::common::system_field_tokens::read_msgpack_seq_token as read_msgpack_seq;
+
 
 fn read_msgpack_bool(bytes: &[u8]) -> Option<bool> {
     let mut b = bytes;
