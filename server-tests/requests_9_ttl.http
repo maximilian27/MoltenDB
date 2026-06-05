@@ -6,8 +6,9 @@ Content-Type: application/json
   "username": "admin",
   "password": "admin123"
 }
+
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MDU2MjA0NCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImNiMjc1MDMxLTNiNzQtNDc1My1hMDBkLWQ0MzYyYmIzYTAwYyJ9.Vpuxwo6p5qBsrNO06JWOnGFTvJEUOa7AL3XRr8galM0
+@token = @token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MDc2NzU2Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI4MmE2ZTc2LWE2ODYtNGM3ZC05ZjE4LTIyNzBmYTBmNDllZCJ9.Q9ysF1UhBXIECfUxf_Qio--ZvIJvas7QQ7vcQvYiMtk
 
 ###
 ### ============================================================
@@ -54,10 +55,17 @@ Authorization: Bearer {{token}}
   "schema": {
     "type": "object",
     "properties": {
-      "userId": { "type": "string" },
-      "token":  { "type": "string" }
+      "userId": {
+        "type": "string"
+      },
+      "token": {
+        "type": "string"
+      }
     },
-    "required": ["userId", "token"]
+    "required": [
+      "userId",
+      "token"
+    ]
   },
   "ttl": 60
 }
@@ -93,8 +101,12 @@ Authorization: Bearer {{token}}
 {
   "collection": "cache",
   "data": {
-    "hot_item":  { "value": 42 },
-    "warm_item": { "value": 99 }
+    "hot_item": {
+      "value": 42
+    },
+    "warm_item": {
+      "value": 99
+    }
   },
   "ttl": 30
 }
@@ -108,7 +120,10 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "cache",
-  "fields": ["value", "_expiresAt"],
+  "fields": [
+    "value",
+    "_expiresAt"
+  ],
   "keys": "hot_item"
 }
 
@@ -139,7 +154,9 @@ Authorization: Bearer {{token}}
 {
   "collection": "sessions",
   "data": {
-    "sess_abc": { "token": "refreshed_token" }
+    "sess_abc": {
+      "token": "refreshed_token"
+    }
   }
 }
 
@@ -151,8 +168,15 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "sessions",
-  "where": { "userId": { "$eq": "u1" } },
-  "fields": ["userId", "token"]
+  "where": {
+    "userId": {
+      "$eq": "u1"
+    }
+  },
+  "fields": [
+    "userId",
+    "token"
+  ]
 }
 
 ### §9. Check that the entire collection is gone after the TTL elapses
@@ -164,7 +188,10 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "cache",
-  "keys": ["hot_item", "warm_item"]
+  "keys": [
+    "hot_item",
+    "warm_item"
+  ]
 }
 
 ### §10. Manual per-document expiry pattern (for OTPs, reset tokens, etc.)
@@ -196,5 +223,9 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "password_resets",
-  "where": { "expires_at": { "$lt": 1747240200000 } }
+  "where": {
+    "expires_at": {
+      "$lt": 1747240200000
+    }
+  }
 }
