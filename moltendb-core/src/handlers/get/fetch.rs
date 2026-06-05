@@ -1,16 +1,31 @@
-﻿use serde_json::Value;
-use crate::{engine, query};
+﻿use crate::common::payload_fields::PayloadField;
 use crate::handlers::get::types::FetchParams;
+use crate::{engine, query};
+use serde_json::Value;
 
 /// Returns true if `op` is supported by `evaluate_predicate_msgpack`
 /// (i.e. can be evaluated directly on raw MsgPack bytes without full deserialization).
 fn is_fast_path_op(op: &str) -> bool {
-    matches!(op,
-        "$eq" | "$equals" | "$ne" | "$notEquals"
-        | "$in" | "$oneOf" | "$nin" | "$notIn"
-        | "$gt" | "$greaterThan" | "$gte" | "$greaterThanOrEqual"
-        | "$lt" | "$lessThan"   | "$lte" | "$lessThanOrEqual"
-        | "$ct" | "$contains"
+    matches!(
+        op,
+        "$eq"
+            | "$equals"
+            | "$ne"
+            | "$notEquals"
+            | "$in"
+            | "$oneOf"
+            | "$nin"
+            | "$notIn"
+            | "$gt"
+            | "$greaterThan"
+            | "$gte"
+            | "$greaterThanOrEqual"
+            | "$lt"
+            | "$lessThan"
+            | "$lte"
+            | "$lessThanOrEqual"
+            | "$ct"
+            | "$contains"
     )
 }
 
@@ -24,31 +39,35 @@ pub fn fetch_documents(
     db: &engine::Db,
     params: &FetchParams<'_>, // <-- Expecting the new struct reference here
 ) -> Vec<(String, Value)> {
-
     // Helper to map allowed_prefixes from Option<&Vec<Value>> to Option<Vec<String>>
-    let allowed_prefixes_strings: Option<Vec<&str>> = params.allowed_prefixes.map(|pfx_vec| {
-        pfx_vec.iter().filter_map(|v| v.as_str()).collect()
-    });
+    let allowed_prefixes_strings: Option<Vec<&str>> = params
+        .allowed_prefixes
+        .map(|pfx_vec| pfx_vec.iter().filter_map(|v| v.as_str()).collect());
 
-    match params.payload.get("keys") {
+    match params.payload.get(PayloadField::Keys.as_str()) {
         Some(Value::String(k)) => {
             if let Some(ref prefixes) = allowed_prefixes_strings {
                 if !prefixes.iter().any(|p| k.starts_with(p)) {
                     return Vec::new();
                 }
             }
-            db.get(params.col_name, vec![k.clone()]).into_iter().collect()
+            db.get(params.col_name, vec![k.clone()])
+                .into_iter()
+                .collect()
         }
         Some(Value::Array(arr)) => {
-            let ks = arr.iter().filter_map(|v| {
-                let s = v.as_str()?;
-                if let Some(ref prefixes) = allowed_prefixes_strings {
-                    if !prefixes.iter().any(|p| s.starts_with(p)) {
-                        return None;
+            let ks = arr
+                .iter()
+                .filter_map(|v| {
+                    let s = v.as_str()?;
+                    if let Some(ref prefixes) = allowed_prefixes_strings {
+                        if !prefixes.iter().any(|p| s.starts_with(p)) {
+                            return None;
+                        }
                     }
-                }
-                Some(s.to_string())
-            }).collect();
+                    Some(s.to_string())
+                })
+                .collect();
             db.get(params.col_name, ks).into_iter().collect()
         }
         _ => {
@@ -98,9 +117,7 @@ pub fn fetch_documents(
                 let pfxs = prefixes.clone();
                 return db.get_filtered(
                     params.col_name,
-                    move |key, _| {
-                        pfxs.iter().any(|p| key.starts_with(p))
-                    },
+                    move |key, _| pfxs.iter().any(|p| key.starts_with(p)),
                     params.offset,
                     Some(params.count_limit),
                 );

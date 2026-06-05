@@ -1,3 +1,4 @@
+use crate::common::payload_fields::PayloadField;
 use crate::common::system_fields::SystemFields;
 use crate::engine::ttl::ms_to_iso;
 use crate::{engine, query};
@@ -76,15 +77,23 @@ pub fn apply_joins(db: &engine::Db, doc: &mut Value, joins: &[Value]) -> Vec<Str
         };
         let Some((alias, inner)) = obj.iter().find_map(|(k, v)| {
             v.as_object()
-                .filter(|o| o.contains_key("from"))
+                .filter(|o| o.contains_key(PayloadField::From.as_str()))
                 .map(|o| (k.clone(), o))
         }) else {
             continue;
         };
 
-        let from = inner.get("from").and_then(|f| f.as_str()).unwrap_or("");
-        let on = inner.get("on").and_then(|f| f.as_str()).unwrap_or("");
-        let j_fields = inner.get("fields").and_then(|f| f.as_array());
+        let from = inner
+            .get(PayloadField::From.as_str())
+            .and_then(|f| f.as_str())
+            .unwrap_or("");
+        let on = inner
+            .get(PayloadField::On.as_str())
+            .and_then(|f| f.as_str())
+            .unwrap_or("");
+        let j_fields = inner
+            .get(PayloadField::Fields.as_str())
+            .and_then(|f| f.as_array());
 
         // Resolve the foreign key value (supports dot-notation).
         let fk_val = on

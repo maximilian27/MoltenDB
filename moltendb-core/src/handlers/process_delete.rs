@@ -71,7 +71,7 @@ pub fn process_delete(
         };
     }
 
-    match payload.get("keys") {
+    match payload.get(PayloadField::Keys.as_str()) {
         // Single key delete.
         Some(Value::String(k)) => match db.delete(col, vec![k.to_string()]) {
             Ok(_) => DeleteSuccess::Deleted(1).into_response(),

@@ -18,11 +18,12 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use sysinfo::{Disks, System};
+// Duration and Instant are used in handle_revoke to compute the prune deadline.
+use moltendb_core::common::payload_fields::PayloadField;
 use serde_json::{json, Value};
 use std::collections::HashMap as QueryMap;
-// Duration and Instant are used in handle_revoke to compute the prune deadline.
 use std::time::{Duration, Instant};
+use sysinfo::{Disks, System};
 
 /// POST /auth/delegate — mint a scoped JWT for a client.
 ///
@@ -71,10 +72,12 @@ pub async fn handle_delegate(
 
     let ttl = payload.ttl_secs.unwrap_or(3600);
     let (token, jti) = auth::create_scoped_token(&payload.client_id, payload.scopes.clone(), ttl)
-        .map_err(|e| (
+        .map_err(|e| {
+        (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("Token creation failed: {}", e)})),
-        ))?;
+        )
+    })?;
 
     Ok(Json(auth::DelegateResponse {
         token,
@@ -118,19 +121,33 @@ pub async fn handle_login(
 /// Body: `{ "collection": "users", "data": { "u1": { "name": "Alice" } } }`
 /// Requires: write:{collection}:* scope (or admin).
 pub async fn handle_set(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+        engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+    )>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let collection = payload.get("collection").and_then(|v| v.as_str()).unwrap_or("");
+    let collection = payload
+        .get(PayloadField::Collection.as_str())
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if !claims.has_collection_access("write", collection) {
         return (
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": format!("Forbidden: token requires 'write:{}:*' scope", collection) })),
+            Json(
+                json!({ "error": format!("Forbidden: token requires 'write:{}:*' scope", collection) }),
+            ),
         );
     }
     let (code, body) = handlers::process_set(&db, &payload, max_body_size, max_keys_per_request);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    (
+        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
 }
 
 /// POST /update — merge new fields into existing documents (patch semantics).
@@ -138,19 +155,33 @@ pub async fn handle_set(
 /// Body: `{ "collection": "users", "data": { "u1": { "role": "admin" } } }`
 /// Requires: write:{collection}:* scope (or admin).
 pub async fn handle_update(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+        engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+    )>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let collection = payload.get("collection").and_then(|v| v.as_str()).unwrap_or("");
+    let collection = payload
+        .get(PayloadField::Collection.as_str())
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if !claims.has_collection_access("write", collection) {
         return (
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": format!("Forbidden: token requires 'write:{}:*' scope", collection) })),
+            Json(
+                json!({ "error": format!("Forbidden: token requires 'write:{}:*' scope", collection) }),
+            ),
         );
     }
     let (code, body) = handlers::process_update(&db, &payload, max_body_size, max_keys_per_request);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    (
+        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
 }
 
 /// POST /get — query documents with optional WHERE, fields, joins, count, offset.
@@ -164,16 +195,29 @@ pub async fn handle_update(
 ///     - If no `"keys"` is specified, the result is filtered to only the docs the
 ///       token is allowed to read.
 pub async fn handle_get(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+        engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+    )>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let collection = payload.get("collection").and_then(|v| v.as_str()).unwrap_or("");
+    let collection = payload
+        .get(PayloadField::Collection.as_str())
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     // Fast path: collection-level (or broader) access — no filtering needed.
     if claims.has_collection_access("read", collection) {
-        let (code, body) = handlers::process_get(&db, &payload, max_body_size, max_keys_per_request);
-        return (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body));
+        let (code, body) =
+            handlers::process_get(&db, &payload, max_body_size, max_keys_per_request);
+        return (
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Json(body),
+        );
     }
 
     // Slow path: token only has document-level scopes.
@@ -182,28 +226,39 @@ pub async fn handle_get(
     if allowed_keys.is_empty() {
         return (
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": format!("Forbidden: token has no read access to collection '{}'", collection) })),
+            Json(
+                json!({ "error": format!("Forbidden: token has no read access to collection '{}'", collection) }),
+            ),
         );
     }
 
     // If the caller specified explicit keys, verify every one is allowed.
-    if let Some(keys_val) = payload.get("keys") {
+    if let Some(keys_val) = payload.get(PayloadField::Keys.as_str()) {
         let requested: Vec<String> = match keys_val {
             Value::String(s) => vec![s.clone()],
-            Value::Array(arr) => arr.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+            Value::Array(arr) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
             _ => vec![],
         };
         for k in &requested {
             if !claims.has_access("read", collection, k) {
                 return (
                     StatusCode::FORBIDDEN,
-                    Json(json!({ "error": format!("Forbidden: token lacks 'read:{}:{}' scope", collection, k) })),
+                    Json(
+                        json!({ "error": format!("Forbidden: token lacks 'read:{}:{}' scope", collection, k) }),
+                    ),
                 );
             }
         }
         // All requested keys are allowed — run the query as-is.
-        let (code, body) = handlers::process_get(&db, &payload, max_body_size, max_keys_per_request);
-        return (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body));
+        let (code, body) =
+            handlers::process_get(&db, &payload, max_body_size, max_keys_per_request);
+        return (
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Json(body),
+        );
     }
 
     // No keys specified.
@@ -214,17 +269,27 @@ pub async fn handle_get(
         let prefixes = claims.extract_prefixes("read", collection);
         // Strip any client-supplied _allowed_prefixes first (never trust client input).
         let mut scoped_payload = payload.clone();
-        scoped_payload.as_object_mut().map(|o| o.remove("_allowed_prefixes"));
+        scoped_payload
+            .as_object_mut()
+            .map(|o| o.remove("_allowed_prefixes"));
         if !prefixes.is_empty() {
             scoped_payload["_allowed_prefixes"] = json!(prefixes);
         }
-        let (code, body) = handlers::process_get(&db, &scoped_payload, max_body_size, max_keys_per_request);
-        (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+        let (code, body) =
+            handlers::process_get(&db, &scoped_payload, max_body_size, max_keys_per_request);
+        (
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Json(body),
+        )
     } else {
         let mut scoped_payload = payload.clone();
         scoped_payload["keys"] = json!(allowed_keys);
-        let (code, body) = handlers::process_get(&db, &scoped_payload, max_body_size, max_keys_per_request);
-        (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+        let (code, body) =
+            handlers::process_get(&db, &scoped_payload, max_body_size, max_keys_per_request);
+        (
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Json(body),
+        )
     }
 }
 
@@ -235,28 +300,51 @@ pub async fn handle_get(
 /// Body (drop all): `{ "collection": "users", "drop": true }`
 /// Requires: delete:{collection}:* scope (or admin).
 pub async fn handle_delete(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+        engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+    )>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let collection = payload.get("collection").and_then(|v| v.as_str()).unwrap_or("");
+    let collection = payload
+        .get(PayloadField::Collection.as_str())
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if !claims.has_collection_access("delete", collection) {
         return (
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": format!("Forbidden: token requires 'delete:{}:*' scope", collection) })),
+            Json(
+                json!({ "error": format!("Forbidden: token requires 'delete:{}:*' scope", collection) }),
+            ),
         );
     }
     let (code, body) = handlers::process_delete(&db, &payload, max_body_size, max_keys_per_request);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    (
+        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
 }
 
 #[cfg(feature = "schema")]
 pub async fn handle_schema(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+        engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+    )>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let (code, body) = handlers::process_schema(&db, &payload, max_body_size, max_keys_per_request);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    (
+        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
 }
 
 /// POST /snapshot — take a snapshot of the database on demand.
@@ -272,7 +360,10 @@ pub async fn handle_snapshot(
         );
     }
     let (code, body) = handlers::process_snapshot(&db);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    (
+        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
 }
 
 /// POST /stats — return document counts per collection.
@@ -284,7 +375,10 @@ pub async fn handle_stats_post(
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let (code, body) = handlers::process_stats(&db, &payload);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    (
+        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
 }
 
 pub async fn handle_stats_get(
@@ -292,7 +386,10 @@ pub async fn handle_stats_get(
     Extension(_claims): Extension<auth::Claims>,
 ) -> (StatusCode, Json<Value>) {
     let (code, body) = handlers::process_stats(&db, &serde_json::Value::Object(Default::default()));
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    (
+        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
 }
 
 /// GET /collections/{collection}/docs/{key} — fetch a single document by key.
@@ -301,14 +398,22 @@ pub async fn handle_stats_get(
 ///   POST /get { "collection": collection, "keys": key }
 /// Requires: read:{collection}:{key} scope (or read:{collection}:* or read:*:* or admin).
 pub async fn handle_rest_get(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+        engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+    )>,
     Extension(claims): Extension<auth::Claims>,
     Path((collection, key)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
     if !claims.has_access("read", &collection, &key) {
         return (
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": format!("Forbidden: token lacks 'read:{}:{}' scope", collection, key) })),
+            Json(
+                json!({ "error": format!("Forbidden: token lacks 'read:{}:{}' scope", collection, key) }),
+            ),
         );
     }
     let payload = json!({
@@ -316,7 +421,10 @@ pub async fn handle_rest_get(
         "keys": key
     });
     let (code, body) = handlers::process_get(&db, &payload, max_body_size, max_keys_per_request);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    (
+        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
 }
 
 /// GET /collections/{collection}?limit=N&offset=M — fetch all documents (paginated).
@@ -330,7 +438,13 @@ pub async fn handle_rest_get(
 ///
 /// Requires: read:{collection}:* scope (or admin).
 pub async fn handle_rest_get_collection(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+        engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+    )>,
     Extension(claims): Extension<auth::Claims>,
     Path(collection): Path<String>,
     AxumQuery(params): AxumQuery<QueryMap<String, String>>,
@@ -338,18 +452,29 @@ pub async fn handle_rest_get_collection(
     if !claims.has_collection_access("read", &collection) {
         return (
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": format!("Forbidden: token requires 'read:{}:*' scope", collection) })),
+            Json(
+                json!({ "error": format!("Forbidden: token requires 'read:{}:*' scope", collection) }),
+            ),
         );
     }
     let mut payload = json!({ "collection": collection });
-    if let Some(limit) = params.get("limit").and_then(|v| v.parse::<u64>().ok()) {
-        payload["count"] = json!(limit);
+    if let Some(limit) = params
+        .get(PayloadField::Limit.as_str())
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        payload[PayloadField::Count.as_str()] = json!(limit);
     }
-    if let Some(offset) = params.get("offset").and_then(|v| v.parse::<u64>().ok()) {
-        payload["offset"] = json!(offset);
+    if let Some(offset) = params
+        .get(PayloadField::Offset.as_str())
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        payload[PayloadField::Offset.as_str()] = json!(offset);
     }
     let (code, body) = handlers::process_get(&db, &payload, max_body_size, max_keys_per_request);
-    (StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Json(body))
+    (
+        StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
 }
 
 /// DELETE /auth/tokens/:jti — revoke a JWT by its unique token ID.
@@ -386,7 +511,10 @@ pub async fn handle_revoke(
 
     // Compute the prune deadline from the caller-supplied `exp` field.
     // If not provided, default to 24 hours from now (safe upper bound).
-    let prune_after = if let Some(exp_secs) = payload.get("exp").and_then(|v| v.as_u64()) {
+    let prune_after = if let Some(exp_secs) = payload
+        .get(PayloadField::Exp.as_str())
+        .and_then(|v| v.as_u64())
+    {
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -407,19 +535,27 @@ pub async fn handle_revoke(
     )
 }
 
-
 /// GET /system/health — public liveness check.
 ///
 /// Returns 200 OK with a simple JSON payload. No authentication required.
 pub async fn handle_health() -> (StatusCode, Json<Value>) {
-    (StatusCode::OK, Json(json!({ "status": "ok", "message": "MoltenDB is running" })))
+    (
+        StatusCode::OK,
+        Json(json!({ "status": "ok", "message": "MoltenDB is running" })),
+    )
 }
 
 /// GET /system/metrics — resource usage snapshot.
 ///
 /// Admin-only. Returns uptime, process memory, host RAM/disk, and database internals.
 pub async fn handle_metrics(
-    State((db, _, _, _, _)): State<(moltendb_core::engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, _, _, _)): State<(
+        moltendb_core::engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+    )>,
     Extension(claims): Extension<auth::Claims>,
 ) -> (StatusCode, Json<Value>) {
     if !claims.is_admin() {
@@ -435,8 +571,8 @@ pub async fn handle_metrics(
     sys.refresh_all();
 
     let total_ram = sys.total_memory();
-    let used_ram  = sys.used_memory();
-    let free_ram  = sys.free_memory();
+    let used_ram = sys.used_memory();
+    let free_ram = sys.free_memory();
 
     let pid = sysinfo::get_current_pid().ok();
     let process_memory_bytes = pid
@@ -445,38 +581,44 @@ pub async fn handle_metrics(
         .unwrap_or(0);
 
     let disks = Disks::new_with_refreshed_list();
-    let disk_info: Vec<Value> = disks.iter().map(|d| {
-        let total = d.total_space();
-        let avail = d.available_space();
-        let used  = total.saturating_sub(avail);
-        json!({
-            "mount":           d.mount_point().to_string_lossy(),
-            "total_bytes":     total,
-            "used_bytes":      used,
-            "available_bytes": avail,
+    let disk_info: Vec<Value> = disks
+        .iter()
+        .map(|d| {
+            let total = d.total_space();
+            let avail = d.available_space();
+            let used = total.saturating_sub(avail);
+            json!({
+                "mount":           d.mount_point().to_string_lossy(),
+                "total_bytes":     total,
+                "used_bytes":      used,
+                "available_bytes": avail,
+            })
         })
-    }).collect();
+        .collect();
 
     // Database internals
     let hot_keys_count: usize = db.hot_keys_count();
     let storage_mode = db.storage.storage_mode();
 
-    (StatusCode::OK, Json(json!({
-        "uptime_seconds": uptime_seconds,
-        "process": {
-            "memory_used_bytes": process_memory_bytes,
-        },
-        "host": {
-            "memory": {
-                "total_bytes": total_ram,
-                "used_bytes":  used_ram,
-                "free_bytes":  free_ram,
+    (
+        StatusCode::OK,
+        Json(json!({
+            "uptime_seconds": uptime_seconds,
+            "process": {
+                "memory_used_bytes": process_memory_bytes,
             },
-            "disks": disk_info,
-        },
-        "database": {
-            "hot_keys_count":    hot_keys_count,
-            "storage_mode":      storage_mode,
-        },
-    })))
+            "host": {
+                "memory": {
+                    "total_bytes": total_ram,
+                    "used_bytes":  used_ram,
+                    "free_bytes":  free_ram,
+                },
+                "disks": disk_info,
+            },
+            "database": {
+                "hot_keys_count":    hot_keys_count,
+                "storage_mode":      storage_mode,
+            },
+        })),
+    )
 }

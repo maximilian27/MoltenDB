@@ -1,3 +1,4 @@
+use crate::common::payload_fields::PayloadField;
 use crate::engine;
 use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::handlers::schema::constants::SCHEMA_ALLOWED;
@@ -24,21 +25,21 @@ pub fn process_schema(
         return ValidationError(e.to_string()).into_response();
     }
 
-    let col = match payload["collection"].as_str() {
+    let col = match payload[PayloadField::Collection.as_str()].as_str() {
         Some(c) => c,
         None => return SchemaError::MissingCollection.into_response(),
     };
 
     // At least one of "schema", "ttl", or "maxSize" must be provided.
-    if payload.get("schema").is_none()
-        && payload.get("ttl").is_none()
-        && payload.get("maxSize").is_none()
+    if payload.get(PayloadField::Schema.as_str()).is_none()
+        && payload.get(PayloadField::Ttl.as_str()).is_none()
+        && payload.get(PayloadField::MaxSize.as_str()).is_none()
     {
         return SchemaError::MissingSchemaFields.into_response();
     }
 
     // Register JSON schema if provided.
-    if let Some(schema) = payload.get("schema").cloned() {
+    if let Some(schema) = payload.get(PayloadField::Schema.as_str()).cloned() {
         #[cfg(feature = "schema")]
         match db.set_schema(col, schema) {
             Ok(_) => {}
@@ -52,7 +53,7 @@ pub fn process_schema(
     }
 
     // Register collection-level TTL default if provided.
-    if let Some(ttl_val) = payload.get("ttl") {
+    if let Some(ttl_val) = payload.get(PayloadField::Ttl.as_str()) {
         match ttl_val.as_u64() {
             Some(secs) => db.set_ttl_default(col, secs),
             None => return SchemaError::InvalidTtl.into_response(),
@@ -60,7 +61,7 @@ pub fn process_schema(
     }
 
     // Register collection-level maxSize if provided.
-    if let Some(max_val) = payload.get("maxSize") {
+    if let Some(max_val) = payload.get(PayloadField::MaxSize.as_str()) {
         match max_val.as_u64() {
             Some(max) if max > 0 => db.set_max_size(col, max as usize),
             _ => return SchemaError::InvalidMaxSize.into_response(),

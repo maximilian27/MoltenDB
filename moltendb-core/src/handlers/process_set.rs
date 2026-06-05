@@ -1,4 +1,5 @@
 use super::set::constants::SET_ALLOWED;
+use crate::common::payload_fields::PayloadField;
 use crate::engine;
 use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::handlers::set::errors::SetError;
@@ -79,7 +80,7 @@ pub fn process_set(
 
     // If a `ttl` is provided on the set request, register it as the collection-level default.
     // This is a convenience shortcut -- equivalent to calling POST /schema with just a `ttl`.
-    if let Some(ttl_val) = payload.get("ttl") {
+    if let Some(ttl_val) = payload.get(PayloadField::Ttl.as_str()) {
         match ttl_val.as_u64() {
             Some(secs) => db.set_ttl_default(col, secs),
             None => return SetError::InvalidTtl.into_response(),
@@ -88,14 +89,14 @@ pub fn process_set(
 
     // If a `maxSize` is provided on the set request, register it as the collection-level cap.
     // This is a convenience shortcut -- equivalent to calling POST /schema with just a `maxSize`.
-    if let Some(max_val) = payload.get("maxSize") {
+    if let Some(max_val) = payload.get(PayloadField::MaxSize.as_str()) {
         match max_val.as_u64() {
             Some(max) if max > 0 => db.set_max_size(col, max as usize),
             _ => return SetError::InvalidMaxSize.into_response(),
         }
     }
 
-    match payload.get("data") {
+    match payload.get(PayloadField::Data.as_str()) {
         // -- Object map format -----------------------------------------------
         // { "data": { "u1": { "name": "Alice" }, "u2": { "name": "Bob" } } }
         Some(Value::Object(data_map)) => {

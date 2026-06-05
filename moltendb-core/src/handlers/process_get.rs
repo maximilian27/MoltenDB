@@ -41,7 +41,7 @@ pub fn process_get(
 
     // Fast path: sort + count with no joins / keys / prefix filter.
     // Uses a bounded heap of capacity (offset + count) so peak RAM is O(offset+count).
-    let no_keys = payload.get("keys").is_none();
+    let no_keys = payload.get(PayloadField::Keys.as_str()).is_none();
     let no_joins = params.joins_req.map(|j| j.is_empty()).unwrap_or(true);
     let no_prefix = params
         .allowed_prefixes
@@ -96,8 +96,12 @@ fn validate_get_request(
     validation::validate_allowed_properties(payload, GET_ALLOWED)
         .map_err(|e| ValidationError(e.to_string()).into_response())?;
 
-    let fields_req = payload.get("fields").and_then(|f| f.as_array());
-    let excluded_req = payload.get("excludedFields").and_then(|f| f.as_array());
+    let fields_req = payload
+        .get(PayloadField::Fields.as_str())
+        .and_then(|f| f.as_array());
+    let excluded_req = payload
+        .get(PayloadField::ExcludedFields.as_str())
+        .and_then(|f| f.as_array());
     if fields_req.is_some() && excluded_req.is_some() {
         return Err(ValidationError(
             "'fields' and 'excludedFields' cannot be used together".to_string(),
@@ -138,18 +142,21 @@ fn parse_get_params<'a>(
         .get(PayloadField::AllowedPrefixes.as_str())
         .and_then(|p| p.as_array());
 
-    if let Some(n) = payload.get("count").and_then(|c| c.as_u64()) {
+    if let Some(n) = payload
+        .get(PayloadField::Count.as_str())
+        .and_then(|c| c.as_u64())
+    {
         if n as usize > MAX_COUNT {
             return Err(GetError::CountExceeded(MAX_COUNT).into_response());
         }
     }
     let count_limit = payload
-        .get("count")
+        .get(PayloadField::Count.as_str())
         .and_then(|c| c.as_u64())
         .map(|n| n as usize)
         .unwrap_or(DEFAULT_COUNT);
     let offset = payload
-        .get("offset")
+        .get(PayloadField::Offset.as_str())
         .and_then(|c| c.as_u64())
         .map(|n| n as usize)
         .unwrap_or(0);
@@ -284,7 +291,7 @@ fn shape_and_return(
     params: &GetParams<'_>,
 ) -> (u16, Value) {
     // Single-key lookup -- return the document directly (no array wrapper, no _key).
-    if let Some(Value::String(_)) = payload.get("keys") {
+    if let Some(Value::String(_)) = payload.get(PayloadField::Keys.as_str()) {
         let (key, doc, aliases) = results.remove(0);
         return match shape_doc(
             doc,

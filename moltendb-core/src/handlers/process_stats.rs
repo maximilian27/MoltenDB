@@ -1,3 +1,4 @@
+use crate::common::payload_fields::PayloadField;
 use crate::engine;
 use crate::engine::ttl;
 use crate::handlers::common::errors::{OperationError, ValidationError};
@@ -13,7 +14,10 @@ pub fn process_stats(db: &engine::Db, payload: &Value) -> (u16, Value) {
 
     let now = ttl::now_ms();
 
-    if let Some(col) = payload.get("collection").and_then(|v| v.as_str()) {
+    if let Some(col) = payload
+        .get(PayloadField::Collection.as_str())
+        .and_then(|v| v.as_str())
+    {
         // Single collection stats
         match db.collection_count(col) {
             None => StatsError::CollectionNotFound.into_response(),
