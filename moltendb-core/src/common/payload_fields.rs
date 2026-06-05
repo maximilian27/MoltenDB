@@ -22,9 +22,9 @@ pub enum PayloadField {
 
 #[allow(dead_code)]
 impl PayloadField {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            PayloadField::AllowedPrefixes => "allowed_prefixes",
+            PayloadField::AllowedPrefixes => "_allowed_prefixes",
             PayloadField::Collection => "collection",
             PayloadField::Count => "count",
             PayloadField::Data => "data",

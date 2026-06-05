@@ -3,6 +3,7 @@ use super::get::errors::GetError;
 use super::get::responses::GetSuccess;
 use super::get::types::{FetchParams, GetParams};
 use super::get::{apply_joins, fetch_documents, make_comparator, shape_doc};
+use crate::common::payload_fields::PayloadField;
 use crate::engine::ttl;
 use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::validation;
@@ -116,13 +117,26 @@ fn parse_get_params<'a>(
     const DEFAULT_COUNT: usize = 100;
     const MAX_COUNT: usize = 1_000;
 
-    let col_name = payload["collection"].as_str().unwrap_or("default");
-    let where_clause = payload.get("where");
-    let joins_req = payload.get("joins").and_then(|j| j.as_array());
-    let sort_specs = payload.get("sort").and_then(|s| s.as_array()).cloned();
-    let fields_req = payload.get("fields").and_then(|f| f.as_array());
-    let excluded_req = payload.get("excludedFields").and_then(|f| f.as_array());
-    let allowed_prefixes = payload.get("_allowed_prefixes").and_then(|p| p.as_array());
+    let col_name = payload[PayloadField::Collection.as_str()]
+        .as_str()
+        .unwrap_or("default");
+    let where_clause = payload.get(PayloadField::Where.as_str());
+    let joins_req = payload
+        .get(PayloadField::Joins.as_str())
+        .and_then(|j| j.as_array());
+    let sort_specs = payload
+        .get(PayloadField::Sort.as_str())
+        .and_then(|s| s.as_array())
+        .cloned();
+    let fields_req = payload
+        .get(PayloadField::Fields.as_str())
+        .and_then(|f| f.as_array());
+    let excluded_req = payload
+        .get(PayloadField::ExcludedFields.as_str())
+        .and_then(|f| f.as_array());
+    let allowed_prefixes = payload
+        .get(PayloadField::AllowedPrefixes.as_str())
+        .and_then(|p| p.as_array());
 
     if let Some(n) = payload.get("count").and_then(|c| c.as_u64()) {
         if n as usize > MAX_COUNT {

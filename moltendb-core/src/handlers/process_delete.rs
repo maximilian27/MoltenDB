@@ -45,15 +45,18 @@ pub fn process_delete(
     }
 
     // WHERE-based bulk delete — scan with predicate, delete all matches.
-    if let Some(clause) = payload.get("where").cloned() {
-        if let Some(n) = payload.get("count").and_then(|c| c.as_u64()) {
+    if let Some(clause) = payload.get(PayloadField::Where.as_str()).cloned() {
+        if let Some(n) = payload
+            .get(PayloadField::Count.as_str())
+            .and_then(|c| c.as_u64())
+        {
             if n as usize > MAX_DELETE_COUNT {
                 return DeleteError::CountExceeded(MAX_DELETE_COUNT).into_response();
             }
         }
         let count_limit = Some(
             payload
-                .get("count")
+                .get(PayloadField::Count.as_str())
                 .and_then(|c| c.as_u64())
                 .map(|n| n as usize)
                 .unwrap_or(DEFAULT_DELETE_COUNT),

@@ -4,8 +4,8 @@
 
 use super::super::types::{DbError, LogEntry};
 use super::common::now_unix_ms;
+use super::types::UpdateParams;
 use crate::common::system_fields::SystemFields;
-use crate::engine::operations::UpdateParams;
 use serde_json::{json, Value};
 use tracing::debug;
 

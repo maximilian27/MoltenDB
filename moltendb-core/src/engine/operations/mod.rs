@@ -25,12 +25,14 @@ mod get;
 mod recover;
 mod set;
 pub mod ttl;
+pub mod types;
 mod update;
-pub use common::{InsertParams, UpdateParams};
+
 pub use compact::compact;
 pub use delete::{delete, delete_collection, delete_filtered, evict_oldest};
 pub use get::{get, get_all, get_filtered, scan_top_n};
 #[cfg(not(target_arch = "wasm32"))]
 pub use recover::recover_to;
 pub use set::insert;
+pub use types::{InsertParams, UpdateParams};
 pub use update::update;

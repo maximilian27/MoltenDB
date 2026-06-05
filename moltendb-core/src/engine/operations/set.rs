@@ -3,13 +3,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use super::super::types::{DbError, LogEntry};
-use super::common::{now_unix_ms, InsertParams};
+use super::common::now_unix_ms;
+use super::types::InsertParams;
 use crate::common::system_fields::SystemFields;
 use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-
 
 /// Insert or overwrite multiple documents in a single batch operation.
 ///
