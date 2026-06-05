@@ -1,5 +1,6 @@
 use super::constants::{COLLECTION_NAME_REGEX, FIELD_NAME_REGEX, KEY_NAME_REGEX};
 use super::errors::ValidationError;
+use crate::common::payload_fields::PayloadField;
 use serde_json::Value;
 
 pub fn validate_collection_name(name: &str) -> Result<(), ValidationError> {
@@ -122,11 +123,14 @@ pub fn validate_request(
     validate_payload_size(payload, max_body_size)?;
     validate_json_depth(payload, 32)?;
 
-    if let Some(collection) = payload.get("collection").and_then(|v| v.as_str()) {
+    if let Some(collection) = payload
+        .get(PayloadField::Collection.as_str())
+        .and_then(|v| v.as_str())
+    {
         validate_collection_name(collection)?;
     }
 
-    if let Some(keys) = payload.get("keys") {
+    if let Some(keys) = payload.get(PayloadField::Keys.as_str()) {
         match keys {
             Value::String(key) => validate_key_name(key)?,
             Value::Array(arr) => {
@@ -141,7 +145,7 @@ pub fn validate_request(
         }
     }
 
-    if let Some(data) = payload.get("data")
+    if let Some(data) = payload.get(PayloadField::Data.as_str())
         && let Value::Object(map) = data
     {
         validate_key_count(map.len(), max_keys_per_request)?;
@@ -150,7 +154,10 @@ pub fn validate_request(
         }
     }
 
-    if let Some(fields) = payload.get("fields").and_then(|v| v.as_array()) {
+    if let Some(fields) = payload
+        .get(PayloadField::Fields.as_str())
+        .and_then(|v| v.as_array())
+    {
         for field in fields {
             if let Some(s) = field.as_str() {
                 validate_field_name(s)?;
@@ -158,28 +165,47 @@ pub fn validate_request(
         }
     }
 
-    if let Some(joins) = payload.get("joins").and_then(|v| v.as_array()) {
-        for join in joins {
-            if let Some(c) = join.get("collection").and_then(|v| v.as_str()) {
-                validate_collection_name(c)?;
-            }
-            if let Some(a) = join.get("alias").and_then(|v| v.as_str()) {
-                validate_key_name(a)?;
-            }
-            if let Some(fk) = join.get("foreign_key").and_then(|v| v.as_str()) {
-                validate_field_name(fk)?;
-            }
-            if let Some(jf) = join.get("fields").and_then(|v| v.as_array()) {
-                for f in jf {
-                    if let Some(s) = f.as_str() {
-                        validate_field_name(s)?;
+    if let Some(joins) = payload
+        .get(PayloadField::Joins.as_str())
+        .and_then(|v| v.as_array())
+    {
+        for join_spec in joins {
+            if let Some(obj) = join_spec.as_object() {
+                for (alias, inner) in obj {
+                    validate_key_name(alias)?;
+                    if let Some(inner_obj) = inner.as_object() {
+                        if let Some(from) = inner_obj
+                            .get(PayloadField::From.as_str())
+                            .and_then(|v| v.as_str())
+                        {
+                            validate_collection_name(from)?;
+                        }
+                        if let Some(on) = inner_obj
+                            .get(PayloadField::On.as_str())
+                            .and_then(|v| v.as_str())
+                        {
+                            validate_field_name(on)?;
+                        }
+                        if let Some(fields) = inner_obj
+                            .get(PayloadField::Fields.as_str())
+                            .and_then(|v| v.as_array())
+                        {
+                            for f in fields {
+                                if let Some(s) = f.as_str() {
+                                    validate_field_name(s)?;
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    if let Some(where_clause) = payload.get("where").and_then(|v| v.as_object()) {
+    if let Some(where_clause) = payload
+        .get(PayloadField::Where.as_str())
+        .and_then(|v| v.as_object())
+    {
         for key in where_clause.keys() {
             if !key.starts_with('$') {
                 validate_field_name(key)?;
