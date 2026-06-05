@@ -484,10 +484,15 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
     };
 
     for (key, condition) in query_obj {
-        if key == "$or" {
+        if key == WhereOperator::Or.as_str() {
             let sub_queries = match condition.as_array() {
                 Some(arr) => arr,
-                None => return Err(DbError::InvalidQuery("$or expects an array".to_string())),
+                None => {
+                    return Err(DbError::InvalidQuery(format!(
+                        "{} expects an array",
+                        WhereOperator::Or.as_str()
+                    )));
+                }
             };
             let mut any_passed = false;
             for sub in sub_queries {
@@ -502,10 +507,15 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
             continue;
         }
 
-        if key == "$and" {
+        if key == WhereOperator::And.as_str() {
             let sub_queries = match condition.as_array() {
                 Some(arr) => arr,
-                None => return Err(DbError::InvalidQuery("$and expects an array".to_string())),
+                None => {
+                    return Err(DbError::InvalidQuery(format!(
+                        "{} expects an array",
+                        WhereOperator::And.as_str()
+                    )));
+                }
             };
             for sub in sub_queries {
                 if !evaluate_where(doc, sub)? {
@@ -542,29 +552,45 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
         let doc_val_ref = doc_val_opt.as_ref().unwrap_or(&Value::Null);
 
         for (op, op_val) in cond_obj {
-            let passed: bool = match op.as_str() {
-                "$eq" | "$equals" => match (doc_val_ref, op_val) {
+            let parsed_op = WhereOperator::from_str(op.as_str());
+            let passed: bool = match parsed_op {
+                Some(WhereOperator::Eq) => match (doc_val_ref, op_val) {
                     (Value::String(a), Value::String(b)) => a.to_lowercase() == b.to_lowercase(),
                     _ => doc_val_ref == op_val,
                 },
-                "$ne" | "$notEquals" => match (doc_val_ref, op_val) {
+                Some(WhereOperator::NotEq) => match (doc_val_ref, op_val) {
                     (Value::String(a), Value::String(b)) => a.to_lowercase() != b.to_lowercase(),
                     _ => doc_val_ref != op_val,
                 },
-                "$gt" | "$greaterThan" | "$gte" | "$lt" | "$lessThan" | "$lte" => {
+                Some(WhereOperator::Gt) => {
                     if let (Some(d_num), Some(o_num)) = (doc_val_ref.as_f64(), op_val.as_f64()) {
-                        match op.as_str() {
-                            "$gt" | "$greaterThan" => d_num > o_num,
-                            "$gte" => d_num >= o_num,
-                            "$lt" | "$lessThan" => d_num < o_num,
-                            "$lte" => d_num <= o_num,
-                            _ => false,
-                        }
+                        d_num > o_num
                     } else {
                         false
                     }
                 }
-                "$contains" | "$ct" => match doc_val_ref {
+                Some(WhereOperator::Gte) => {
+                    if let (Some(d_num), Some(o_num)) = (doc_val_ref.as_f64(), op_val.as_f64()) {
+                        d_num >= o_num
+                    } else {
+                        false
+                    }
+                }
+                Some(WhereOperator::Lt) => {
+                    if let (Some(d_num), Some(o_num)) = (doc_val_ref.as_f64(), op_val.as_f64()) {
+                        d_num < o_num
+                    } else {
+                        false
+                    }
+                }
+                Some(WhereOperator::Lte) => {
+                    if let (Some(d_num), Some(o_num)) = (doc_val_ref.as_f64(), op_val.as_f64()) {
+                        d_num <= o_num
+                    } else {
+                        false
+                    }
+                }
+                Some(WhereOperator::Contains) => match doc_val_ref {
                     Value::String(d_str) => {
                         if let Some(o_str) = op_val.as_str() {
                             d_str.to_lowercase().contains(&o_str.to_lowercase())
@@ -575,7 +601,7 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
                     Value::Array(arr) => arr.contains(op_val),
                     _ => false,
                 },
-                "$in" | "$oneOf" => {
+                Some(WhereOperator::In) => {
                     if let Some(allowed) = op_val.as_array() {
                         allowed.iter().any(|v| match (doc_val_ref, v) {
                             (Value::String(a), Value::String(b)) => {
@@ -587,7 +613,7 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
                         return Err(DbError::InvalidQuery(format!("{} expects an array", op)));
                     }
                 }
-                "$nin" | "$notIn" => {
+                Some(WhereOperator::NotIn) => {
                     if let Some(excluded) = op_val.as_array() {
                         !excluded.iter().any(|v| match (doc_val_ref, v) {
                             (Value::String(a), Value::String(b)) => {
@@ -599,7 +625,9 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
                         return Err(DbError::InvalidQuery(format!("{} expects an array", op)));
                     }
                 }
-                _ => return Err(DbError::InvalidQuery(format!("Unknown operator: {}", op))),
+                Some(WhereOperator::Or) | Some(WhereOperator::And) | None => {
+                    return Err(DbError::InvalidQuery(format!("Unknown operator: {}", op)));
+                }
             };
 
             if !passed {
@@ -612,144 +640,5 @@ pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn test_evaluate_where_basic() {
-        let doc = json!({ "name": "Alice", "age": 30 });
-        assert!(evaluate_where(&doc, &json!({ "name": "Alice" })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "name": "Bob" })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "name": { "$eq": "Alice" } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "name": "alice" })).unwrap());
-    }
-
-    #[test]
-    fn test_evaluate_where_numeric() {
-        let doc = json!({ "age": 30 });
-        assert!(evaluate_where(&doc, &json!({ "age": { "$gt": 20 } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "age": { "$gte": 30 } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "age": { "$lt": 40 } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "age": { "$lte": 30 } })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "age": { "$gt": 30 } })).unwrap());
-    }
-
-    #[test]
-    fn test_evaluate_where_invalid_ops() {
-        let doc = json!({ "name": "Alice" });
-        let res = evaluate_where(&doc, &json!({ "name": { "$invalid": "val" } }));
-        assert!(res.is_err());
-        if let Err(DbError::InvalidQuery(msg)) = res {
-            assert!(msg.contains("Unknown operator"));
-        } else {
-            panic!("Expected InvalidQuery error");
-        }
-    }
-
-    #[test]
-    fn test_evaluate_where_logical() {
-        let doc = json!({ "name": "Alice", "age": 30 });
-        assert!(
-            evaluate_where(
-                &doc,
-                &json!({ "$or": [{ "name": "Alice" }, { "name": "Bob" }] })
-            )
-            .unwrap()
-        );
-        assert!(
-            evaluate_where(&doc, &json!({ "$or": [{ "name": "Bob" }, { "age": 30 }] })).unwrap()
-        );
-        assert!(
-            !evaluate_where(&doc, &json!({ "$or": [{ "name": "Bob" }, { "age": 20 }] })).unwrap()
-        );
-        assert!(
-            evaluate_where(
-                &doc,
-                &json!({ "$and": [{ "name": "Alice" }, { "age": 30 }] })
-            )
-            .unwrap()
-        );
-        assert!(
-            !evaluate_where(
-                &doc,
-                &json!({ "$and": [{ "name": "Alice" }, { "age": 20 }] })
-            )
-            .unwrap()
-        );
-    }
-
-    #[test]
-    fn test_evaluate_where_in_nin() {
-        let doc = json!({ "role": "admin" });
-        assert!(evaluate_where(&doc, &json!({ "role": { "$in": ["admin", "user"] } })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "role": { "$in": ["guest", "user"] } })).unwrap());
-        assert!(evaluate_where(&doc, &json!({ "role": { "$nin": ["guest", "user"] } })).unwrap());
-        assert!(!evaluate_where(&doc, &json!({ "role": { "$nin": ["admin", "user"] } })).unwrap());
-    }
-
-    #[test]
-    fn test_evaluate_predicate_msgpack_eq_ne() {
-        let doc = json!({ "brand": "Apple", "price": 999.0 });
-        let bytes = rmp_serde::to_vec(&doc).unwrap();
-
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$eq", &json!("Apple")),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$eq", &json!("apple")),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$ne", &json!("Intel")),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$ne", &json!("Apple")),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn test_evaluate_predicate_msgpack_in_nin() {
-        let doc = json!({ "brand": "Dell" });
-        let bytes = rmp_serde::to_vec(&doc).unwrap();
-
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$in", &json!(["Apple", "Dell", "Razer"])),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$in", &json!(["Apple", "Razer"])),
-            Some(false)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$nin", &json!(["Framework", "Lenovo"])),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "brand", "$nin", &json!(["Dell", "Lenovo"])),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn test_evaluate_predicate_msgpack_nested() {
-        let doc = json!({ "specs": { "cpu": { "brand": "Intel" } } });
-        let bytes = rmp_serde::to_vec(&doc).unwrap();
-
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "specs.cpu.brand", "$eq", &json!("Intel")),
-            Some(true)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "specs.cpu.brand", "$ne", &json!("Intel")),
-            Some(false)
-        );
-        assert_eq!(
-            evaluate_predicate_msgpack(&bytes, "specs.cpu.brand", "$nin", &json!(["AMD", "Apple"]),),
-            Some(true)
-        );
-    }
-}
+#[path = "query_tests.rs"]
+mod tests;
