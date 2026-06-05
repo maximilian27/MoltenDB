@@ -1,6 +1,11 @@
-use serde_json::{Value, json};
-use crate::validation;
+use super::update::constants::UPDATE_ALLOWED;
+use crate::common::payload_fields::PayloadField;
 use crate::engine;
+use crate::handlers::common::errors::{OperationError, ValidationError};
+use crate::handlers::update::errors::UpdateError;
+use crate::handlers::update::responses::UpdateSuccess;
+use crate::validation;
+use serde_json::Value;
 
 /// Handle an UPDATE (partial merge) request.
 ///
@@ -8,19 +13,28 @@ use crate::engine;
 /// fields that are not mentioned in the update.
 ///
 /// Format: { "collection": "users", "data": { "u1": { "role": "admin" } } }
-pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize, max_keys_per_request: usize) -> (u16, Value) {
+pub fn process_update(
+    db: &engine::Db,
+    payload: &Value,
+    max_body_size: usize,
+    max_keys_per_request: usize,
+) -> (u16, Value) {
     // Only "collection" and "data" are valid for an update/patch request.
-    const UPDATE_ALLOWED: &[&str] = &["collection", "data"];
     if let Err(e) = validation::validate_allowed_properties(payload, UPDATE_ALLOWED) {
-        return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
+        return ValidationError(e.to_string()).into_response();
     }
     if let Err(e) = validation::validate_request(payload, max_body_size, max_keys_per_request) {
-        return (400, json!({ "error": e.to_string(), "statusCode": 400 }));
+        return ValidationError(e.to_string()).into_response();
     }
 
-    let col = payload["collection"].as_str().unwrap_or("default");
+    let col = payload[PayloadField::Collection.as_str()]
+        .as_str()
+        .unwrap_or("default");
 
-    if let Some(data_map) = payload.get("data").and_then(|v| v.as_object()) {
+    if let Some(data_map) = payload
+        .get(PayloadField::Data.as_str())
+        .and_then(|v| v.as_object())
+    {
         let mut updated_count = 0;
         for (k, v) in data_map {
             let mut v = v.clone();
@@ -28,20 +42,26 @@ pub fn process_update(db: &engine::Db, payload: &Value, max_body_size: usize, ma
                 // _v is allowed as an optimistic-lock guard on update.
                 // All other _-prefixed fields are reserved and cannot be set by the client.
                 if obj.keys().any(|k| k.starts_with('_') && k != "_v") {
-                    return (400, json!({ "error": "Fields starting with '_' are reserved for internal use and cannot be set by the client.", "statusCode": 400 }));
+                    return UpdateError::ReservedFields.into_response();
                 }
             }
             match db.update(col, k, v) {
-                Ok(true)  => updated_count += 1,  // Document found and updated
-                Ok(false) => {},                   // Document not found -- skip
-                Err(engine::DbError::Conflict) => return (409, json!({ "error": "Conflict: Document version is outdated", "statusCode": 409 })),
+                Ok(true) => updated_count += 1, // Document found and updated
+                Ok(false) => {}                 // Document not found -- skip
+                Err(engine::DbError::Conflict) => {
+                    return UpdateError::VersionConflict.into_response();
+                }
                 #[cfg(feature = "schema")]
-                Err(engine::DbError::SchemaValidationError(msg)) => return (400, json!({ "error": msg, "statusCode": 400 })),
-                Err(e) => return (500, json!({ "error": "Database update failed", "details": e.to_string(), "statusCode": 500 }))
+                Err(engine::DbError::SchemaValidationError(e)) => {
+                    return ValidationError(e.to_string()).into_response();
+                }
+                Err(e) => {
+                    return UpdateError::UpdateFailed(e.to_string()).into_response();
+                }
             }
         }
-        (200, json!({ "status": "ok", "updated": updated_count }))
+        UpdateSuccess::Updated(updated_count).into_response()
     } else {
-        (400, json!({ "error": "Missing 'data' map", "statusCode": 400 }))
+        UpdateError::MissingDataMap.into_response()
     }
 }

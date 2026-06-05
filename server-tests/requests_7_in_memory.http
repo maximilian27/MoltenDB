@@ -21,8 +21,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc3OTI5NDU5Mywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjUyY2E1MmEzLThjMmUtNDgwOS04NzYwLWViZjgzYzRiMDg3ZSJ9.8fjMQfvmUyEaGbpgrHaMIFc6038clfDKfPU9xR8wCOQ
-
+@token = @token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MDc2NzU2Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI4MmE2ZTc2LWE2ODYtNGM3ZC05ZjE4LTIyNzBmYTBmNDllZCJ9.Q9ysF1UhBXIECfUxf_Qio--ZvIJvas7QQ7vcQvYiMtk
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### §1 and §2 must be run in order. Books reference authors via `author_id`.
@@ -37,11 +36,36 @@ Authorization: Bearer {{token}}
 {
   "collection": "authors",
   "data": {
-    "auth1": { "name": "Frank Herbert",    "nationality": "American", "born": 1920, "active": false },
-    "auth2": { "name": "Ursula K. Le Guin","nationality": "American", "born": 1929, "active": false },
-    "auth3": { "name": "Liu Cixin",        "nationality": "Chinese",  "born": 1963, "active": true  },
-    "auth4": { "name": "N.K. Jemisin",     "nationality": "American", "born": 1972, "active": true  },
-    "auth5": { "name": "Isaac Asimov",     "nationality": "American", "born": 1920, "active": false }
+    "auth1": {
+      "name": "Frank Herbert",
+      "nationality": "American",
+      "born": 1920,
+      "active": false
+    },
+    "auth2": {
+      "name": "Ursula K. Le Guin",
+      "nationality": "American",
+      "born": 1929,
+      "active": false
+    },
+    "auth3": {
+      "name": "Liu Cixin",
+      "nationality": "Chinese",
+      "born": 1963,
+      "active": true
+    },
+    "auth4": {
+      "name": "N.K. Jemisin",
+      "nationality": "American",
+      "born": 1972,
+      "active": true
+    },
+    "auth5": {
+      "name": "Isaac Asimov",
+      "nationality": "American",
+      "born": 1920,
+      "active": false
+    }
   }
 }
 
@@ -54,12 +78,60 @@ Authorization: Bearer {{token}}
 {
   "collection": "books",
   "data": {
-    "bk1": { "title": "Dune",                      "author_id": "auth1", "year": 1965, "genre": "sci-fi",  "pages": 412, "in_print": true,  "rating": 4.8 },
-    "bk2": { "title": "The Left Hand of Darkness", "author_id": "auth2", "year": 1969, "genre": "sci-fi",  "pages": 286, "in_print": true,  "rating": 4.5 },
-    "bk3": { "title": "The Three-Body Problem",    "author_id": "auth3", "year": 2008, "genre": "sci-fi",  "pages": 400, "in_print": true,  "rating": 4.6 },
-    "bk4": { "title": "The Fifth Season",          "author_id": "auth4", "year": 2015, "genre": "fantasy", "pages": 468, "in_print": true,  "rating": 4.7 },
-    "bk5": { "title": "Foundation",                "author_id": "auth5", "year": 1951, "genre": "sci-fi",  "pages": 244, "in_print": true,  "rating": 4.6 },
-    "bk6": { "title": "Children of Dune",          "author_id": "auth1", "year": 1976, "genre": "sci-fi",  "pages": 444, "in_print": false, "rating": 4.2 }
+    "bk1": {
+      "title": "Dune",
+      "author_id": "auth1",
+      "year": 1965,
+      "genre": "sci-fi",
+      "pages": 412,
+      "in_print": true,
+      "rating": 4.8
+    },
+    "bk2": {
+      "title": "The Left Hand of Darkness",
+      "author_id": "auth2",
+      "year": 1969,
+      "genre": "sci-fi",
+      "pages": 286,
+      "in_print": true,
+      "rating": 4.5
+    },
+    "bk3": {
+      "title": "The Three-Body Problem",
+      "author_id": "auth3",
+      "year": 2008,
+      "genre": "sci-fi",
+      "pages": 400,
+      "in_print": true,
+      "rating": 4.6
+    },
+    "bk4": {
+      "title": "The Fifth Season",
+      "author_id": "auth4",
+      "year": 2015,
+      "genre": "fantasy",
+      "pages": 468,
+      "in_print": true,
+      "rating": 4.7
+    },
+    "bk5": {
+      "title": "Foundation",
+      "author_id": "auth5",
+      "year": 1951,
+      "genre": "sci-fi",
+      "pages": 244,
+      "in_print": true,
+      "rating": 4.6
+    },
+    "bk6": {
+      "title": "Children of Dune",
+      "author_id": "auth1",
+      "year": 1976,
+      "genre": "sci-fi",
+      "pages": 444,
+      "in_print": false,
+      "rating": 4.2
+    }
   }
 }
 
@@ -73,7 +145,12 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "books",
-  "fields": ["title", "year", "genre", "rating"]
+  "fields": [
+    "title",
+    "year",
+    "genre",
+    "rating"
+  ]
 }
 
 ### §4. Filter — only sci-fi books with rating above 4.5
@@ -83,12 +160,23 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "books",
-  "fields": ["title", "genre", "rating"],
+  "fields": [
+    "title",
+    "genre",
+    "rating"
+  ],
   "where": {
     "genre": "sci-fi",
-    "rating": { "$gt": 4.5 }
+    "rating": {
+      "$gt": 4.5
+    }
   },
-  "sort": [{ "field": "rating", "order": "desc" }]
+  "sort": [
+    {
+      "field": "rating",
+      "order": "desc"
+    }
+  ]
 }
 
 ### §5. Join — books with their author details embedded
@@ -99,11 +187,29 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "books",
-  "fields": ["title", "year", "rating"],
-  "joins": [
-    { "author": { "from": "authors", "on": "author_id", "fields": ["name", "nationality"] } }
+  "fields": [
+    "title",
+    "year",
+    "rating"
   ],
-  "sort": [{ "field": "year", "order": "asc" }]
+  "joins": [
+    {
+      "author": {
+        "from": "authors",
+        "on": "author_id",
+        "fields": [
+          "name",
+          "nationality"
+        ]
+      }
+    }
+  ],
+  "sort": [
+    {
+      "field": "year",
+      "order": "asc"
+    }
+  ]
 }
 
 ### §6. Join with WHERE — only currently in-print books, with full author info
@@ -113,11 +219,22 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "books",
-  "fields": ["title", "genre", "in_print"],
-  "joins": [
-    { "author": { "from": "authors", "on": "author_id" } }
+  "fields": [
+    "title",
+    "genre",
+    "in_print"
   ],
-  "where": { "in_print": true }
+  "joins": [
+    {
+      "author": {
+        "from": "authors",
+        "on": "author_id"
+      }
+    }
+  ],
+  "where": {
+    "in_print": true
+  }
 }
 
 
@@ -132,7 +249,15 @@ Authorization: Bearer {{token}}
 {
   "collection": "books",
   "data": {
-    "bk6": { "title": "Children of Dune", "author_id": "auth1", "year": 1976, "genre": "sci-fi", "pages": 444, "in_print": true, "rating": 4.4 }
+    "bk6": {
+      "title": "Children of Dune",
+      "author_id": "auth1",
+      "year": 1976,
+      "genre": "sci-fi",
+      "pages": 444,
+      "in_print": true,
+      "rating": 4.4
+    }
   }
 }
 
@@ -143,7 +268,11 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "books",
-  "where": { "title": { "$contains": "Children" } }
+  "where": {
+    "title": {
+      "$contains": "Children"
+    }
+  }
 }
 
 ### §9. Update an author — Liu Cixin wins an award, bump his record
@@ -154,7 +283,15 @@ Authorization: Bearer {{token}}
 {
   "collection": "authors",
   "data": {
-    "auth3": { "name": "Liu Cixin", "nationality": "Chinese", "born": 1963, "active": true, "awards": ["Hugo Award"] }
+    "auth3": {
+      "name": "Liu Cixin",
+      "nationality": "Chinese",
+      "born": 1963,
+      "active": true,
+      "awards": [
+        "Hugo Award"
+      ]
+    }
   }
 }
 
@@ -168,7 +305,9 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "books",
-  "keys": ["bk5"]
+  "keys": [
+    "bk5"
+  ]
 }
 
 ### §11. Confirm deletion — get all books, bk5 (Foundation) should be gone
@@ -179,8 +318,16 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "books",
-  "fields": ["title", "author_id"],
-  "sort": [{ "field": "title", "order": "asc" }]
+  "fields": [
+    "title",
+    "author_id"
+  ],
+  "sort": [
+    {
+      "field": "title",
+      "order": "asc"
+    }
+  ]
 }
 
 ### §12. Delete an author — remove Isaac Asimov (whose book was already deleted)
@@ -190,7 +337,9 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "authors",
-  "keys": ["auth5"]
+  "keys": [
+    "auth5"
+  ]
 }
 
 

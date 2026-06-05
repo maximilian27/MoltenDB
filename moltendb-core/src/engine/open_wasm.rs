@@ -34,7 +34,6 @@ impl Db {
         let max_keys_per_request = config.max_keys_per_request;
         let encryption_key = config.encryption_key;
         let sync_mode = config.sync_mode;
-        let post_backup_script = config.post_backup_script;
 
         let state = Arc::new(DashMap::new());
         let (tx, _rx) = broadcast::channel(1000);
@@ -88,7 +87,6 @@ impl Db {
             ttl_expiry,
             seq_counters,
             max_sizes,
-            post_backup_script,
             io_fault: Arc::new(AtomicBool::new(false)),
         })
     }

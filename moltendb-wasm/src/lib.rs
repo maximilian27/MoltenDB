@@ -124,7 +124,6 @@ impl WorkerDb {
             encryption_key: master_key,
             rate_limit_requests: None,
             rate_limit_window: None,
-            post_backup_script: None, // Backup scripts are not supported in WASM
             in_memory: in_memory.unwrap_or(false),
         };
 

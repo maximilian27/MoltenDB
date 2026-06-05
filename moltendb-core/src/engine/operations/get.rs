@@ -1,4 +1,4 @@
-// ─── operations/read.rs ───────────────────────────────────────────────────────
+// ─── operations/get ───────────────────────────────────────────────────────
 // Read operations: get, get_all, get_filtered, scan_top_n.
 // All documents are always in RAM — no Cold/disk reads needed.
 // Documents are stored as MsgPack bytes (Box<[u8]>) and decoded to Value on read.
@@ -8,12 +8,12 @@
 // dominant cost for million-doc collections, so spreading it across CPU cores
 // gives a near-linear speedup. On wasm32 we fall back to a sequential scan.
 // ─────────────────────────────────────────────────────────────────────────────
+use super::super::StorageBackend;
+use crate::query::read_msgpack_seq;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use super::super::StorageBackend;
-use crate::query::read_msgpack_seq;
 
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
@@ -110,7 +110,10 @@ pub fn get_filtered(
                     |mut h, entry| {
                         if predicate(entry.key(), entry.value()) {
                             let seq = read_msgpack_seq(entry.value());
-                            let item = CompactItem { sort_value: seq as f64, seq };
+                            let item = CompactItem {
+                                sort_value: seq as f64,
+                                seq,
+                            };
                             if h.len() >= offset + limit {
                                 if let Some(worst) = h.peek() {
                                     if item < *worst {
@@ -152,7 +155,10 @@ pub fn get_filtered(
                 .filter_map(|entry| {
                     if predicate(entry.key(), entry.value()) {
                         let seq = read_msgpack_seq(entry.value());
-                        Some(CompactItem { sort_value: seq as f64, seq })
+                        Some(CompactItem {
+                            sort_value: seq as f64,
+                            seq,
+                        })
                     } else {
                         None
                     }
@@ -225,7 +231,10 @@ pub fn get_filtered(
             for entry in col.iter() {
                 if predicate(entry.key(), entry.value()) {
                     let seq = read_msgpack_seq(entry.value());
-                    let item = CompactItem { sort_value: seq as f64, seq };
+                    let item = CompactItem {
+                        sort_value: seq as f64,
+                        seq,
+                    };
                     if heap.len() >= offset + limit {
                         if let Some(worst) = heap.peek() {
                             if item < *worst {
@@ -247,7 +256,10 @@ pub fn get_filtered(
                 .filter_map(|entry| {
                     if predicate(entry.key(), entry.value()) {
                         let seq = read_msgpack_seq(entry.value());
-                        Some(CompactItem { sort_value: seq as f64, seq })
+                        Some(CompactItem {
+                            sort_value: seq as f64,
+                            seq,
+                        })
                     } else {
                         None
                     }
@@ -279,7 +291,8 @@ pub fn get_filtered(
             return Vec::new();
         }
 
-        let seq_set: std::collections::HashSet<u64> = page_items.iter().map(|item| item.seq).collect();
+        let seq_set: std::collections::HashSet<u64> =
+            page_items.iter().map(|item| item.seq).collect();
         let hydrated: std::collections::HashMap<u64, String> = col
             .iter()
             .filter_map(|entry| {
@@ -305,7 +318,6 @@ pub fn get_filtered(
     }
 }
 
-
 /// Scan a collection and return the top-N documents according to a comparator,
 /// applying an optional predicate along the way.
 ///
@@ -324,8 +336,8 @@ where
     P: Fn(&Value) -> bool + Sync,
     C: Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
 {
-    use std::collections::BinaryHeap;
     use std::cmp::Ordering;
+    use std::collections::BinaryHeap;
     if cap == 0 {
         return Vec::new();
     }
@@ -341,7 +353,9 @@ where
     }
     impl<F: Fn(&Value, &Value) -> Ordering> Eq for HeapItem<F> {}
     impl<F: Fn(&Value, &Value) -> Ordering> PartialOrd for HeapItem<F> {
-        fn partial_cmp(&self, o: &Self) -> Option<Ordering> { Some(self.cmp(o)) }
+        fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+            Some(self.cmp(o))
+        }
     }
     impl<F: Fn(&Value, &Value) -> Ordering> Ord for HeapItem<F> {
         fn cmp(&self, o: &Self) -> Ordering {
@@ -354,13 +368,19 @@ where
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let Some(col) = state.get(collection) else { return Vec::new(); };
+        let Some(col) = state.get(collection) else {
+            return Vec::new();
+        };
         // Each rayon worker keeps its own bounded heap (size ≤ cap) and we merge
         // them at the end. Peak memory is O(workers * cap) instead of
         // O(collection size), and we avoid materialising a giant intermediate Vec
         // — which is the dominant cost for sort-only queries over 1M docs.
         let push_into = |heap: &mut BinaryHeap<HeapItem<C>>, k: String, v: Value, cmp: &Arc<C>| {
-            let candidate = HeapItem { key: k, value: v, cmp: cmp.clone() };
+            let candidate = HeapItem {
+                key: k,
+                value: v,
+                cmp: cmp.clone(),
+            };
             if heap.len() >= cap {
                 // Only evict the current worst if the candidate is strictly better.
                 if let Some(worst) = heap.peek() {
@@ -370,7 +390,9 @@ where
                 }
             }
             heap.push(candidate);
-            if heap.len() > cap { heap.pop(); }
+            if heap.len() > cap {
+                heap.pop();
+            }
         };
 
         let merged: BinaryHeap<HeapItem<C>> = col
@@ -395,7 +417,11 @@ where
                     a
                 },
             );
-        merged.into_sorted_vec().into_iter().map(|h| (h.key, h.value)).collect()
+        merged
+            .into_sorted_vec()
+            .into_iter()
+            .map(|h| (h.key, h.value))
+            .collect()
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -406,18 +432,31 @@ where
                     Some(v) => v,
                     None => continue,
                 };
-                if !predicate(&v) { continue; }
-                let candidate = HeapItem { key: entry.key().clone(), value: v, cmp: cmp.clone() };
+                if !predicate(&v) {
+                    continue;
+                }
+                let candidate = HeapItem {
+                    key: entry.key().clone(),
+                    value: v,
+                    cmp: cmp.clone(),
+                };
                 if heap.len() >= cap {
                     if let Some(worst) = heap.peek() {
-                        if candidate.cmp(worst) != Ordering::Less { continue; }
+                        if candidate.cmp(worst) != Ordering::Less {
+                            continue;
+                        }
                     }
                 }
                 heap.push(candidate);
-                if heap.len() > cap { heap.pop(); }
+                if heap.len() > cap {
+                    heap.pop();
+                }
             }
         }
-        heap.into_sorted_vec().into_iter().map(|h| (h.key, h.value)).collect()
+        heap.into_sorted_vec()
+            .into_iter()
+            .map(|h| (h.key, h.value))
+            .collect()
     }
 }
 
@@ -447,7 +486,10 @@ pub fn get_all(
                     || BinaryHeap::<CompactItem>::with_capacity(offset + limit + 1),
                     |mut h, entry| {
                         let seq = read_msgpack_seq(entry.value());
-                        let item = CompactItem { sort_value: seq as f64, seq };
+                        let item = CompactItem {
+                            sort_value: seq as f64,
+                            seq,
+                        };
                         if h.len() >= offset + limit {
                             if let Some(worst) = h.peek() {
                                 if item < *worst {
@@ -487,7 +529,10 @@ pub fn get_all(
                 .par_iter()
                 .map(|entry| {
                     let seq = read_msgpack_seq(entry.value());
-                    CompactItem { sort_value: seq as f64, seq }
+                    CompactItem {
+                        sort_value: seq as f64,
+                        seq,
+                    }
                 })
                 .collect();
 
@@ -556,7 +601,10 @@ pub fn get_all(
             let mut heap = std::collections::BinaryHeap::with_capacity(offset + limit + 1);
             for entry in col.iter() {
                 let seq = read_msgpack_seq(entry.value());
-                let item = CompactItem { sort_value: seq as f64, seq };
+                let item = CompactItem {
+                    sort_value: seq as f64,
+                    seq,
+                };
                 if heap.len() >= offset + limit {
                     if let Some(worst) = heap.peek() {
                         if item < *worst {
@@ -576,7 +624,10 @@ pub fn get_all(
                 .iter()
                 .map(|entry| {
                     let seq = read_msgpack_seq(entry.value());
-                    CompactItem { sort_value: seq as f64, seq }
+                    CompactItem {
+                        sort_value: seq as f64,
+                        seq,
+                    }
                 })
                 .collect();
 
@@ -605,7 +656,8 @@ pub fn get_all(
             return Vec::new();
         }
 
-        let seq_set: std::collections::HashSet<u64> = page_items.iter().map(|item| item.seq).collect();
+        let seq_set: std::collections::HashSet<u64> =
+            page_items.iter().map(|item| item.seq).collect();
         let hydrated: std::collections::HashMap<u64, String> = col
             .iter()
             .filter_map(|entry| {

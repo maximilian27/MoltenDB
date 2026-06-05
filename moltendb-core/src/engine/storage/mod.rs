@@ -47,13 +47,13 @@ pub use wasm::OpfsStorage;
 // ── Shared imports ────────────────────────────────────────────────────────────
 // These are used by both the trait definition and the replay functions below.
 use crate::engine::types::{DbError, LogEntry};
-#[cfg(feature = "schema")]
-use serde_json::Value;
-use std::ops::ControlFlow;
 // DashMap is a concurrent hash map — like HashMap but safe to read/write from
 // multiple threads simultaneously without a global lock.
 // DashSet is the set equivalent.
 use dashmap::DashMap;
+#[cfg(feature = "schema")]
+use serde_json::Value;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 // serde_json::Value is a dynamically-typed JSON value (can be object, array,
 // string, number, bool, or null). All document data is stored as Value.
@@ -96,7 +96,6 @@ pub trait StorageBackend: Send + Sync {
     fn compact_from_maps(
         &self,
         _state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
-        _hook: Option<String>,
     ) -> Result<(), DbError> {
         Ok(())
     }
@@ -106,22 +105,39 @@ pub trait StorageBackend: Send + Sync {
         &self,
         state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
         schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
-        hook: Option<String>,
     ) -> Result<(), DbError> {
         let doc_count: u64 = state.iter().map(|c| c.value().len() as u64).sum();
         let count = doc_count + schemas.len() as u64;
         let doc_iter = state.iter().flat_map(|col_ref| {
             let col_name = col_ref.key().clone();
-            col_ref.value().iter().filter_map(move |item_ref| {
-                let value: Value = rmp_serde::from_slice(item_ref.value()).ok()?;
-                Some(LogEntry::new("INSERT".to_string(), col_name.to_string(), item_ref.key().clone(), value))
-            }).collect::<Vec<_>>()
+            col_ref
+                .value()
+                .iter()
+                .filter_map(move |item_ref| {
+                    let value: Value = rmp_serde::from_slice(item_ref.value()).ok()?;
+                    Some(LogEntry::new(
+                        "INSERT".to_string(),
+                        col_name.to_string(),
+                        item_ref.key().clone(),
+                        value,
+                    ))
+                })
+                .collect::<Vec<_>>()
         });
-        let schema_iter = schemas.iter().map(|schema_ref| {
-            let (schema_json, _) = &**schema_ref.value();
-            LogEntry::new("SCHEMA".to_string(), schema_ref.key().to_string(), "".to_string(), schema_json.clone())
-        }).collect::<Vec<_>>().into_iter();
-        let _ = (count, doc_iter.chain(schema_iter), hook);
+        let schema_iter = schemas
+            .iter()
+            .map(|schema_ref| {
+                let (schema_json, _) = &**schema_ref.value();
+                LogEntry::new(
+                    "SCHEMA".to_string(),
+                    schema_ref.key().to_string(),
+                    "".to_string(),
+                    schema_json.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter();
+        let _ = (count, doc_iter.chain(schema_iter));
         Ok(())
     }
 
@@ -149,14 +165,17 @@ pub trait StorageBackend: Send + Sync {
     /// compatibility (used by WASM/EncryptedStorage which don't have snapshots).
     ///
     /// Returns the total number of entries processed.
-    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
+    fn stream_log_into(
+        &self,
+        f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>,
+    ) -> Result<u64, DbError> {
         // Default: load everything into a Vec, then iterate.
         // Concrete implementations (AsyncDiskStorage, SyncDiskStorage) override
         // this with a more efficient snapshot + streaming approach.
         let entries = self.read_log()?;
         let mut count = 0u64;
         for entry in entries {
-            // Default re-serializes to get length. 
+            // Default re-serializes to get length.
             // Better implementations override this.
             let json = serde_json::to_vec(&entry).unwrap_or_default();
             let length = json.len() as u32;
@@ -190,7 +209,10 @@ pub trait StorageBackend: Send + Sync {
 pub fn stream_into_state(
     storage: &dyn StorageBackend,
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
-    #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<
+        String,
+        std::sync::Arc<(Value, jsonschema::Validator)>,
+    >,
     ttl_expiry: &DashMap<String, u64>,
 ) -> Result<u64, DbError> {
     let mut count = 0u64;
@@ -206,18 +228,33 @@ pub fn stream_into_state(
             "TX_COMMIT" => {
                 if active_tx.as_ref() == Some(&entry.key) {
                     for e in tx_buffer.drain(..) {
-                        apply_entry(&e, state, #[cfg(feature = "schema")] schemas, ttl_expiry);
+                        apply_entry(
+                            &e,
+                            state,
+                            #[cfg(feature = "schema")]
+                            schemas,
+                            ttl_expiry,
+                        );
                     }
                     active_tx = None;
                 } else {
-                    tracing::warn!("⚠️  TX_COMMIT seen for unknown or inactive transaction ID: {}. Ignoring.", entry.key);
+                    tracing::warn!(
+                        "⚠️  TX_COMMIT seen for unknown or inactive transaction ID: {}. Ignoring.",
+                        entry.key
+                    );
                 }
             }
             _ => {
                 if active_tx.is_some() {
                     tx_buffer.push(entry);
                 } else {
-                    apply_entry(&entry, state, #[cfg(feature = "schema")] schemas, ttl_expiry);
+                    apply_entry(
+                        &entry,
+                        state,
+                        #[cfg(feature = "schema")]
+                        schemas,
+                        ttl_expiry,
+                    );
                 }
             }
         }
@@ -234,7 +271,10 @@ pub fn stream_into_state(
 pub fn apply_entry(
     entry: &LogEntry,
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
-    #[cfg(feature = "schema")] schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    #[cfg(feature = "schema")] schemas: &DashMap<
+        String,
+        std::sync::Arc<(Value, jsonschema::Validator)>,
+    >,
     ttl_expiry: &DashMap<String, u64>,
 ) {
     match entry.cmd.as_str() {
@@ -277,7 +317,10 @@ pub fn apply_entry(
         "SCHEMA" => {
             // Re-compile and register the schema during replay.
             if let Ok(validator) = jsonschema::validator_for(&entry.value) {
-                schemas.insert(entry.collection.clone(), std::sync::Arc::new((entry.value.clone(), validator)));
+                schemas.insert(
+                    entry.collection.clone(),
+                    std::sync::Arc::new((entry.value.clone(), validator)),
+                );
             }
         }
         // Unknown command types are silently ignored for forward compatibility.
@@ -292,4 +335,3 @@ pub fn apply_entry(
 // This is an alternative to stream_into_state() used when the entries have
 // already been loaded into memory (e.g. after decryption by EncryptedStorage).
 // It applies the same logic as apply_entry() but iterates a pre-built slice.
-
