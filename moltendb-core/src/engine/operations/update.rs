@@ -52,7 +52,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
             // If the caller provides a "_v" field in the update, it acts as a guard.
             // If the current version is not equal to this guard, we return Conflict.
             let existing_v = doc
-                .get(SystemFields::VERSION)
+                .get(SystemFields::IKEY_VERSION)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             if let Some(guard_v) = update_obj

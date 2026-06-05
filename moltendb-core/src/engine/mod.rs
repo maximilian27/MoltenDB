@@ -42,6 +42,7 @@ pub use storage::{EncryptedStorage, StorageBackend};
 // Re-export LogEntry so it can be used by tests and other crates.
 pub use types::{DbError, LogEntry};
 
+use crate::common::system_field_tokens::expand_system_fields;
 use dashmap::DashMap;
 use serde_json::Value;
 #[allow(unused_imports)]
@@ -142,6 +143,9 @@ impl Db {
     /// Missing keys are silently skipped. Pass a single key to retrieve one document.
     pub fn get(&self, collection: &str, keys: Vec<String>) -> HashMap<String, Value> {
         operations::get(&self.state, &self.storage, collection, keys)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
     }
 
     /// Retrieve all documents in a collection.
@@ -152,6 +156,9 @@ impl Db {
         count: Option<usize>,
     ) -> Vec<(String, Value)> {
         operations::get_all(&self.state, &self.storage, collection, offset, count)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
     }
 
     /// Lazily scan a collection, returning only documents that match `predicate`.
@@ -175,6 +182,9 @@ impl Db {
             offset,
             count,
         )
+        .into_iter()
+        .map(|(k, v)| (k, expand_system_fields(v)))
+        .collect()
     }
 
     /// Lazily scan a collection and return the top-`cap` documents according
@@ -194,6 +204,9 @@ impl Db {
         cap: usize,
     ) -> Vec<(String, Value)> {
         operations::scan_top_n(&self.state, &self.storage, collection, predicate, cmp, cap)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
     }
 
     /// Insert or overwrite multiple documents in one call.

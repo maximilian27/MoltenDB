@@ -2,12 +2,12 @@
 // Delete operations: delete, delete_filtered, delete_collection.
 // ─────────────────────────────────────────────────────────────────────────────
 
+use super::super::types::{DbError, LogEntry};
+use super::super::StorageBackend;
+use crate::common::system_fields::SystemFields;
 use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use super::super::StorageBackend;
-use super::super::types::{DbError, LogEntry};
-
 
 /// Delete one or more documents from a collection in a single call.
 ///
@@ -95,7 +95,11 @@ pub fn delete_filtered(
                     .par_iter()
                     .filter_map(|entry| {
                         let v = decode(entry.value())?;
-                        if predicate(&v) { Some(entry.key().clone()) } else { None }
+                        if predicate(&v) {
+                            Some(entry.key().clone())
+                        } else {
+                            None
+                        }
                     })
                     .collect(),
                 None => return Ok(0),
@@ -108,7 +112,11 @@ pub fn delete_filtered(
                     .iter()
                     .filter_map(|entry| {
                         let v = decode(entry.value())?;
-                        if predicate(&v) { Some(entry.key().clone()) } else { None }
+                        if predicate(&v) {
+                            Some(entry.key().clone())
+                        } else {
+                            None
+                        }
                     })
                     .collect(),
                 None => return Ok(0),
@@ -157,7 +165,10 @@ pub fn evict_oldest(
         .iter()
         .filter_map(|e| {
             let v = decode(e.value())?;
-            let seq = v.get("_seq").and_then(|s| s.as_u64()).unwrap_or(u64::MAX);
+            let seq = v
+                .get(SystemFields::IKEY_SEQ)
+                .and_then(|s| s.as_u64())
+                .unwrap_or(u64::MAX);
             Some((seq, e.key().clone()))
         })
         .collect();

@@ -65,45 +65,45 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         if let Some(existing) = existing_val {
             let existing_v = existing
-                .get(SystemFields::VERSION)
+                .get(SystemFields::IKEY_VERSION)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             // Preserve original _createdAt.
             let orig_created: Value = existing
-                .get(SystemFields::CREATED_AT)
+                .get(SystemFields::IKEY_CREATED_AT)
                 .and_then(|v| v.as_u64())
                 .map(|ms| serde_json::json!(ms))
                 .unwrap_or_else(|| serde_json::json!(now_ms));
             // Preserve the original _seq so overwritten docs keep their insertion order.
             let orig_seq = existing
-                .get(SystemFields::SEQ)
+                .get(SystemFields::IKEY_SEQ)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(seq);
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
-                obj.insert(SystemFields::VERSION.to_string(), serde_json::json!(new_v));
-                obj.insert(SystemFields::CREATED_AT.to_string(), orig_created);
+                obj.insert(SystemFields::IKEY_VERSION.to_string(), serde_json::json!(new_v));
+                obj.insert(SystemFields::IKEY_CREATED_AT.to_string(), orig_created);
                 obj.insert(
-                    SystemFields::MODIFIED_AT.to_string(),
+                    SystemFields::IKEY_MODIFIED_AT.to_string(),
                     serde_json::json!(now_ms),
                 );
-                obj.insert(SystemFields::SEQ.to_string(), serde_json::json!(orig_seq));
+                obj.insert(SystemFields::IKEY_SEQ.to_string(), serde_json::json!(orig_seq));
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &value)?;
         } else if let Some(obj) = value.as_object_mut() {
-            obj.insert(SystemFields::VERSION.to_string(), serde_json::json!(1u64));
+            obj.insert(SystemFields::IKEY_VERSION.to_string(), serde_json::json!(1u64));
             obj.insert(
-                SystemFields::CREATED_AT.to_string(),
+                SystemFields::IKEY_CREATED_AT.to_string(),
                 serde_json::json!(now_ms),
             );
             obj.insert(
-                SystemFields::MODIFIED_AT.to_string(),
+                SystemFields::IKEY_MODIFIED_AT.to_string(),
                 serde_json::json!(now_ms),
             );
-            obj.insert(SystemFields::SEQ.to_string(), serde_json::json!(seq));
+            obj.insert(SystemFields::IKEY_SEQ.to_string(), serde_json::json!(seq));
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]
@@ -126,10 +126,10 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         // Step 4: Broadcast a lean change event to WebSocket subscribers.
         let new_v = value
-            .get(SystemFields::VERSION)
+            .get(SystemFields::IKEY_VERSION)
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        let expires_at_ms = value.get(SystemFields::EXPIRES_AT).and_then(|v| v.as_u64());
+        let expires_at_ms = value.get(SystemFields::IKEY_EXPIRES_AT).and_then(|v| v.as_u64());
         let mut event = json!({
             "event": "change",
             "collection": collection,

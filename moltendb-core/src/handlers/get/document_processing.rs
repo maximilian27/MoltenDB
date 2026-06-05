@@ -1,4 +1,5 @@
 use crate::common::payload_fields::PayloadField;
+use crate::common::system_field_tokens::expand_system_fields;
 use crate::common::system_fields::SystemFields;
 use crate::engine::ttl::ms_to_iso;
 use crate::{engine, query};
@@ -152,16 +153,15 @@ pub fn shape_doc(
     // _v and _key are protocol primitives -- always present, cannot be suppressed.
     // _seq, _createdAt, _modifiedAt, _expiresAt are opt-in: only returned when
     // explicitly listed in a `fields` projection. They are stripped in all other cases.
-    let v_val = doc.get(SystemFields::VERSION).cloned();
-    // Read compact storage names first, fall back to legacy long names for old docs.
-    let seq_val = doc.get(SystemFields::SEQ).cloned();
+    let v_val = doc.get(SystemFields::IKEY_VERSION).cloned();
+    let seq_val = doc.get(SystemFields::IKEY_SEQ).cloned();
     // Convert u64 Unix ms timestamps to ISO 8601 strings for the API response.
     let created_val = doc
-        .get(SystemFields::CREATED_AT)
+        .get(SystemFields::IKEY_CREATED_AT)
         .cloned()
         .map(ts_to_iso_val);
     let modified_val = doc
-        .get(SystemFields::MODIFIED_AT)
+        .get(SystemFields::IKEY_MODIFIED_AT)
         .cloned()
         .map(ts_to_iso_val);
 
@@ -181,22 +181,22 @@ pub fn shape_doc(
             // Always insert under the public API name regardless of how it was stored.
             if requested.contains(&SystemFields::SEQ) {
                 if let Some(v) = seq_val {
-                    dst.insert(SystemFields::SEQ.to_string(), v);
+                    dst.insert(SystemFields::IKEY_SEQ.to_string(), v);
                 }
             }
             if requested.contains(&SystemFields::CREATED_AT) {
                 if let Some(v) = created_val {
-                    dst.insert(SystemFields::CREATED_AT.to_string(), v);
+                    dst.insert(SystemFields::IKEY_CREATED_AT.to_string(), v);
                 }
             }
             if requested.contains(&SystemFields::MODIFIED_AT) {
                 if let Some(v) = modified_val {
-                    dst.insert(SystemFields::MODIFIED_AT.to_string(), v);
+                    dst.insert(SystemFields::IKEY_MODIFIED_AT.to_string(), v);
                 }
             }
             if requested.contains(&SystemFields::EXPIRES_AT) {
                 if let Some(v) = expires_val {
-                    dst.insert(SystemFields::EXPIRES_AT.to_string(), v);
+                    dst.insert(SystemFields::IKEY_EXPIRES_AT.to_string(), v);
                 }
             }
         }
@@ -205,20 +205,20 @@ pub fn shape_doc(
         let mut shaped = query::exclude(&doc, ex);
         // Strip optional metadata fields -- they are opt-in via `fields` only.
         if let Some(obj) = shaped.as_object_mut() {
-            obj.remove(SystemFields::SEQ);
-            obj.remove(SystemFields::CREATED_AT);
-            obj.remove(SystemFields::MODIFIED_AT);
-            obj.remove(SystemFields::EXPIRES_AT);
+            obj.remove(SystemFields::IKEY_SEQ);
+            obj.remove(SystemFields::IKEY_CREATED_AT);
+            obj.remove(SystemFields::IKEY_MODIFIED_AT);
+            obj.remove(SystemFields::IKEY_EXPIRES_AT);
         }
         shaped
     } else {
         // No projection -- strip optional metadata fields (opt-in via `fields` only).
         let mut d = doc;
         if let Some(obj) = d.as_object_mut() {
-            obj.remove(SystemFields::SEQ);
-            obj.remove(SystemFields::CREATED_AT);
-            obj.remove(SystemFields::MODIFIED_AT);
-            obj.remove(SystemFields::EXPIRES_AT);
+            obj.remove(SystemFields::IKEY_SEQ);
+            obj.remove(SystemFields::IKEY_CREATED_AT);
+            obj.remove(SystemFields::IKEY_MODIFIED_AT);
+            obj.remove(SystemFields::IKEY_EXPIRES_AT);
         }
         d
     };
@@ -226,12 +226,13 @@ pub fn shape_doc(
     // _v and _key are always injected last -- they cannot be suppressed.
     if let Some(obj) = out.as_object_mut() {
         if let Some(v) = v_val {
-            obj.insert(SystemFields::VERSION.to_string(), v);
+            obj.insert(SystemFields::IKEY_VERSION.to_string(), v);
         }
         obj.insert(
-            SystemFields::KEY.to_string(),
+            SystemFields::IKEY_KEY.to_string(),
             Value::String(key.to_string()),
         );
     }
-    Some(out)
+    // Expand integer token keys to public API names before returning to clients.
+    Some(expand_system_fields(out))
 }

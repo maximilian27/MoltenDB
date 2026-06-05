@@ -73,11 +73,19 @@ fn write_value(buf: &mut Vec<u8>, value: &Value) {
 
 fn write_map_key(buf: &mut Vec<u8>, key: &str) {
     match key {
-        k if k == SystemFields::VERSION => buf.push(TOK_VERSION),
-        k if k == SystemFields::SEQ => buf.push(TOK_SEQ),
-        k if k == SystemFields::CREATED_AT => buf.push(TOK_CREATED_AT),
-        k if k == SystemFields::MODIFIED_AT => buf.push(TOK_MODIFIED_AT),
-        k if k == SystemFields::EXPIRES_AT => buf.push(TOK_EXPIRES_AT),
+        // Accept both public API names and in-memory IKEY integer strings.
+        k if k == SystemFields::VERSION || k == SystemFields::IKEY_VERSION => buf.push(TOK_VERSION),
+        k if k == SystemFields::KEY || k == SystemFields::IKEY_KEY => buf.push(TOK_KEY),
+        k if k == SystemFields::SEQ || k == SystemFields::IKEY_SEQ => buf.push(TOK_SEQ),
+        k if k == SystemFields::CREATED_AT || k == SystemFields::IKEY_CREATED_AT => {
+            buf.push(TOK_CREATED_AT)
+        }
+        k if k == SystemFields::MODIFIED_AT || k == SystemFields::IKEY_MODIFIED_AT => {
+            buf.push(TOK_MODIFIED_AT)
+        }
+        k if k == SystemFields::EXPIRES_AT || k == SystemFields::IKEY_EXPIRES_AT => {
+            buf.push(TOK_EXPIRES_AT)
+        }
         _ => write_str(buf, key),
     }
 }
@@ -164,8 +172,9 @@ fn write_map_header(buf: &mut Vec<u8>, len: usize) {
 
 // ─── Decode: MsgPack bytes → Value ───────────────────────────────────────────
 
-/// Deserialize MsgPack bytes to a `serde_json::Value`, expanding single-byte
-/// negative FixInt map keys back to their public system field string names.
+/// Deserialize MsgPack bytes to a `serde_json::Value`, keeping single-byte
+/// negative FixInt map keys as their integer string representation (e.g. "-1").
+/// Call `expand_system_fields` at the API boundary to convert to public names.
 pub fn msgpack_to_value(bytes: &[u8]) -> Option<Value> {
     let mut pos = 0;
     read_value(bytes, &mut pos)
@@ -406,8 +415,10 @@ fn read_map(buf: &[u8], pos: &mut usize, len: usize) -> Option<Value> {
     Some(Value::Object(map))
 }
 
-/// Read a map key. If the key byte is a negative FixInt token, expand it to
-/// the corresponding public system field name. Otherwise read it as a string.
+/// Read a map key. If the key byte is a negative FixInt token, keep it as its
+/// integer string representation (e.g. "-1" for VERSION). This avoids heap
+/// allocation of the full public name and keeps tokens compact in RAM.
+/// Call `expand_system_fields` at the API boundary to convert to public names.
 fn read_map_key(buf: &[u8], pos: &mut usize) -> Option<String> {
     if *pos >= buf.len() {
         return None;
@@ -416,32 +427,32 @@ fn read_map_key(buf: &[u8], pos: &mut usize) -> Option<String> {
     match byte {
         TOK_VERSION => {
             *pos += 1;
-            Some(SystemFields::VERSION.to_string())
+            Some(SystemFields::IKEY_VERSION.to_string())
         }
         TOK_KEY => {
             *pos += 1;
-            Some(SystemFields::KEY.to_string())
+            Some(SystemFields::IKEY_KEY.to_string())
         }
         TOK_SEQ => {
             *pos += 1;
-            Some(SystemFields::SEQ.to_string())
+            Some(SystemFields::IKEY_SEQ.to_string())
         }
         TOK_CREATED_AT => {
             *pos += 1;
-            Some(SystemFields::CREATED_AT.to_string())
+            Some(SystemFields::IKEY_CREATED_AT.to_string())
         }
         TOK_MODIFIED_AT => {
             *pos += 1;
-            Some(SystemFields::MODIFIED_AT.to_string())
+            Some(SystemFields::IKEY_MODIFIED_AT.to_string())
         }
         TOK_EXPIRES_AT => {
             *pos += 1;
-            Some(SystemFields::EXPIRES_AT.to_string())
+            Some(SystemFields::IKEY_EXPIRES_AT.to_string())
         }
-        // Any other negative FixInt (0xe0..=0xf9) — unknown token, skip as string
+        // Any other negative FixInt (0xe0..=0xf9) — unknown token, keep as integer string
         0xe0..=0xf9 => {
             *pos += 1;
-            Some(format!("__tok_{}", byte as i8))
+            Some(format!("{}", byte as i8))
         }
         // Normal string key
         _ => {
@@ -456,6 +467,33 @@ fn read_map_key(buf: &[u8], pos: &mut usize) -> Option<String> {
                 _ => None,
             }
         }
+    }
+}
+
+/// Expand in-memory integer key strings back to their public API field names.
+/// Call this at the API boundary before returning documents to clients.
+pub fn expand_system_fields(doc: Value) -> Value {
+    match doc {
+        Value::Object(map) => {
+            let mut out = Map::with_capacity(map.len());
+            for (k, v) in map {
+                let expanded_key = match k.as_str() {
+                    SystemFields::IKEY_VERSION => SystemFields::VERSION.to_string(),
+                    SystemFields::IKEY_KEY => SystemFields::KEY.to_string(),
+                    SystemFields::IKEY_SEQ => SystemFields::SEQ.to_string(),
+                    SystemFields::IKEY_CREATED_AT => SystemFields::CREATED_AT.to_string(),
+                    SystemFields::IKEY_MODIFIED_AT => SystemFields::MODIFIED_AT.to_string(),
+                    SystemFields::IKEY_EXPIRES_AT => SystemFields::EXPIRES_AT.to_string(),
+                    _ => k,
+                };
+                // Recursively expand nested objects (e.g. joined sub-documents)
+                let expanded_val = expand_system_fields(v);
+                out.insert(expanded_key, expanded_val);
+            }
+            Value::Object(out)
+        }
+        Value::Array(arr) => Value::Array(arr.into_iter().map(expand_system_fields).collect()),
+        other => other,
     }
 }
 
