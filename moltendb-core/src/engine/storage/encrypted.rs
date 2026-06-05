@@ -1,9 +1,9 @@
 use super::StorageBackend;
 use crate::engine::types::{DbError, LogEntry};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
-    XChaCha20Poly1305, XNonce, Key,
+    aead::{Aead, KeyInit}, Key, XChaCha20Poly1305,
+    XNonce,
 };
 use rand_core::{OsRng, RngCore};
 use std::ops::ControlFlow;
@@ -18,13 +18,16 @@ pub struct EncryptedStorage {
 impl EncryptedStorage {
     pub fn new(inner: Arc<dyn StorageBackend>, master_key: &[u8; 32]) -> Self {
         let key = Key::from_slice(master_key);
-        Self { inner, cipher: XChaCha20Poly1305::new(key) }
+        Self {
+            inner,
+            cipher: XChaCha20Poly1305::new(key),
+        }
     }
 
     // Derives a 32-byte key from a password using Argon2id. `salt_context` is typically the db path.
     pub fn derive_key(password: &str, salt_context: &str) -> [u8; 32] {
-        use argon2::{Argon2, PasswordHasher};
         use argon2::password_hash::SaltString;
+        use argon2::{Argon2, PasswordHasher};
 
         let raw_salt = format!("{:0<22}", &salt_context[..salt_context.len().min(22)]);
         let salt = SaltString::from_b64(&raw_salt)
@@ -50,7 +53,8 @@ impl EncryptedStorage {
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = XNonce::from_slice(&nonce_bytes);
 
-        let cipher_text = self.cipher
+        let cipher_text = self
+            .cipher
             .encrypt(nonce, plain_bytes.as_ref())
             .map_err(|_| DbError::WriteError)?;
 
@@ -77,7 +81,8 @@ impl EncryptedStorage {
         let (nonce_bytes, cipher_text) = payload.split_at(24);
         let nonce = XNonce::from_slice(nonce_bytes);
 
-        let plain_bytes = self.cipher
+        let plain_bytes = self
+            .cipher
             .decrypt(nonce, cipher_text)
             .map_err(|_| DbError::WriteError)?;
 
@@ -90,16 +95,18 @@ impl StorageBackend for EncryptedStorage {
     fn compact_from_maps(
         &self,
         state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
-        hook: Option<String>,
     ) -> Result<(), DbError> {
-        self.inner.compact_from_maps(state, hook)
+        self.inner.compact_from_maps(state)
     }
 
     #[cfg(feature = "schema")]
     fn compact_from_maps(
         &self,
         state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
-        schemas: &dashmap::DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
+        schemas: &dashmap::DashMap<
+            String,
+            std::sync::Arc<(serde_json::Value, jsonschema::Validator)>,
+        >,
     ) -> Result<(), DbError> {
         self.inner.compact_from_maps(state, schemas)
     }
@@ -129,24 +136,34 @@ impl StorageBackend for EncryptedStorage {
         self.inner.storage_mode()
     }
 
-    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
+    fn stream_log_into(
+        &self,
+        f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>,
+    ) -> Result<u64, DbError> {
         let mut count = 0u64;
         self.inner.stream_log_into(&mut |enc_entry, length| {
             if enc_entry.cmd == "ENC" {
                 match self.decrypt_entry(&enc_entry) {
                     Ok(real_entry) => {
                         let res = f(real_entry, length);
-                        if let ControlFlow::Continue(_) = res { count += 1; }
+                        if let ControlFlow::Continue(_) = res {
+                            count += 1;
+                        }
                         res
                     }
                     Err(e) => {
-                        tracing::warn!("⚠️  Skipping undecryptable log entry during streaming: {}", e);
+                        tracing::warn!(
+                            "⚠️  Skipping undecryptable log entry during streaming: {}",
+                            e
+                        );
                         ControlFlow::Continue(())
                     }
                 }
             } else {
                 let res = f(enc_entry, length);
-                if let ControlFlow::Continue(_) = res { count += 1; }
+                if let ControlFlow::Continue(_) = res {
+                    count += 1;
+                }
                 res
             }
         })?;

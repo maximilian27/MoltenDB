@@ -37,8 +37,8 @@ use crate::engine::types::{DbError, LogEntry};
 // Mutex gives us exclusive access to the file handle across async boundaries.
 // In WASM, "threads" are Web Workers — Mutex prevents two workers from writing
 // to the same file simultaneously (though in practice we only have one worker).
-use std::sync::Mutex;
 use std::ops::ControlFlow;
+use std::sync::Mutex;
 // wasm_bindgen bridges Rust and JavaScript — it generates the JS glue code
 // that lets Rust call browser APIs and vice versa.
 use wasm_bindgen::prelude::*;
@@ -100,11 +100,10 @@ impl OpfsStorage {
         let opts = web_sys::FileSystemGetFileOptions::new();
         opts.set_create(true);
 
-        let file_val: JsValue = JsFuture::from(
-            root_dir.get_file_handle_with_options(db_name, &opts)
-        )
-        .await
-        .map_err(|_| DbError::WriteError)?;
+        let file_val: JsValue =
+            JsFuture::from(root_dir.get_file_handle_with_options(db_name, &opts))
+                .await
+                .map_err(|_| DbError::WriteError)?;
         let file_handle: web_sys::FileSystemFileHandle = file_val.unchecked_into();
 
         // Step 3: Open a synchronous access handle on the file.
@@ -153,7 +152,9 @@ impl OpfsStorage {
     fn truncate_and_close(&self) -> Result<(), DbError> {
         let handle = self.handle.lock().expect("db handle mutex poisoned");
         // Erase all content.
-        handle.truncate_with_f64(0.0).map_err(|_| DbError::WriteError)?;
+        handle
+            .truncate_with_f64(0.0)
+            .map_err(|_| DbError::WriteError)?;
         handle.flush().map_err(|_| DbError::WriteError)?;
         // Release the exclusive lock so the JS side can removeEntry().
         handle.close();
@@ -163,12 +164,17 @@ impl OpfsStorage {
 
 /// Implement the StorageBackend trait for OPFS-based storage.
 impl StorageBackend for OpfsStorage {
-    fn stream_log_into(&self, f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>) -> Result<u64, DbError> {
+    fn stream_log_into(
+        &self,
+        f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>,
+    ) -> Result<u64, DbError> {
         let size = {
             let handle = self.handle.lock().expect("db handle mutex poisoned");
             handle.get_size().map_err(|_| DbError::WriteError)? as usize
         };
-        if size == 0 { return Ok(0); }
+        if size == 0 {
+            return Ok(0);
+        }
 
         let chunk_size = 64 * 1024; // 64KB
         let mut offset = 0;
@@ -182,7 +188,9 @@ impl StorageBackend for OpfsStorage {
                 let handle = self.handle.lock().expect("db handle mutex poisoned");
                 let opts = web_sys::FileSystemReadWriteOptions::new();
                 opts.set_at(offset as f64);
-                handle.read_with_u8_array_and_options(&mut chunk, &opts).map_err(|_| DbError::WriteError)?;
+                handle
+                    .read_with_u8_array_and_options(&mut chunk, &opts)
+                    .map_err(|_| DbError::WriteError)?;
             }
             offset += to_read;
             remaining.extend_from_slice(&chunk);
@@ -246,7 +254,6 @@ impl StorageBackend for OpfsStorage {
         Ok(())
     }
 
-
     /// Read the entire OPFS file and parse all log entries.
     ///
     /// The whole file is read into a byte buffer, converted to a string,
@@ -272,7 +279,6 @@ impl StorageBackend for OpfsStorage {
     fn compact_from_maps(
         &self,
         state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
-        _hook: Option<String>,
     ) -> Result<(), DbError> {
         self.do_compact(state)
     }
@@ -281,8 +287,10 @@ impl StorageBackend for OpfsStorage {
     fn compact_from_maps(
         &self,
         state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
-        schemas: &dashmap::DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
-        _hook: Option<String>,
+        schemas: &dashmap::DashMap<
+            String,
+            std::sync::Arc<(serde_json::Value, jsonschema::Validator)>,
+        >,
     ) -> Result<(), DbError> {
         self.do_compact(state, Some(schemas))
     }
@@ -299,17 +307,23 @@ impl OpfsStorage {
         let handle = self.handle.lock().expect("db handle mutex poisoned");
 
         // Truncate the file to 0 bytes — erases existing content.
-        handle.truncate_with_f64(0.0).map_err(|_| DbError::WriteError)?;
+        handle
+            .truncate_with_f64(0.0)
+            .map_err(|_| DbError::WriteError)?;
 
         let mut offset = 0.0;
         let mut buffer = Vec::new();
         let chunk_size = 64 * 1024; // 64KB
 
         let mut write_buffer = |buf: &mut Vec<u8>| -> Result<(), DbError> {
-            if buf.is_empty() { return Ok(()); }
+            if buf.is_empty() {
+                return Ok(());
+            }
             let opts = web_sys::FileSystemReadWriteOptions::new();
             opts.set_at(offset);
-            handle.write_with_u8_array_and_options(buf, &opts).map_err(|_| DbError::WriteError)?;
+            handle
+                .write_with_u8_array_and_options(buf, &opts)
+                .map_err(|_| DbError::WriteError)?;
             offset += buf.len() as f64;
             buf.clear();
             Ok(())
@@ -320,11 +334,16 @@ impl OpfsStorage {
             let col_name = col_ref.key().clone();
             for item_ref in col_ref.value().iter() {
                 if let Ok(value) = rmp_serde::from_slice::<serde_json::Value>(item_ref.value()) {
-                    let entry = LogEntry::new("INSERT".to_string(), col_name.to_string(), item_ref.key().clone(), value);
+                    let entry = LogEntry::new(
+                        "INSERT".to_string(),
+                        col_name.to_string(),
+                        item_ref.key().clone(),
+                        value,
+                    );
                     if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
                         buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
                         buffer.append(&mut encoded);
-                        
+
                         if buffer.len() >= chunk_size {
                             write_buffer(&mut buffer)?;
                         }
@@ -344,22 +363,30 @@ impl OpfsStorage {
     fn do_compact(
         &self,
         state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
-        schemas: Option<&dashmap::DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>>,
+        schemas: Option<
+            &dashmap::DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
+        >,
     ) -> Result<(), DbError> {
         let handle = self.handle.lock().expect("db handle mutex poisoned");
 
         // Truncate the file to 0 bytes — erases existing content.
-        handle.truncate_with_f64(0.0).map_err(|_| DbError::WriteError)?;
+        handle
+            .truncate_with_f64(0.0)
+            .map_err(|_| DbError::WriteError)?;
 
         let mut offset = 0.0;
         let mut buffer = Vec::new();
         let chunk_size = 64 * 1024; // 64KB
 
         let mut write_buffer = |buf: &mut Vec<u8>| -> Result<(), DbError> {
-            if buf.is_empty() { return Ok(()); }
+            if buf.is_empty() {
+                return Ok(());
+            }
             let opts = web_sys::FileSystemReadWriteOptions::new();
             opts.set_at(offset);
-            handle.write_with_u8_array_and_options(buf, &opts).map_err(|_| DbError::WriteError)?;
+            handle
+                .write_with_u8_array_and_options(buf, &opts)
+                .map_err(|_| DbError::WriteError)?;
             offset += buf.len() as f64;
             buf.clear();
             Ok(())
@@ -370,11 +397,16 @@ impl OpfsStorage {
             let col_name = col_ref.key().clone();
             for item_ref in col_ref.value().iter() {
                 if let Ok(value) = rmp_serde::from_slice::<serde_json::Value>(item_ref.value()) {
-                    let entry = LogEntry::new("INSERT".to_string(), col_name.to_string(), item_ref.key().clone(), value);
+                    let entry = LogEntry::new(
+                        "INSERT".to_string(),
+                        col_name.to_string(),
+                        item_ref.key().clone(),
+                        value,
+                    );
                     if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
                         buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
                         buffer.append(&mut encoded);
-                        
+
                         if buffer.len() >= chunk_size {
                             write_buffer(&mut buffer)?;
                         }
@@ -388,11 +420,16 @@ impl OpfsStorage {
             for schema_ref in schemas_map.iter() {
                 let schema_val = schema_ref.value();
                 let schema_json = &schema_val.0;
-                let entry = LogEntry::new("SCHEMA".to_string(), schema_ref.key().to_string(), "".to_string(), schema_json.clone());
+                let entry = LogEntry::new(
+                    "SCHEMA".to_string(),
+                    schema_ref.key().to_string(),
+                    "".to_string(),
+                    schema_json.clone(),
+                );
                 if let Ok(mut encoded) = rmp_serde::to_vec(&entry) {
                     buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
                     buffer.append(&mut encoded);
-                    
+
                     if buffer.len() >= chunk_size {
                         write_buffer(&mut buffer)?;
                     }

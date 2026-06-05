@@ -10,14 +10,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use super::super::StorageBackend;
-use super::log::{write_compacted_log_no_tx, stream_log_entries, read_log_from_disk};
-use super::snapshot::{write_snapshot_from_maps, load_snapshot};
+use super::log::{read_log_from_disk, stream_log_entries, write_compacted_log_no_tx};
+use super::snapshot::{load_snapshot, write_snapshot_from_maps};
 use crate::engine::types::{DbError, LogEntry};
 use dashmap::DashMap;
 use serde_json::Value;
 use std::fs::{File, OpenOptions};
-use std::ops::ControlFlow;
 use std::io::{BufWriter, Write};
+use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex};
 
 /// High-durability synchronous disk writer.
@@ -56,7 +56,10 @@ impl SyncDiskStorage {
             let _ = std::fs::remove_file(&temp_path);
             return Err(DbError::from(e));
         }
-        let new_file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        let new_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
         *w = BufWriter::new(new_file);
         Ok(())
     }
@@ -81,17 +84,22 @@ impl StorageBackend for SyncDiskStorage {
     }
 
     #[cfg(not(feature = "schema"))]
-    fn compact_from_maps(&self, state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>, hook: Option<String>) -> Result<(), DbError> {
+    fn compact_from_maps(
+        &self,
+        state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    ) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
-        } else if let Some(script_path) = hook {
-            self.run_backup_hook(script_path);
         }
         self.swap_log()
     }
 
     #[cfg(feature = "schema")]
-    fn compact_from_maps(&self, state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>, schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>) -> Result<(), DbError> {
+    fn compact_from_maps(
+        &self,
+        state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+        schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
+    ) -> Result<(), DbError> {
         if let Err(e) = write_snapshot_from_maps(&self.path, state, schemas, 0) {
             tracing::warn!("⚠️  Failed to write snapshot during compaction: {}", e);
         }

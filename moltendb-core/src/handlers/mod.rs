@@ -1,4 +1,3 @@
-#[cfg(feature = "schema")]
 pub mod common;
 mod delete;
 pub mod get;
