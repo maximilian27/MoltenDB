@@ -20,17 +20,17 @@
 mod common;
 mod compact;
 mod delete;
-mod insert;
-mod read;
+mod get;
 #[cfg(not(target_arch = "wasm32"))]
 mod recover;
+mod set;
 pub mod ttl;
 mod update;
 pub use common::{InsertParams, UpdateParams};
 pub use compact::compact;
 pub use delete::{delete, delete_collection, delete_filtered, evict_oldest};
-pub use insert::insert;
-pub use read::{get, get_all, get_filtered, scan_top_n};
+pub use get::{get, get_all, get_filtered, scan_top_n};
 #[cfg(not(target_arch = "wasm32"))]
 pub use recover::recover_to;
+pub use set::insert;
 pub use update::update;
