@@ -383,7 +383,7 @@ pub fn evaluate_binary_predicate(
     evaluate_predicate_msgpack(
         msgpack_bytes,
         target_key,
-        "$eq",
+        WhereOperator::Eq.as_str(),
         &Value::String(target_value.to_string()),
     )
     .unwrap_or(false)

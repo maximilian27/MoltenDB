@@ -1,5 +1,6 @@
 use super::delete::constants::{DEFAULT_DELETE_COUNT, DELETE_ALLOWED, MAX_DELETE_COUNT};
 use super::delete::errors::DeleteError;
+use crate::common::payload_fields::PayloadField;
 use crate::engine;
 use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::handlers::delete::responses::DeleteSuccess;
@@ -28,10 +29,15 @@ pub fn process_delete(
         return ValidationError(e.to_string()).into_response();
     }
 
-    let col = payload["collection"].as_str().unwrap_or("default");
+    let col = payload[PayloadField::Collection.as_str()]
+        .as_str()
+        .unwrap_or("default");
 
     // Check for drop: true — this removes the entire collection.
-    if payload["drop"].as_bool().unwrap_or(false) {
+    if payload[PayloadField::Drop.as_str()]
+        .as_bool()
+        .unwrap_or(false)
+    {
         return match db.delete_collection(col) {
             Ok(_) => DeleteSuccess::Dropped.into_response(),
             Err(e) => DeleteError::FailedToDropCollection(e.to_string()).into_response(), // Clean, 1-line exit!

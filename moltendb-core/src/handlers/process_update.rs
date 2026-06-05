@@ -1,4 +1,5 @@
 use super::update::constants::UPDATE_ALLOWED;
+use crate::common::payload_fields::PayloadField;
 use crate::engine;
 use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::handlers::update::errors::UpdateError;
@@ -26,9 +27,14 @@ pub fn process_update(
         return ValidationError(e.to_string()).into_response();
     }
 
-    let col = payload["collection"].as_str().unwrap_or("default");
+    let col = payload[PayloadField::Collection.as_str()]
+        .as_str()
+        .unwrap_or("default");
 
-    if let Some(data_map) = payload.get("data").and_then(|v| v.as_object()) {
+    if let Some(data_map) = payload
+        .get(PayloadField::Data.as_str())
+        .and_then(|v| v.as_object())
+    {
         let mut updated_count = 0;
         for (k, v) in data_map {
             let mut v = v.clone();
