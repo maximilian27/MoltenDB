@@ -1,4 +1,4 @@
-﻿#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_arch = "wasm32"))]
 use crate::engine::storage::StorageBackend;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::engine::types::{DbError, LogEntry};
@@ -35,11 +35,11 @@ pub fn recover_to(
             return ControlFlow::Break(());
         }
         match entry.cmd.as_str() {
-            "TX_BEGIN" => {
+            crate::common::log_commands::LogCommand::IKEY_TX_BEGIN => {
                 current_tx_id = Some(entry.key.clone());
                 current_tx_entries.clear();
             }
-            "TX_COMMIT" => {
+            crate::common::log_commands::LogCommand::IKEY_TX_COMMIT => {
                 if current_tx_id.as_ref() == Some(&entry.key) {
                     for e in current_tx_entries.drain(..) {
                         crate::engine::storage::apply_entry(
@@ -80,7 +80,7 @@ pub fn recover_to(
                 crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
             {
                 entries.push(LogEntry::new(
-                    "INSERT".to_string(),
+                    crate::common::log_commands::LogCommand::IKEY_INSERT.to_string(),
                     col_name.to_string(),
                     item_ref.key().clone(),
                     value,

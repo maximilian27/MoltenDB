@@ -659,15 +659,41 @@ fn skip_msgpack_value(bytes: &[u8], pos: &mut usize) -> Option<()> {
 //   "value"      → tokenized MsgPack value (system field keys as negative FixInt)
 //   "_t"         → u64
 
+use crate::common::log_commands::LogCommand;
 use crate::engine::LogEntry;
 
-/// Serialize a `LogEntry` to MsgPack bytes, tokenizing system field keys in `value`.
+/// Serialize a `LogEntry` to MsgPack bytes, tokenizing system field keys in `value`
+/// and the `cmd` field as a negative FixInt token.
 pub fn log_entry_to_msgpack(entry: &LogEntry) -> Result<Vec<u8>, rmp_serde::encode::Error> {
     let mut buf = Vec::new();
     // 5-element map
     write_map_header(&mut buf, 5);
     write_str(&mut buf, "cmd");
-    write_str(&mut buf, &entry.cmd);
+    // Write cmd as a negative FixInt token if known, otherwise as a plain string.
+    let cmd_token = match entry.cmd.as_str() {
+        LogCommand::INSERT | LogCommand::IKEY_INSERT => LogCommand::TOKEN_INSERT,
+        LogCommand::DELETE | LogCommand::IKEY_DELETE => LogCommand::TOKEN_DELETE,
+        LogCommand::DROP | LogCommand::IKEY_DROP => LogCommand::TOKEN_DROP,
+        LogCommand::INDEX | LogCommand::IKEY_INDEX => LogCommand::TOKEN_INDEX,
+        LogCommand::SCHEMA | LogCommand::IKEY_SCHEMA => LogCommand::TOKEN_SCHEMA,
+        LogCommand::ENC | LogCommand::IKEY_ENC => LogCommand::TOKEN_ENC,
+        LogCommand::TX_BEGIN | LogCommand::IKEY_TX_BEGIN => LogCommand::TOKEN_TX_BEGIN,
+        LogCommand::TX_COMMIT | LogCommand::IKEY_TX_COMMIT => LogCommand::TOKEN_TX_COMMIT,
+        _ => {
+            // Unknown command — write as plain string and return early.
+            write_str(&mut buf, &entry.cmd);
+            write_str(&mut buf, "collection");
+            write_str(&mut buf, &entry.collection);
+            write_str(&mut buf, "key");
+            write_str(&mut buf, &entry.key);
+            write_str(&mut buf, "value");
+            write_value(&mut buf, &entry.value);
+            write_str(&mut buf, "_t");
+            write_number(&mut buf, &serde_json::Number::from(entry._t));
+            return Ok(buf);
+        }
+    };
+    buf.push(cmd_token as u8);
     write_str(&mut buf, "collection");
     write_str(&mut buf, &entry.collection);
     write_str(&mut buf, "key");
@@ -695,7 +721,32 @@ pub fn log_entry_from_msgpack(bytes: &[u8]) -> Option<LogEntry> {
     for _ in 0..map_len {
         let field_name = read_string(bytes, &mut pos)?;
         match field_name.as_str() {
-            "cmd" => cmd = read_string(bytes, &mut pos)?,
+            "cmd" => {
+                // cmd may be stored as a negative FixInt token or a plain string.
+                if pos < bytes.len() && (bytes[pos] as i8) < 0 {
+                    let token = bytes[pos] as i8;
+                    pos += 1;
+                    cmd = match token {
+                        LogCommand::TOKEN_INSERT => LogCommand::IKEY_INSERT.to_string(),
+                        LogCommand::TOKEN_DELETE => LogCommand::IKEY_DELETE.to_string(),
+                        LogCommand::TOKEN_DROP => LogCommand::IKEY_DROP.to_string(),
+                        LogCommand::TOKEN_INDEX => LogCommand::IKEY_INDEX.to_string(),
+                        LogCommand::TOKEN_SCHEMA => LogCommand::IKEY_SCHEMA.to_string(),
+                        LogCommand::TOKEN_ENC => LogCommand::IKEY_ENC.to_string(),
+                        LogCommand::TOKEN_TX_BEGIN => LogCommand::IKEY_TX_BEGIN.to_string(),
+                        LogCommand::TOKEN_TX_COMMIT => LogCommand::IKEY_TX_COMMIT.to_string(),
+                        _ => format!("{}", token),
+                    };
+                } else {
+                    cmd = read_string(bytes, &mut pos)?;
+                    // Normalise legacy plain-string cmds to IKEY form.
+                    if let Some(ikey) = LogCommand::from_ikey(&cmd) {
+                        cmd = ikey.to_string();
+                    } else {
+                        cmd = LogCommand::to_ikey(&cmd).to_string();
+                    }
+                }
+            }
             "collection" => collection = read_string(bytes, &mut pos)?,
             "key" => key = read_string(bytes, &mut pos)?,
             "value" => value = read_value(bytes, &mut pos)?,

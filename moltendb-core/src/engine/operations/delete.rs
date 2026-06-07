@@ -24,7 +24,7 @@ pub fn delete(
     // TX_BEGIN: Start a transaction for the batch delete.
     let tx_id = uuid::Uuid::new_v4().to_string();
     storage.write_entry(&LogEntry::new(
-        "TX_BEGIN".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_BEGIN.to_string(),
         collection.into(),
         tx_id.clone(),
         Value::Null,
@@ -37,7 +37,7 @@ pub fn delete(
 
             // Write a DELETE entry for this key.
             let entry = LogEntry::new(
-                "DELETE".to_string(),
+                crate::common::log_commands::LogCommand::IKEY_DELETE.to_string(),
                 collection.to_string(),
                 key.clone(),
                 json!(null),
@@ -58,7 +58,7 @@ pub fn delete(
 
     // TX_COMMIT: Successfully complete the transaction.
     storage.write_entry(&LogEntry::new(
-        "TX_COMMIT".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_COMMIT.to_string(),
         collection.into(),
         tx_id,
         Value::Null,
@@ -202,7 +202,7 @@ pub fn delete_collection(
     // TX_BEGIN: Start a transaction for the drop.
     let tx_id = uuid::Uuid::new_v4().to_string();
     storage.write_entry(&LogEntry::new(
-        "TX_BEGIN".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_BEGIN.to_string(),
         collection.into(),
         tx_id.clone(),
         Value::Null,
@@ -212,7 +212,7 @@ pub fn delete_collection(
     state.remove(collection);
     // Step 2: Persist the DROP command.
     let entry = LogEntry::new(
-        "DROP".to_string(),
+        crate::common::log_commands::LogCommand::IKEY_DROP.to_string(),
         collection.to_string(),
         "*".to_string(),
         json!(null),
@@ -221,7 +221,7 @@ pub fn delete_collection(
 
     // TX_COMMIT: Successfully complete the transaction.
     storage.write_entry(&LogEntry::new(
-        "TX_COMMIT".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_COMMIT.to_string(),
         collection.into(),
         tx_id,
         Value::Null,

@@ -1,15 +1,15 @@
-﻿// ─── wasm.rs ─────────────────────────────────────────────────────────────────
-// This file implements OpfsStorage — the browser-side StorageBackend that
+// ��� wasm.rs �����������������������������������������������������������������
+// This file implements OpfsStorage � the browser-side StorageBackend that
 // persists the database log using the Origin Private File System (OPFS) API.
 //
 // What is OPFS?
 //   OPFS is a browser API that gives web apps access to a private, sandboxed
 //   file system. Unlike localStorage or IndexedDB, OPFS provides real file
 //   handles with byte-level read/write access. The files are:
-//     • Private to the origin (website) — other sites cannot access them.
-//     • Persistent across page reloads and browser restarts.
-//     • Not visible in the browser's normal file picker.
-//     • Accessible only from a Web Worker (not the main thread) via the
+//     � Private to the origin (website) � other sites cannot access them.
+//     � Persistent across page reloads and browser restarts.
+//     � Not visible in the browser's normal file picker.
+//     � Accessible only from a Web Worker (not the main thread) via the
 //       synchronous FileSystemSyncAccessHandle API.
 //
 // Why a Web Worker?
@@ -19,13 +19,13 @@
 //   MoltenDB always runs its database in a Web Worker for this reason.
 //
 // Log format:
-//   Same as the native disk backend — one JSON-encoded LogEntry per line.
+//   Same as the native disk backend � one JSON-encoded LogEntry per line.
 //   The file is read in full on startup and replayed into the in-memory state.
 //
 // Compaction:
 //   The OPFS file is truncated to 0 bytes and rewritten with only the current
-//   state (no temp file swap needed — OPFS handles are exclusive to the worker).
-// ─────────────────────────────────────────────────────────────────────────────
+//   state (no temp file swap needed � OPFS handles are exclusive to the worker).
+// �����������������������������������������������������������������������������
 
 // Only compile this file when targeting WebAssembly.
 #![cfg(target_arch = "wasm32")]
@@ -35,11 +35,11 @@ use super::StorageBackend;
 // Our internal data types.
 use crate::engine::types::{DbError, LogEntry};
 // Mutex gives us exclusive access to the file handle across async boundaries.
-// In WASM, "threads" are Web Workers — Mutex prevents two workers from writing
+// In WASM, "threads" are Web Workers � Mutex prevents two workers from writing
 // to the same file simultaneously (though in practice we only have one worker).
 use std::ops::ControlFlow;
 use std::sync::Mutex;
-// wasm_bindgen bridges Rust and JavaScript — it generates the JS glue code
+// wasm_bindgen bridges Rust and JavaScript � it generates the JS glue code
 // that lets Rust call browser APIs and vice versa.
 use wasm_bindgen::prelude::*;
 // JsCast provides the unchecked_into() method for casting JS values to
@@ -57,7 +57,7 @@ use wasm_bindgen_futures::JsFuture;
 pub struct OpfsStorage {
     /// The synchronous OPFS file handle.
     /// FileSystemSyncAccessHandle provides read(), write(), flush(), truncate(),
-    /// and getSize() — all synchronous (blocking) operations safe to call from
+    /// and getSize() � all synchronous (blocking) operations safe to call from
     /// a Web Worker.
     handle: Mutex<web_sys::FileSystemSyncAccessHandle>,
     /// If true, call flush() after every write.
@@ -74,7 +74,7 @@ impl OpfsStorage {
     ///   2. Get (or create) a file handle for `db_name`
     ///   3. Open a synchronous access handle on that file
     pub async fn new(db_name: &str, sync_mode: bool) -> Result<Self, DbError> {
-        // Get the WorkerGlobalScope — this confirms we're running in a Web Worker.
+        // Get the WorkerGlobalScope � this confirms we're running in a Web Worker.
         // If we're on the main thread, dyn_into() fails and we return WriteError.
         let global = js_sys::global()
             .dyn_into::<web_sys::WorkerGlobalScope>()
@@ -92,7 +92,7 @@ impl OpfsStorage {
             .await
             .map_err(|_| DbError::WriteError)?;
         // Cast the resolved JsValue to the concrete FileSystemDirectoryHandle type.
-        // unchecked_into() skips the runtime type check — we trust the browser API.
+        // unchecked_into() skips the runtime type check � we trust the browser API.
         let root_dir: web_sys::FileSystemDirectoryHandle = root_val.unchecked_into();
 
         // Step 2: Get (or create) a file handle for our database file.
@@ -108,7 +108,7 @@ impl OpfsStorage {
 
         // Step 3: Open a synchronous access handle on the file.
         // This gives us a FileSystemSyncAccessHandle with blocking read/write.
-        // Only one sync handle can be open per file at a time — if another
+        // Only one sync handle can be open per file at a time � if another
         // worker already has it open, this will fail (hence the Drop impl below
         // which closes the handle when OpfsStorage is dropped).
         let sync_val: JsValue = JsFuture::from(file_handle.create_sync_access_handle())
@@ -134,7 +134,7 @@ impl Drop for OpfsStorage {
         // holding it), we still try to close the handle.
         if let Ok(handle) = self.handle.lock() {
             // close() releases the exclusive lock on the OPFS file.
-            // We ignore the result — there's nothing useful we can do if it fails
+            // We ignore the result � there's nothing useful we can do if it fails
             // during cleanup.
             let _ = handle.close();
         }
@@ -237,7 +237,7 @@ impl StorageBackend for OpfsStorage {
         // Acquire the Mutex to get exclusive access to the file handle.
         let handle = self.handle.lock().expect("db handle mutex poisoned");
 
-        // Get the current file size — this is where we'll write (append).
+        // Get the current file size � this is where we'll write (append).
         // get_size() returns the file size in bytes as a float (JS number).
         let size = handle.get_size().map_err(|_| DbError::WriteError)? as f64;
 
@@ -309,7 +309,7 @@ impl OpfsStorage {
     ) -> Result<(), DbError> {
         let handle = self.handle.lock().expect("db handle mutex poisoned");
 
-        // Truncate the file to 0 bytes — erases existing content.
+        // Truncate the file to 0 bytes � erases existing content.
         handle
             .truncate_with_f64(0.0)
             .map_err(|_| DbError::WriteError)?;
@@ -340,7 +340,7 @@ impl OpfsStorage {
                     crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
                 {
                     let entry = LogEntry::new(
-                        "INSERT".to_string(),
+                        crate::common::log_commands::LogCommand::IKEY_INSERT.to_string(),
                         col_name.to_string(),
                         item_ref.key().clone(),
                         value,
@@ -376,7 +376,7 @@ impl OpfsStorage {
     ) -> Result<(), DbError> {
         let handle = self.handle.lock().expect("db handle mutex poisoned");
 
-        // Truncate the file to 0 bytes — erases existing content.
+        // Truncate the file to 0 bytes � erases existing content.
         handle
             .truncate_with_f64(0.0)
             .map_err(|_| DbError::WriteError)?;
@@ -407,7 +407,7 @@ impl OpfsStorage {
                     crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
                 {
                     let entry = LogEntry::new(
-                        "INSERT".to_string(),
+                        crate::common::log_commands::LogCommand::IKEY_INSERT.to_string(),
                         col_name.to_string(),
                         item_ref.key().clone(),
                         value,
@@ -432,7 +432,7 @@ impl OpfsStorage {
                 let schema_val = schema_ref.value();
                 let schema_json = &schema_val.0;
                 let entry = LogEntry::new(
-                    "SCHEMA".to_string(),
+                    crate::common::log_commands::LogCommand::IKEY_SCHEMA.to_string(),
                     schema_ref.key().to_string(),
                     "".to_string(),
                     schema_json.clone(),

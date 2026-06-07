@@ -34,7 +34,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
     // TX_BEGIN: Start a transaction for the update.
     let tx_id = uuid::Uuid::new_v4().to_string();
     storage.write_entry(&LogEntry::new(
-        "TX_BEGIN".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_BEGIN.to_string(),
         collection.into(),
         tx_id.clone(),
         Value::Null,
@@ -102,7 +102,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
 
         // Step 6: Write the full updated document as an INSERT entry.
         let entry = LogEntry::new(
-            "INSERT".to_string(),
+            crate::common::log_commands::LogCommand::IKEY_INSERT.to_string(),
             collection.to_string(),
             key.to_string(),
             new_value.clone(),
@@ -111,7 +111,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
 
         // TX_COMMIT: Successfully complete the transaction.
         storage.write_entry(&LogEntry::new(
-            "TX_COMMIT".into(),
+            crate::common::log_commands::LogCommand::IKEY_TX_COMMIT.to_string(),
             collection.into(),
             tx_id,
             Value::Null,
@@ -136,7 +136,7 @@ pub fn update(params: UpdateParams<'_>) -> Result<bool, DbError> {
     // Alternatively, we could have started the transaction only after finding the document.
     // Given the current architecture, starting it at the top is safer for consistency.
     storage.write_entry(&LogEntry::new(
-        "TX_COMMIT".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_COMMIT.to_string(),
         collection.into(),
         tx_id,
         Value::Null,

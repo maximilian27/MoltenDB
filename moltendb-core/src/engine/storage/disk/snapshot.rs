@@ -56,7 +56,7 @@ pub fn write_snapshot_from_maps(
             if let Some(value) =
                 crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
             {
-                write_entry_to_gz(&mut gz, "INSERT", col_ref.key(), item_ref.key(), &value)?;
+                write_entry_to_gz(&mut gz, crate::common::log_commands::LogCommand::IKEY_INSERT, col_ref.key(), item_ref.key(), &value)?;
             }
         }
     }
@@ -83,7 +83,7 @@ pub fn write_snapshot_from_maps(
             if let Some(value) =
                 crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
             {
-                write_entry_to_gz(&mut gz, "INSERT", col_ref.key(), item_ref.key(), &value)?;
+                write_entry_to_gz(&mut gz, crate::common::log_commands::LogCommand::IKEY_INSERT, col_ref.key(), item_ref.key(), &value)?;
             }
         }
     }
