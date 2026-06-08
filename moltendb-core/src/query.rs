@@ -496,10 +496,10 @@ pub fn project(doc: &Value, fields: &[Value]) -> Value {
 }
 
 // Walks a dot-notation path and returns the value at that location, if it exists.
-pub fn get_nested_value(doc: &Value, parts: &[&str]) -> Option<Value> {
+pub fn get_nested_value<S: AsRef<str>>(doc: &Value, parts: &[S]) -> Option<Value> {
     let mut current = doc;
     for part in parts {
-        if let Some(v) = current.get(*part) {
+        if let Some(v) = current.get(part.as_ref()) {
             current = v;
         } else {
             return None;
