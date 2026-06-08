@@ -1,4 +1,4 @@
-// ─── storage/mod.rs ──────────────────────────────────────────────────────────
+﻿// ─── storage/mod.rs ──────────────────────────────────────────────────────────
 // This is the root module for all storage backends. It does three things:
 //
 //   1. Declares and conditionally exposes the concrete backend modules
@@ -114,9 +114,10 @@ pub trait StorageBackend: Send + Sync {
                 .value()
                 .iter()
                 .filter_map(move |item_ref| {
-                    let value: Value = rmp_serde::from_slice(item_ref.value()).ok()?;
+                    let value: Value =
+                        crate::common::system_field_tokens::msgpack_to_value(item_ref.value())?;
                     Some(LogEntry::new(
-                        "INSERT".to_string(),
+                        crate::common::log_commands::LogCommand::IKEY_INSERT.to_string(),
                         col_name.to_string(),
                         item_ref.key().clone(),
                         value,
@@ -129,7 +130,7 @@ pub trait StorageBackend: Send + Sync {
             .map(|schema_ref| {
                 let (schema_json, _) = &**schema_ref.value();
                 LogEntry::new(
-                    "SCHEMA".to_string(),
+                    crate::common::log_commands::LogCommand::IKEY_SCHEMA.to_string(),
                     schema_ref.key().to_string(),
                     "".to_string(),
                     schema_json.clone(),
@@ -221,11 +222,11 @@ pub fn stream_into_state(
 
     storage.stream_log_into(&mut |entry, _length| {
         match entry.cmd.as_str() {
-            "TX_BEGIN" => {
+            crate::common::log_commands::LogCommand::IKEY_TX_BEGIN => {
                 active_tx = Some(entry.key.clone());
                 tx_buffer.clear();
             }
-            "TX_COMMIT" => {
+            crate::common::log_commands::LogCommand::IKEY_TX_COMMIT => {
                 if active_tx.as_ref() == Some(&entry.key) {
                     for e in tx_buffer.drain(..) {
                         apply_entry(
@@ -278,20 +279,20 @@ pub fn apply_entry(
     ttl_expiry: &DashMap<String, u64>,
 ) {
     match entry.cmd.as_str() {
-        "INSERT" => {
+        crate::common::log_commands::LogCommand::IKEY_INSERT => {
             let col = state
                 .entry(Arc::from(entry.collection.as_str()))
                 .or_default();
-            if let Ok(bytes) = rmp_serde::to_vec(&entry.value) {
+            if let Ok(bytes) = crate::common::system_field_tokens::value_to_msgpack(&entry.value) {
                 col.insert(entry.key.clone(), bytes.into_boxed_slice());
             }
         }
-        "DELETE" => {
+        crate::common::log_commands::LogCommand::IKEY_DELETE => {
             if let Some(col) = state.get(entry.collection.as_str()) {
                 col.remove(&entry.key);
             }
         }
-        "DROP" => {
+        crate::common::log_commands::LogCommand::IKEY_DROP => {
             state.remove(entry.collection.as_str());
             ttl_expiry.remove(entry.collection.as_str());
         }
@@ -310,11 +311,11 @@ pub fn apply_entry(
                 }
             }
         }
-        "INDEX" => {
+        crate::common::log_commands::LogCommand::IKEY_INDEX => {
             // Legacy INDEX entries are silently ignored — indexing has been removed.
         }
         #[cfg(feature = "schema")]
-        "SCHEMA" => {
+        crate::common::log_commands::LogCommand::IKEY_SCHEMA => {
             // Re-compile and register the schema during replay.
             if let Ok(validator) = jsonschema::validator_for(&entry.value) {
                 schemas.insert(

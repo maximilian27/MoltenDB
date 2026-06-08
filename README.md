@@ -15,8 +15,13 @@ Same query engine. Same storage semantics. Different execution backends.
 [![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen?style=flat-square)](./docs/api-reference.md#testing)
 [![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](CHANGELOG.md)
 
-**🚀 Release Candidate (v1.0.0-rc)** — The API is stable. Suitable for early production use. Minor breaking changes may
-occur before the final 1.0.0 release.
+> [!WARNING]
+> **After careful consideration, a breaking change was introduced in v1.0.0-rc10. Versions starting with `v1.0.0-rc10`
+are not backwards compatible with previous versions.**
+> Review the [changelog](../CHANGELOG.md) before upgrading.
+
+**🚀 Release Candidate (v1.0.0-rc)** — The API is stable. Suitable for early production use. No other breaking changes
+are expected to occur before the final 1.0.0 release.
 
 > 🌐 **Building for the browser?** The WebAssembly engine, TypeScript client, and React/Angular adapters live in
 > the [moltendb-web](https://github.com/moltendb/moltendb-web) repository **(MIT Licensed)**.
@@ -178,7 +183,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc9"
+moltendb-core = "1.0.0-rc10"
 ```
 
 ### Download Pre-built Binaries

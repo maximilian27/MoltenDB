@@ -16,7 +16,8 @@ Zero knowledge of HTTP, auth, JWT, or WASM bindings.
 </div>
 
 > [!WARNING]
-> **Versions starting with `v1.0.0-rc1` are not backwards compatible with previous versions.**
+> **After careful consideration, a breaking change was introduced in v1.0.0-rc10. Versions starting with `v1.0.0-rc10`
+are not backwards compatible with previous versions.**
 > Review the [changelog](../CHANGELOG.md) before upgrading.
 
 ---
@@ -70,7 +71,7 @@ when the crate is used as a dependency of `moltendb-wasm`.
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc9"
+moltendb-core = "1.0.0-rc10"
 ```
 
 ### Minimal example
@@ -219,7 +220,8 @@ handlers::process_set::process_set( & db, & payload, 10 * 1024 * 1024, 1000);
 
 > **Design decision — sliding-window expiry:** The TTL clock resets on every insert, not on every access. This makes
 > MoltenDB TTL ideal for **ephemeral caches, analytics buffers, and temporary working sets**. It is **not** designed for
-> per-document expiry (OTPs, session tokens) — for those, store your own `expires_at` field and use `delete_filtered` with
+> per-document expiry (OTPs, session tokens) — for those, store your own `expires_at` field and use `delete_filtered`
+> with
 > a time-based predicate.
 
 **Eviction:**

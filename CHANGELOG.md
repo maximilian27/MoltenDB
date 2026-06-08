@@ -1,4 +1,54 @@
-﻿# [1.0.0-rc9] (Jun 5, 2026)
+﻿# [1.0.0-rc10] (Jun 5, 2026)
+
+### ⚠️ Breaking Changes — Older log/WAL files are NOT compatible with this release
+
+* **System field tokenization in storage and WAL** — system field keys (`_v`, `_key`, `_seq`, `_createdAt`,
+  `_modifiedAt`, `_expiresAt`) are no longer stored as strings on disk or in the Write-Ahead Log. They are now encoded
+  as single-byte negative MsgPack FixInt tokens (`-1` through `-6`), reducing per-document storage overhead by ~30 bytes
+  and enabling O(1) key matching during scans. Databases written by older versions of MoltenDB will fail to load — the
+  storage format version has been bumped (`MOLTSNG4`) and any file with the old magic bytes will be rejected with an
+  explicit `Unsupported database file version` error.
+* **Log command tokenization in WAL** — WAL command strings (`INSERT`, `DELETE`, `DROP`, `INDEX`, `SCHEMA`, `ENC`,
+  `TX_BEGIN`, `TX_COMMIT`) are now stored as single-byte negative MsgPack FixInt tokens (`-10` through `-17`) instead of
+  plain strings. Tokens `-1` through `-9` are reserved for future system fields. Log files written by older versions
+  cannot be replayed by this release.
+* **In-memory representation changed** — system field keys and log command identifiers are now kept as compact integer
+  string keys (e.g. `"-1"`, `"-10"`) in RAM throughout the engine. Expansion to human-readable names (`_createdAt`,
+  `INSERT`, etc.) only occurs at the public API boundary when returning results to clients. This reduces heap
+  allocations per document and improves cache locality.
+
+### Performance
+
+* **~30 bytes saved per document on disk and in WAL** — all six system field keys are now 1 byte each instead of 3–12
+  bytes.
+* **O(1) system field key matching during raw MsgPack scans** — key comparison is now a single `if byte < 0` branch
+  instead of a string comparison loop.
+* **Reduced heap allocations per document in RAM** — system field keys and log command strings are stored as short
+  integer strings rather than full human-readable `String` allocations.
+* **Raw MsgPack WHERE evaluation (`evaluate_where_msgpack`)** — the full WHERE clause (including `$or`/`$and`
+  recursion) is now evaluated directly on raw MsgPack bytes without deserialising the document first.
+  `scan_top_n` and the `get_filtered` fallback path both use this new evaluator, so non-matching documents are
+  never decoded to `serde_json::Value`. For selective queries on large collections (e.g. 1 in 1000 docs matching)
+  this reduces deserialisations from O(N) to O(matching docs).
+* **Single-pass multi-field extractor (`find_msgpack_values_multi`)** — extracts N requested field values from a
+  document in one left-to-right byte sweep, grouping nested paths by their common prefix so each sub-map is
+  entered only once. Used by the analytics engine to achieve ~3× speedup over N sequential single-field scans.
+* **`scan_top_n` predicate now operates on raw bytes** — the predicate closure signature changed from
+  `Fn(&Value) -> bool` to `Fn(&str, &[u8]) -> bool`; deserialization only occurs after the predicate passes,
+  eliminating unnecessary allocations for documents that are filtered out.
+
+### Bug Fixes
+
+* **`keys` field rejected by GET handler** — `PayloadField::Keys` was missing from `GET_ALLOWED`, causing any
+  request that included a `keys` array to be rejected with a 400 `Unknown property` error.
+* **`_v` (version) not returned in GET responses** — `shape_doc` was reading system field keys using internal
+  `IKEY_*` token strings, but documents arriving at that point had already been expanded to public names by
+  `expand_system_fields`. The version field was silently dropped. Fixed by using the public name constants
+  (`SystemFields::VERSION` etc.) throughout `shape_doc`.
+
+---
+
+# [1.0.0-rc9] (Jun 5, 2026)
 
 ### Refactor
 

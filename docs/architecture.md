@@ -46,7 +46,7 @@ tree.
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "1.0.0-rc9"
+moltendb-core = "1.0.0-rc10"
 ```
 
 ```rust
@@ -75,7 +75,8 @@ let user = db.get("users", "u1");
 
 > [!TIP]
 > **When using the standalone `moltendb-server` binary, all flags and environment variables are available.** The server
-> acts as a thin wrapper that combines the engine, authentication, and networking layers. The distinction only matters if
+> acts as a thin wrapper that combines the engine, authentication, and networking layers. The distinction only matters
+> if
 > you are using `moltendb-core` as a library in your own Rust project.
 
 ### 3. How to configure `moltendb-core` directly
