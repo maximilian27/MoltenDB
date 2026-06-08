@@ -1,5 +1,4 @@
 ﻿use crate::common::payload_fields::PayloadField;
-use crate::common::system_field_tokens::msgpack_to_value;
 use crate::handlers::get::types::FetchParams;
 use crate::{engine, query};
 use serde_json::Value;
@@ -102,11 +101,8 @@ pub fn fetch_documents(
                                         .unwrap_or(false)
                                 });
                             }
-                            let doc: Value = match msgpack_to_value(doc_bytes) {
-                                Some(d) => d,
-                                None => return false,
-                            };
-                            query::evaluate_where(&doc, &clause).unwrap_or(false)
+                            // Full where clause (e.g. $or/$and) — still evaluated on raw bytes.
+                            query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
                         },
                         0,
                         Some(params.offset + params.count_limit),

@@ -199,7 +199,7 @@ impl Db {
     pub fn scan_top_n(
         &self,
         collection: &str,
-        predicate: impl Fn(&Value) -> bool + Sync,
+        predicate: impl Fn(&str, &[u8]) -> bool + Sync,
         cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
         cap: usize,
     ) -> Vec<(String, Value)> {
@@ -426,6 +426,29 @@ impl Db {
             &*self.storage,
         )?;
         Ok(())
+    }
+
+    /// Calls `f` with a reference to the raw document map for a collection.
+    /// Each value is the raw tokenized MsgPack bytes stored in RAM — no clone, no deserialization.
+    /// Suitable for zero-copy analytics pipelines that scan bytes directly.
+    pub fn with_raw_collection<F, R>(&self, collection: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&DashMap<String, Box<[u8]>>) -> R,
+    {
+        self.state.get(collection).map(|r| f(r.value()))
+    }
+
+    /// Returns the number of documents in a collection.
+    /// (kept for backwards compat; prefer with_raw_collection for zero-copy access)
+    pub fn raw_collection(&self, collection: &str) -> Option<Arc<DashMap<String, Box<[u8]>>>> {
+        self.state
+            .get(collection)
+            .map(|r| Arc::new(r.value().clone()))
+    }
+
+    /// Returns the number of documents in a collection.
+    pub fn raw_chunk_count(&self, collection: &str) -> usize {
+        self.state.get(collection).map(|m| m.len()).unwrap_or(0)
     }
 
     /// Recover the database state to a specific point in time or sequence number.

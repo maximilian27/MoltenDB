@@ -119,7 +119,7 @@ fn skip_value(bytes: &mut &[u8]) {
 /// Handles both regular string keys and single-byte negative FixInt token keys
 /// (0xe0..=0xff) used for system fields in v1 storage format. Token keys are
 /// skipped (they are system fields, never user-queryable by path).
-fn find_msgpack_value<'a>(mut bytes: &'a [u8], path_parts: &[&str]) -> Option<&'a [u8]> {
+pub fn find_msgpack_value<'a>(mut bytes: &'a [u8], path_parts: &[&str]) -> Option<&'a [u8]> {
     for (depth, &segment) in path_parts.iter().enumerate() {
         let map_len = read_msgpack_map_len(&mut bytes)?;
         let mut found = false;
@@ -150,6 +150,117 @@ fn find_msgpack_value<'a>(mut bytes: &'a [u8], path_parts: &[&str]) -> Option<&'
         }
     }
     None
+}
+
+/// Single-pass multi-field extractor.
+///
+/// Walks the top-level MsgPack map **once**, collecting the raw value slices for
+/// every requested path. Nested paths (e.g. `["specs", "cpu", "ghz"]`) are
+/// grouped by their first segment so the sub-map is entered only once per
+/// unique prefix, not once per requested field.
+///
+/// `paths` is a slice of pre-split path segments (same format as `find_msgpack_value`).
+/// `out` must be the same length as `paths`; each slot receives `Some(&[u8])` if
+/// the field was found, `None` otherwise.
+pub fn find_msgpack_values_multi<'a>(
+    doc: &'a [u8],
+    paths: &[&[&str]],
+    out: &mut [Option<&'a [u8]>],
+) {
+    find_msgpack_values_multi_inner(doc, paths, out, 0);
+}
+
+/// Recursive inner implementation — `depth` is the current path segment index.
+fn find_msgpack_values_multi_inner<'a>(
+    doc: &'a [u8],
+    paths: &[&[&str]],
+    out: &mut [Option<&'a [u8]>],
+    depth: usize,
+) {
+    let mut bytes = doc;
+    let map_len = match read_msgpack_map_len(&mut bytes) {
+        Some(l) => l,
+        None => return,
+    };
+
+    // Track which path indices still need to be resolved at this depth.
+    // We stop early once all are found.
+    let mut remaining = paths.len();
+    for i in 0..paths.len() {
+        if out[i].is_some() || paths[i].len() <= depth {
+            remaining -= 1;
+        }
+    }
+
+    for _ in 0..map_len {
+        if remaining == 0 {
+            break;
+        }
+
+        // Skip negative FixInt token keys (system fields).
+        let key_byte = match bytes.first() {
+            Some(&b) => b,
+            None => return,
+        };
+        if key_byte >= 0xe0 {
+            bytes = &bytes[1..];
+            skip_value(&mut bytes);
+            continue;
+        }
+
+        let key = match read_msgpack_str(&mut bytes) {
+            Some(k) => k,
+            None => return,
+        };
+
+        // The value starts here — remember the position before consuming it.
+        let value_start = bytes;
+
+        // Collect all path indices whose segment at `depth` matches this key.
+        let mut leaf_indices: Vec<usize> = Vec::new();
+        let mut nested_indices: Vec<usize> = Vec::new();
+
+        for (i, path) in paths.iter().enumerate() {
+            if out[i].is_some() || path.len() <= depth {
+                continue;
+            }
+            if path[depth] == key {
+                if depth == path.len() - 1 {
+                    leaf_indices.push(i);
+                } else {
+                    nested_indices.push(i);
+                }
+            }
+        }
+
+        if leaf_indices.is_empty() && nested_indices.is_empty() {
+            skip_value(&mut bytes);
+            continue;
+        }
+
+        // Assign leaf results — all point to the same value slice.
+        for i in &leaf_indices {
+            out[*i] = Some(value_start);
+            remaining -= 1;
+        }
+
+        if !nested_indices.is_empty() {
+            // Build a sub-slice of paths and out slots for the nested call.
+            let sub_paths: Vec<&[&str]> = nested_indices.iter().map(|&i| paths[i]).collect();
+            let mut sub_out: Vec<Option<&'a [u8]>> = vec![None; nested_indices.len()];
+            find_msgpack_values_multi_inner(value_start, &sub_paths, &mut sub_out, depth + 1);
+            for (j, &i) in nested_indices.iter().enumerate() {
+                if sub_out[j].is_some() {
+                    out[i] = sub_out[j];
+                    remaining -= 1;
+                }
+            }
+            // Advance past the nested value.
+            skip_value(&mut bytes);
+        } else {
+            skip_value(&mut bytes);
+        }
+    }
 }
 
 /// Read the string value at the current position in `bytes` (case-insensitive
@@ -269,7 +380,7 @@ pub fn evaluate_predicate_msgpack(
     }
 }
 
-fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
+pub fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
     let mut b = bytes;
     let marker = read_marker(&mut b).ok()?;
     match marker {
@@ -449,6 +560,63 @@ fn remove_nested_value(target: &mut Map<String, Value>, parts: &[&str]) {
             target.remove(key);
         }
     }
+}
+
+// ─── WHERE evaluation on raw MsgPack bytes ───────────────────────────────────
+
+/// Evaluate a full WHERE clause directly against raw MsgPack bytes.
+///
+/// Handles all operators including `$or`/`$and` recursively. For leaf predicates
+/// it delegates to `evaluate_predicate_msgpack` — zero deserialization for the
+/// common case. Returns `None` only when a predicate cannot be evaluated on raw
+/// bytes (should not happen with well-formed queries); callers should treat
+/// `None` as `false` (exclude the document).
+pub fn evaluate_where_msgpack(doc_bytes: &[u8], query: &Value) -> Option<bool> {
+    let query_obj = query.as_object()?;
+
+    for (key, condition) in query_obj {
+        if key == WhereOperator::Or.as_str() {
+            let sub_queries = condition.as_array()?;
+            let any_passed = sub_queries
+                .iter()
+                .any(|sub| evaluate_where_msgpack(doc_bytes, sub).unwrap_or(false));
+            if !any_passed {
+                return Some(false);
+            }
+            continue;
+        }
+
+        if key == WhereOperator::And.as_str() {
+            let sub_queries = condition.as_array()?;
+            for sub in sub_queries {
+                if !evaluate_where_msgpack(doc_bytes, sub).unwrap_or(false) {
+                    return Some(false);
+                }
+            }
+            continue;
+        }
+
+        // Field-level predicate.
+        if !condition.is_object() {
+            // Implicit equality: { "field": scalar }
+            let result =
+                evaluate_predicate_msgpack(doc_bytes, key, "$eq", condition).unwrap_or(false);
+            if !result {
+                return Some(false);
+            }
+            continue;
+        }
+
+        let cond_obj = condition.as_object()?;
+        for (op, op_val) in cond_obj {
+            let result = evaluate_predicate_msgpack(doc_bytes, key, op, op_val).unwrap_or(false);
+            if !result {
+                return Some(false);
+            }
+        }
+    }
+
+    Some(true)
 }
 
 // ─── WHERE evaluation (on decoded Value) ─────────────────────────────────────

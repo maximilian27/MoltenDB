@@ -205,10 +205,10 @@ fn run_fast_sort_path(
 
     let top = db.scan_top_n(
         params.col_name,
-        move |doc| {
+        move |_key, doc_bytes| {
             where_clause_owned
                 .as_ref()
-                .map(|c| query::evaluate_where(doc, c).unwrap_or(false))
+                .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
                 .unwrap_or(true)
         },
         cmp,

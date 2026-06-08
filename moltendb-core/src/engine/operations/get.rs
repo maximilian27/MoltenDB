@@ -333,7 +333,7 @@ pub fn scan_top_n<P, C>(
     cap: usize,
 ) -> Vec<(String, Value)>
 where
-    P: Fn(&Value) -> bool + Sync,
+    P: Fn(&str, &[u8]) -> bool + Sync,
     C: Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
 {
     use std::cmp::Ordering;
@@ -400,10 +400,10 @@ where
             .fold(
                 || BinaryHeap::<HeapItem<C>>::with_capacity(cap + 1),
                 |mut heap, entry| {
-                    if let Some(v) = decode(entry.value())
-                        && predicate(&v)
-                    {
-                        push_into(&mut heap, entry.key().clone(), v, &cmp);
+                    if predicate(entry.key(), entry.value()) {
+                        if let Some(v) = decode(entry.value()) {
+                            push_into(&mut heap, entry.key().clone(), v, &cmp);
+                        }
                     }
                     heap
                 },
@@ -428,13 +428,13 @@ where
         let mut heap: BinaryHeap<HeapItem<C>> = BinaryHeap::with_capacity(cap + 1);
         if let Some(col) = state.get(collection) {
             for entry in col.iter() {
+                if !predicate(entry.key(), entry.value()) {
+                    continue;
+                }
                 let v = match decode(entry.value()) {
                     Some(v) => v,
                     None => continue,
                 };
-                if !predicate(&v) {
-                    continue;
-                }
                 let candidate = HeapItem {
                     key: entry.key().clone(),
                     value: v,
