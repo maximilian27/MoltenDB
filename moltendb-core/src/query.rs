@@ -572,6 +572,16 @@ fn remove_nested_value(target: &mut Map<String, Value>, parts: &[&str]) {
 /// bytes (should not happen with well-formed queries); callers should treat
 /// `None` as `false` (exclude the document).
 pub fn evaluate_where_msgpack(doc_bytes: &[u8], query: &Value) -> Option<bool> {
+    // Handle array format: [{...}, {...}] — implicit AND
+    if let Some(arr) = query.as_array() {
+        for item in arr {
+            if !evaluate_where_msgpack(doc_bytes, item).unwrap_or(false) {
+                return Some(false);
+            }
+        }
+        return Some(true);
+    }
+
     let query_obj = query.as_object()?;
 
     for (key, condition) in query_obj {
@@ -625,6 +635,16 @@ pub fn evaluate_where_msgpack(doc_bytes: &[u8], query: &Value) -> Option<bool> {
 // Supports $or/$and logical operators and field-level operators: $eq, $ne, $gt, $gte, $lt, $lte,
 // $contains/$ct, $in/$oneOf, $nin/$notIn. String comparisons are case-insensitive.
 pub fn evaluate_where(doc: &Value, query: &Value) -> Result<bool, DbError> {
+    // Handle array format: [{...}, {...}] — implicit AND
+    if let Some(arr) = query.as_array() {
+        for item in arr {
+            if !evaluate_where(doc, item)? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+
     let query_obj = match query.as_object() {
         Some(obj) => obj,
         None => return Ok(true),

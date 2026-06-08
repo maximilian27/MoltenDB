@@ -25,6 +25,26 @@
   instead of a string comparison loop.
 * **Reduced heap allocations per document in RAM** — system field keys and log command strings are stored as short
   integer strings rather than full human-readable `String` allocations.
+* **Raw MsgPack WHERE evaluation (`evaluate_where_msgpack`)** — the full WHERE clause (including `$or`/`$and`
+  recursion) is now evaluated directly on raw MsgPack bytes without deserialising the document first.
+  `scan_top_n` and the `get_filtered` fallback path both use this new evaluator, so non-matching documents are
+  never decoded to `serde_json::Value`. For selective queries on large collections (e.g. 1 in 1000 docs matching)
+  this reduces deserialisations from O(N) to O(matching docs).
+* **Single-pass multi-field extractor (`find_msgpack_values_multi`)** — extracts N requested field values from a
+  document in one left-to-right byte sweep, grouping nested paths by their common prefix so each sub-map is
+  entered only once. Used by the analytics engine to achieve ~3× speedup over N sequential single-field scans.
+* **`scan_top_n` predicate now operates on raw bytes** — the predicate closure signature changed from
+  `Fn(&Value) -> bool` to `Fn(&str, &[u8]) -> bool`; deserialization only occurs after the predicate passes,
+  eliminating unnecessary allocations for documents that are filtered out.
+
+### Bug Fixes
+
+* **`keys` field rejected by GET handler** — `PayloadField::Keys` was missing from `GET_ALLOWED`, causing any
+  request that included a `keys` array to be rejected with a 400 `Unknown property` error.
+* **`_v` (version) not returned in GET responses** — `shape_doc` was reading system field keys using internal
+  `IKEY_*` token strings, but documents arriving at that point had already been expanded to public names by
+  `expand_system_fields`. The version field was silently dropped. Fixed by using the public name constants
+  (`SystemFields::VERSION` etc.) throughout `shape_doc`.
 
 ---
 

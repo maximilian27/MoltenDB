@@ -149,6 +149,19 @@ pub fn fetch_documents(
 ///   - Any operator is not in the fast-path set (e.g. unknown/custom operators)
 ///       � `[]`  (requires full deserialization)
 fn extract_fast_predicates(clause: &Value) -> Vec<(String, String, Value)> {
+    // Handle array format: [{...}, {...}] — implicit AND; flatten all elements.
+    if let Some(arr) = clause.as_array() {
+        let mut result = Vec::new();
+        for item in arr {
+            let preds = extract_fast_predicates(item);
+            if preds.is_empty() {
+                return Vec::new();
+            }
+            result.extend(preds);
+        }
+        return result;
+    }
+
     let obj = match clause.as_object() {
         Some(o) => o,
         None => return Vec::new(),
