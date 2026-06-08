@@ -44,10 +44,10 @@ impl EncryptedStorage {
         key
     }
 
-    // Serialises the entry to MessagePack, encrypts it, and wraps the result in an "ENC" log entry.
+    // Serialises the entry to MessagePack, encrypts it, and wraps the result in an crate::common::log_commands::LogCommand::IKEY_ENC log entry.
     // Layout: [24-byte nonce][ciphertext], base64-encoded as the entry value.
     fn encrypt_entry(&self, entry: &LogEntry) -> Result<LogEntry, DbError> {
-        let plain_bytes = rmp_serde::to_vec(entry).map_err(|_| DbError::WriteError)?;
+        let plain_bytes = crate::common::system_field_tokens::log_entry_to_msgpack(entry).map_err(|_| DbError::WriteError)?;
 
         let mut nonce_bytes = [0u8; 24];
         OsRng.fill_bytes(&mut nonce_bytes);
@@ -62,7 +62,7 @@ impl EncryptedStorage {
         payload.extend(cipher_text);
 
         Ok(LogEntry::new(
-            "ENC".to_string(),
+            crate::common::log_commands::LogCommand::IKEY_ENC.to_string(),
             "_".to_string(),
             "_".to_string(),
             serde_json::json!(STANDARD.encode(&payload)),
@@ -86,7 +86,7 @@ impl EncryptedStorage {
             .decrypt(nonce, cipher_text)
             .map_err(|_| DbError::WriteError)?;
 
-        rmp_serde::from_slice::<LogEntry>(&plain_bytes).map_err(|_| DbError::WriteError)
+        crate::common::system_field_tokens::log_entry_from_msgpack(&plain_bytes).ok_or(DbError::WriteError)
     }
 }
 
@@ -120,7 +120,7 @@ impl StorageBackend for EncryptedStorage {
         let raw_entries = self.inner.read_log()?;
         let mut decrypted = Vec::with_capacity(raw_entries.len());
         for entry in raw_entries {
-            if entry.cmd == "ENC" {
+            if entry.cmd == crate::common::log_commands::LogCommand::IKEY_ENC {
                 match self.decrypt_entry(&entry) {
                     Ok(real_entry) => decrypted.push(real_entry),
                     Err(e) => tracing::warn!("⚠️  Skipping undecryptable log entry: {}", e),
@@ -142,7 +142,7 @@ impl StorageBackend for EncryptedStorage {
     ) -> Result<u64, DbError> {
         let mut count = 0u64;
         self.inner.stream_log_into(&mut |enc_entry, length| {
-            if enc_entry.cmd == "ENC" {
+            if enc_entry.cmd == crate::common::log_commands::LogCommand::IKEY_ENC {
                 match self.decrypt_entry(&enc_entry) {
                     Ok(real_entry) => {
                         let res = f(real_entry, length);
@@ -170,3 +170,4 @@ impl StorageBackend for EncryptedStorage {
         Ok(count)
     }
 }
+

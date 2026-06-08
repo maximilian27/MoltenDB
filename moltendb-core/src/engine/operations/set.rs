@@ -5,6 +5,7 @@
 use super::super::types::{DbError, LogEntry};
 use super::common::now_unix_ms;
 use super::types::InsertParams;
+use crate::common::system_field_tokens::{msgpack_to_value, value_to_msgpack};
 use crate::common::system_fields::SystemFields;
 use dashmap::DashMap;
 use serde_json::{json, Value};
@@ -41,7 +42,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
     // TX_BEGIN: Start a transaction.
     let tx_id = uuid::Uuid::new_v4().to_string();
     storage.write_entry(&LogEntry::new(
-        "TX_BEGIN".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_BEGIN.to_string(),
         collection.into(),
         tx_id.clone(),
         Value::Null,
@@ -60,56 +61,49 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         };
 
         // Decode existing MsgPack bytes → Value for versioning check.
-        let existing_val: Option<Value> = col
-            .get(&key)
-            .and_then(|b| rmp_serde::from_slice::<Value>(&b).ok());
+        let existing_val: Option<Value> = col.get(&key).and_then(|b| msgpack_to_value(&b));
 
         if let Some(existing) = existing_val {
             let existing_v = existing
-                .get(SystemFields::VERSION)
+                .get(SystemFields::IKEY_VERSION)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            // Preserve original _createdAt; support compact (_ca) and legacy (_createdAt) field names.
+            // Preserve original _createdAt.
             let orig_created: Value = existing
-                .get(SystemFields::STORE_CREATED_AT)
-                .or_else(|| existing.get("_createdAt"))
+                .get(SystemFields::IKEY_CREATED_AT)
                 .and_then(|v| v.as_u64())
                 .map(|ms| serde_json::json!(ms))
                 .unwrap_or_else(|| serde_json::json!(now_ms));
             // Preserve the original _seq so overwritten docs keep their insertion order.
             let orig_seq = existing
-                .get(SystemFields::STORE_SEQ)
-                .or_else(|| existing.get("_seq"))
+                .get(SystemFields::IKEY_SEQ)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(seq);
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
-                obj.insert(SystemFields::VERSION.to_string(), serde_json::json!(new_v));
-                obj.insert(SystemFields::STORE_CREATED_AT.to_string(), orig_created);
+                obj.insert(SystemFields::IKEY_VERSION.to_string(), serde_json::json!(new_v));
+                obj.insert(SystemFields::IKEY_CREATED_AT.to_string(), orig_created);
                 obj.insert(
-                    SystemFields::STORE_MODIFIED_AT.to_string(),
+                    SystemFields::IKEY_MODIFIED_AT.to_string(),
                     serde_json::json!(now_ms),
                 );
-                obj.insert(
-                    SystemFields::STORE_SEQ.to_string(),
-                    serde_json::json!(orig_seq),
-                );
+                obj.insert(SystemFields::IKEY_SEQ.to_string(), serde_json::json!(orig_seq));
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &value)?;
         } else if let Some(obj) = value.as_object_mut() {
-            obj.insert(SystemFields::VERSION.to_string(), serde_json::json!(1u64));
+            obj.insert(SystemFields::IKEY_VERSION.to_string(), serde_json::json!(1u64));
             obj.insert(
-                SystemFields::STORE_CREATED_AT.to_string(),
+                SystemFields::IKEY_CREATED_AT.to_string(),
                 serde_json::json!(now_ms),
             );
             obj.insert(
-                SystemFields::STORE_MODIFIED_AT.to_string(),
+                SystemFields::IKEY_MODIFIED_AT.to_string(),
                 serde_json::json!(now_ms),
             );
-            obj.insert(SystemFields::STORE_SEQ.to_string(), serde_json::json!(seq));
+            obj.insert(SystemFields::IKEY_SEQ.to_string(), serde_json::json!(seq));
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]
@@ -117,13 +111,13 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         }
 
         // Step 1: Insert/overwrite in memory as MsgPack-encoded bytes.
-        if let Ok(bytes) = rmp_serde::to_vec(&value) {
+        if let Ok(bytes) = value_to_msgpack(&value) {
             col.insert(key.clone(), bytes.into_boxed_slice());
         }
 
         // Step 2: Persist within the transaction.
         let entry = LogEntry::new(
-            "INSERT".to_string(),
+            crate::common::log_commands::LogCommand::IKEY_INSERT.to_string(),
             collection.to_string(),
             key.clone(),
             value.clone(),
@@ -132,13 +126,10 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
         // Step 4: Broadcast a lean change event to WebSocket subscribers.
         let new_v = value
-            .get(SystemFields::VERSION)
+            .get(SystemFields::IKEY_VERSION)
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        let expires_at_ms = value
-            .get(SystemFields::EXPIRES_AT)
-            .or_else(|| value.get(SystemFields::STORE_EXPIRES_AT))
-            .and_then(|v| v.as_u64());
+        let expires_at_ms = value.get(SystemFields::IKEY_EXPIRES_AT).and_then(|v| v.as_u64());
         let mut event = json!({
             "event": "change",
             "collection": collection,
@@ -153,7 +144,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
 
     // TX_COMMIT: Successfully complete the transaction.
     storage.write_entry(&LogEntry::new(
-        "TX_COMMIT".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_COMMIT.to_string(),
         collection.into(),
         tx_id,
         Value::Null,

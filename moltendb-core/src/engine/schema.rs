@@ -21,7 +21,7 @@ pub fn set_schema(
     // TX_BEGIN: Start a transaction for the schema update.
     let tx_id = uuid::Uuid::new_v4().to_string();
     storage.write_entry(&LogEntry::new(
-        "TX_BEGIN".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_BEGIN.to_string(),
         collection.into(),
         tx_id.clone(),
         Value::Null,
@@ -37,7 +37,7 @@ pub fn set_schema(
 
     // TX_COMMIT: Successfully complete the transaction.
     storage.write_entry(&LogEntry::new(
-        "TX_COMMIT".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_COMMIT.to_string(),
         collection.into(),
         tx_id,
         Value::Null,

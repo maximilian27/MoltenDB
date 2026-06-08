@@ -2,12 +2,12 @@
 // Delete operations: delete, delete_filtered, delete_collection.
 // ─────────────────────────────────────────────────────────────────────────────
 
+use super::super::types::{DbError, LogEntry};
+use super::super::StorageBackend;
+use crate::common::system_fields::SystemFields;
 use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use super::super::StorageBackend;
-use super::super::types::{DbError, LogEntry};
-
 
 /// Delete one or more documents from a collection in a single call.
 ///
@@ -24,7 +24,7 @@ pub fn delete(
     // TX_BEGIN: Start a transaction for the batch delete.
     let tx_id = uuid::Uuid::new_v4().to_string();
     storage.write_entry(&LogEntry::new(
-        "TX_BEGIN".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_BEGIN.to_string(),
         collection.into(),
         tx_id.clone(),
         Value::Null,
@@ -37,7 +37,7 @@ pub fn delete(
 
             // Write a DELETE entry for this key.
             let entry = LogEntry::new(
-                "DELETE".to_string(),
+                crate::common::log_commands::LogCommand::IKEY_DELETE.to_string(),
                 collection.to_string(),
                 key.clone(),
                 json!(null),
@@ -58,7 +58,7 @@ pub fn delete(
 
     // TX_COMMIT: Successfully complete the transaction.
     storage.write_entry(&LogEntry::new(
-        "TX_COMMIT".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_COMMIT.to_string(),
         collection.into(),
         tx_id,
         Value::Null,
@@ -83,7 +83,7 @@ pub fn delete_filtered(
 ) -> Result<usize, DbError> {
     #[inline]
     fn decode(bytes: &[u8]) -> Option<Value> {
-        rmp_serde::from_slice(bytes).ok()
+        crate::common::system_field_tokens::msgpack_to_value(bytes)
     }
 
     let keys: Vec<String> = {
@@ -95,7 +95,11 @@ pub fn delete_filtered(
                     .par_iter()
                     .filter_map(|entry| {
                         let v = decode(entry.value())?;
-                        if predicate(&v) { Some(entry.key().clone()) } else { None }
+                        if predicate(&v) {
+                            Some(entry.key().clone())
+                        } else {
+                            None
+                        }
                     })
                     .collect(),
                 None => return Ok(0),
@@ -108,7 +112,11 @@ pub fn delete_filtered(
                     .iter()
                     .filter_map(|entry| {
                         let v = decode(entry.value())?;
-                        if predicate(&v) { Some(entry.key().clone()) } else { None }
+                        if predicate(&v) {
+                            Some(entry.key().clone())
+                        } else {
+                            None
+                        }
                     })
                     .collect(),
                 None => return Ok(0),
@@ -144,7 +152,7 @@ pub fn evict_oldest(
 ) {
     #[inline]
     fn decode(bytes: &[u8]) -> Option<Value> {
-        rmp_serde::from_slice(bytes).ok()
+        crate::common::system_field_tokens::msgpack_to_value(bytes)
     }
 
     let col = match state.get(collection) {
@@ -157,7 +165,10 @@ pub fn evict_oldest(
         .iter()
         .filter_map(|e| {
             let v = decode(e.value())?;
-            let seq = v.get("_seq").and_then(|s| s.as_u64()).unwrap_or(u64::MAX);
+            let seq = v
+                .get(SystemFields::IKEY_SEQ)
+                .and_then(|s| s.as_u64())
+                .unwrap_or(u64::MAX);
             Some((seq, e.key().clone()))
         })
         .collect();
@@ -191,7 +202,7 @@ pub fn delete_collection(
     // TX_BEGIN: Start a transaction for the drop.
     let tx_id = uuid::Uuid::new_v4().to_string();
     storage.write_entry(&LogEntry::new(
-        "TX_BEGIN".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_BEGIN.to_string(),
         collection.into(),
         tx_id.clone(),
         Value::Null,
@@ -201,7 +212,7 @@ pub fn delete_collection(
     state.remove(collection);
     // Step 2: Persist the DROP command.
     let entry = LogEntry::new(
-        "DROP".to_string(),
+        crate::common::log_commands::LogCommand::IKEY_DROP.to_string(),
         collection.to_string(),
         "*".to_string(),
         json!(null),
@@ -210,7 +221,7 @@ pub fn delete_collection(
 
     // TX_COMMIT: Successfully complete the transaction.
     storage.write_entry(&LogEntry::new(
-        "TX_COMMIT".into(),
+        crate::common::log_commands::LogCommand::IKEY_TX_COMMIT.to_string(),
         collection.into(),
         tx_id,
         Value::Null,

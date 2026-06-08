@@ -18,16 +18,16 @@
 
 use crate::engine::types::{DbError, LogEntry};
 use dashmap::DashMap;
-use std::sync::Arc;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use serde_json::Value;
 use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Read, Write};
 use std::ops::ControlFlow;
 use std::path::Path;
-use std::io::{BufWriter, Read, Write};
+use std::sync::Arc;
 use web_time::SystemTime;
-use flate2::Compression;
-use flate2::write::GzEncoder;
-use flate2::read::GzDecoder;
 
 /// Returns the path of the binary snapshot file for a given log file path.
 /// Convention: `my_database.log` → `my_database.log.snapshot.bin`
@@ -44,14 +44,19 @@ pub fn write_snapshot_from_maps(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     seq: u64,
 ) -> Result<(), DbError> {
-    let count: u64 = state.iter().map(|col_ref| col_ref.value().len() as u64).sum();
+    let count: u64 = state
+        .iter()
+        .map(|col_ref| col_ref.value().len() as u64)
+        .sum();
     let path = snapshot_path(log_path);
     let tmp = format!("{}.tmp", path);
     let mut gz = open_snapshot_gz(&tmp, count, seq)?;
     for col_ref in state.iter() {
         for item_ref in col_ref.value().iter() {
-            if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
-                write_entry_to_gz(&mut gz, "INSERT", col_ref.key(), item_ref.key(), &value)?;
+            if let Some(value) =
+                crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
+            {
+                write_entry_to_gz(&mut gz, crate::common::log_commands::LogCommand::IKEY_INSERT, col_ref.key(), item_ref.key(), &value)?;
             }
         }
     }
@@ -65,15 +70,20 @@ pub fn write_snapshot_from_maps(
     schemas: &DashMap<String, std::sync::Arc<(Value, jsonschema::Validator)>>,
     seq: u64,
 ) -> Result<(), DbError> {
-    let doc_count: u64 = state.iter().map(|col_ref| col_ref.value().len() as u64).sum();
+    let doc_count: u64 = state
+        .iter()
+        .map(|col_ref| col_ref.value().len() as u64)
+        .sum();
     let count = doc_count + schemas.len() as u64;
     let path = snapshot_path(log_path);
     let tmp = format!("{}.tmp", path);
     let mut gz = open_snapshot_gz(&tmp, count, seq)?;
     for col_ref in state.iter() {
         for item_ref in col_ref.value().iter() {
-            if let Ok(value) = rmp_serde::from_slice::<Value>(item_ref.value()) {
-                write_entry_to_gz(&mut gz, "INSERT", col_ref.key(), item_ref.key(), &value)?;
+            if let Some(value) =
+                crate::common::system_field_tokens::msgpack_to_value(item_ref.value())
+            {
+                write_entry_to_gz(&mut gz, crate::common::log_commands::LogCommand::IKEY_INSERT, col_ref.key(), item_ref.key(), &value)?;
             }
         }
     }
@@ -84,39 +94,72 @@ pub fn write_snapshot_from_maps(
     finish_snapshot_gz(gz, &tmp, &path)
 }
 
-fn open_snapshot_gz(tmp: &str, count: u64, seq: u64) -> Result<GzEncoder<BufWriter<File>>, DbError> {
-    let file = OpenOptions::new().create(true).write(true).truncate(true).open(tmp)?;
+fn open_snapshot_gz(
+    tmp: &str,
+    count: u64,
+    seq: u64,
+) -> Result<GzEncoder<BufWriter<File>>, DbError> {
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(tmp)?;
     let mut raw = BufWriter::new(file);
-    raw.write_all(b"MOLTSNG3")?;
+    raw.write_all(b"MOLTSNG4")?;
     raw.write_all(&seq.to_le_bytes())?;
     raw.write_all(&count.to_le_bytes())?;
     raw.flush()?;
     let file_inner = raw.into_inner().map_err(|_| DbError::WriteError)?;
-    Ok(GzEncoder::new(BufWriter::new(file_inner), Compression::default()))
+    Ok(GzEncoder::new(
+        BufWriter::new(file_inner),
+        Compression::default(),
+    ))
 }
 
-fn write_entry_to_gz(gz: &mut GzEncoder<BufWriter<File>>, cmd: &str, collection: &str, key: &str, value: &Value) -> Result<(), DbError> {
-    let entry = LogEntry { cmd: cmd.to_string(), collection: collection.to_string(), key: key.to_string(), value: value.clone(), _t: 0 };
-    let encoded = rmp_serde::to_vec(&entry).map_err(|_| DbError::WriteError)?;
+fn write_entry_to_gz(
+    gz: &mut GzEncoder<BufWriter<File>>,
+    cmd: &str,
+    collection: &str,
+    key: &str,
+    value: &Value,
+) -> Result<(), DbError> {
+    let entry = LogEntry {
+        cmd: cmd.to_string(),
+        collection: collection.to_string(),
+        key: key.to_string(),
+        value: value.clone(),
+        _t: 0,
+    };
+    let encoded = crate::common::system_field_tokens::log_entry_to_msgpack(&entry)
+        .map_err(|_| DbError::WriteError)?;
     gz.write_all(&(encoded.len() as u32).to_le_bytes())?;
     gz.write_all(&encoded)?;
     Ok(())
 }
 
-fn finish_snapshot_gz(gz: GzEncoder<BufWriter<File>>, tmp: &str, path: &str) -> Result<(), DbError> {
+fn finish_snapshot_gz(
+    gz: GzEncoder<BufWriter<File>>,
+    tmp: &str,
+    path: &str,
+) -> Result<(), DbError> {
     gz.finish().map_err(|_| DbError::WriteError)?;
     if Path::new(path).exists() {
         let log_dir = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
         let backup_dir = log_dir.join("backup");
         std::fs::create_dir_all(&backup_dir)?;
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let filename = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("snapshot.bin");
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let filename = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("snapshot.bin");
         let _ = std::fs::rename(path, backup_dir.join(format!("{}.{}.bak", filename, now)));
     }
     std::fs::rename(tmp, path)?;
     Ok(())
 }
-
 
 /// Try to load a previously written binary snapshot, streaming entries directly
 /// into the provided callback `f` without collecting them into an intermediate Vec.
@@ -142,7 +185,13 @@ pub fn load_snapshot(
     let mut magic = [0u8; 8];
     file.read_exact(&mut magic).ok()?;
 
-    if &magic != b"MOLTSNG3" {
+    if &magic == b"MOLTSNG3" {
+        tracing::error!(
+            "❌ Unsupported database file version (pre-v1 format detected). This build requires v1 storage format. Please delete the snapshot and WAL files to start fresh."
+        );
+        return None;
+    }
+    if &magic != b"MOLTSNG4" {
         tracing::warn!("❌ Invalid or unsupported snapshot format — falling back to log replay");
         return None;
     }
@@ -180,19 +229,25 @@ pub fn load_snapshot(
 
         // If the entry is all zeros or empty, it might be a partial write.
         if len > 0 && buf.iter().all(|&b| b == 0) {
-            tracing::error!("❌ Entry {} data is all zeros. Snapshot might be corrupt.", i);
+            tracing::error!(
+                "❌ Entry {} data is all zeros. Snapshot might be corrupt.",
+                i
+            );
             return None;
         }
 
         // If deserialization fails (e.g. schema changed), return None so we
         // fall back to full log replay instead of crashing.
-        let entry: LogEntry = match rmp_serde::from_slice(&buf) {
-            Ok(e) => e,
-            Err(err) => {
+        let entry: LogEntry = match crate::common::system_field_tokens::log_entry_from_msgpack(&buf)
+        {
+            Some(e) => e,
+            None => {
                 let sample = if buf.len() > 20 { &buf[..20] } else { &buf };
                 tracing::error!(
-                    "❌ Failed to deserialize entry {} (len {}): {}. Sample: {:?}. Falling back to log replay.",
-                    i, len, err, sample
+                    "❌ Failed to deserialize entry {} (len {}). Sample: {:?}. Falling back to log replay.",
+                    i,
+                    len,
+                    sample
                 );
                 return None;
             }

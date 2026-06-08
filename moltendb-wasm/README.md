@@ -16,21 +16,29 @@ Exposes the `moltendb-core` engine to JavaScript. Zero server-side code.
 </div>
 
 > [!WARNING]
-> **Versions starting with `v1.0.0-rc1` are not backwards compatible with previous versions.**
-> We are actively working on improving performance and stability. Please review the changelog before upgrading.
+> **After careful consideration, a breaking change was introduced in v1.0.0-rc10. Versions starting with `v1.0.0-rc10`
+are not backwards compatible with previous versions.**
+> Review the [changelog](../CHANGELOG.md) before upgrading.
 
 ---
 
 ## What is this crate?
 
-`moltendb-wasm` is the thin browser adapter that wraps `moltendb-core` and exposes it to JavaScript via `wasm-bindgen`. It contains:
+`moltendb-wasm` is the thin browser adapter that wraps `moltendb-core` and exposes it to JavaScript via `wasm-bindgen`.
+It contains:
 
-- **`WorkerDb`** — the WASM-exported struct used by the JavaScript Web Worker. Wraps the core `Db` engine and routes `postMessage` actions (`get`, `set`, `update`, `delete`, `snapshot`, `compact`) to the correct handler.
-- **OPFS storage** — data is persisted in the browser's Origin Private File System. Each unique `db_name` is a separate OPFS file. Data survives page reloads and browser restarts.
-- **PITR Ready** — Every write in the browser includes an engine-level `_t` timestamp. Browser logs can be exported and recovered to any millisecond using the native MoltenDB CLI.
-- **Manual compaction** — trigger via the `compact` action to rewrite the OPFS log to contain only live documents, discarding tombstones and superseded entries.
-- **Real-time events** — `subscribe(callback)` taps into the same change-feed channel used by the server's WebSocket endpoint. The callback receives a JSON string for every mutation (`change`, `delete`, `drop`).
-- **`wasm-bindgen` glue** — `wasm-pack build moltendb-wasm --target web` generates `moltendb_core.js`, `moltendb_core_bg.wasm`, and TypeScript declarations, ready to be bundled into `@moltendb-web/core`.
+- **`WorkerDb`** — the WASM-exported struct used by the JavaScript Web Worker. Wraps the core `Db` engine and routes
+  `postMessage` actions (`get`, `set`, `update`, `delete`, `snapshot`, `compact`) to the correct handler.
+- **OPFS storage** — data is persisted in the browser's Origin Private File System. Each unique `db_name` is a separate
+  OPFS file. Data survives page reloads and browser restarts.
+- **PITR Ready** — Every write in the browser includes an engine-level `_t` timestamp. Browser logs can be exported and
+  recovered to any millisecond using the native MoltenDB CLI.
+- **Manual compaction** — trigger via the `compact` action to rewrite the OPFS log to contain only live documents,
+  discarding tombstones and superseded entries.
+- **Real-time events** — `subscribe(callback)` taps into the same change-feed channel used by the server's WebSocket
+  endpoint. The callback receives a JSON string for every mutation (`change`, `delete`, `drop`).
+- **`wasm-bindgen` glue** — `wasm-pack build moltendb-wasm --target web` generates `moltendb_core.js`,
+  `moltendb_core_bg.wasm`, and TypeScript declarations, ready to be bundled into `@moltendb-web/core`.
 
 ---
 
@@ -42,9 +50,12 @@ name = "moltendb_core"   # keeps generated filenames identical to the previous b
 crate-type = ["cdylib", "rlib"]
 ```
 
-The `[lib] name` override means `wasm-pack` emits `moltendb_core.js` and `moltendb_core_bg.wasm` — matching the filenames expected by `@moltendb-web/core` with zero changes to the web repo.
+The `[lib] name` override means `wasm-pack` emits `moltendb_core.js` and `moltendb_core_bg.wasm` — matching the
+filenames expected by `@moltendb-web/core` with zero changes to the web repo.
 
-The `rlib` target is included so crates.io accepts the package (crates.io requires at least one non-`cdylib` target). All WASM-specific code is gated behind `#![cfg(target_arch = "wasm32")]` so the `rlib` build on native targets is a no-op.
+The `rlib` target is included so crates.io accepts the package (crates.io requires at least one non-`cdylib` target).
+All WASM-specific code is gated behind `#![cfg(target_arch = "wasm32")]` so the `rlib` build on native targets is a
+no-op.
 
 ---
 
@@ -71,7 +82,7 @@ wasm-pack build moltendb-wasm --target web
 ### Initialisation (inside a Web Worker)
 
 ```ts
-import init, { WorkerDb } from './wasm/moltendb_core.js';
+import init, {WorkerDb} from './wasm/moltendb_core.js';
 
 // 1. Load the WASM binary
 await init();
@@ -92,18 +103,19 @@ db.subscribe((eventStr) => {
   // event.collection → collection name
   // event.key        → document key
   // event.new_v      → version number (null on delete/drop)
-  self.postMessage({ type: 'event', ...event });
+  self.postMessage({type: 'event', ...event});
 });
 ```
 
 > **Why `WorkerDb.create()` and not `new WorkerDb()`?**  
-> Async constructors with `#[wasm_bindgen(constructor)]` produce invalid TypeScript bindings and are deprecated in `wasm-bindgen`. The named static factory `create()` is the correct pattern for async WASM initialisation.
+> Async constructors with `#[wasm_bindgen(constructor)]` produce invalid TypeScript bindings and are deprecated in
+`wasm-bindgen`. The named static factory `create()` is the correct pattern for async WASM initialisation.
 
 ### Handling messages
 
 ```ts
 // Route a postMessage from the main thread to the correct handler
-const result = db.handle_message({ action: 'get', collection: 'users', keys: 'u1' });
+const result = db.handle_message({action: 'get', collection: 'users', keys: 'u1'});
 
 // Supported actions (identical to the HTTP server endpoints):
 // 'get'      → query documents
@@ -115,13 +127,14 @@ const result = db.handle_message({ action: 'get', collection: 'users', keys: 'u1
 
 ### Analytics
 
-> ⚠️ **The analytics API is currently under development and not ready for production use.** The interface and behaviour may change without notice.
+> ⚠️ **The analytics API is currently under development and not ready for production use.** The interface and behaviour
+> may change without notice.
 
 ```ts
 const resultStr = db.analytics(JSON.stringify({
   collection: 'events',
-  metric: { type: 'COUNT' },
-  where: { event_type: 'button_click' }
+  metric: {type: 'COUNT'},
+  where: {event_type: 'button_click'}
 }));
 // Returns a JSON string: { "result": 42, "metadata": { ... } }
 ```
@@ -135,15 +148,18 @@ The generated `moltendb_core.d.ts` declares `WorkerDb` with the static factory:
 ```ts
 export class WorkerDb {
   static create(
-    dbName: string,
-    encryption_key?: string,
-    write_mode?: string,
-    max_body_size?: number,
-    max_keys_per_request?: number,
-    in_memory?: boolean
+      dbName: string,
+      encryption_key?: string,
+      write_mode?: string,
+      max_body_size?: number,
+      max_keys_per_request?: number,
+      in_memory?: boolean
   ): Promise<WorkerDb>;
+
   handle_message(msg: { action: string; [key: string]: unknown }): unknown;
+
   subscribe(callback: (eventStr: string) => void): void;
+
   /** ⚠️ Under development — not ready for production use */
   analytics(queryJson: string): string;
 }
@@ -155,7 +171,9 @@ export default function init(wasmUrl?: string | URL): Promise<void>;
 
 ## Compaction
 
-Compaction is **manual-only** — there is no automatic threshold. Call the `compact` action to rewrite the OPFS log to contain only the current live state, removing superseded INSERT entries and DELETE tombstones. This shrinks the file and speeds up future startup replay. Compaction errors are logged to the browser console but never propagated.
+Compaction is **manual-only** — there is no automatic threshold. Call the `compact` action to rewrite the OPFS log to
+contain only the current live state, removing superseded INSERT entries and DELETE tombstones. This shrinks the file and
+speeds up future startup replay. Compaction errors are logged to the browser console but never propagated.
 
 ---
 

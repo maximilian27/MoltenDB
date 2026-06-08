@@ -93,7 +93,7 @@ pub fn fetch_documents(
                             }
                             // Fast path: evaluate all conditions directly on MsgPack bytes.
                             // This covers single-op, multi-op on same field
-                            // (e.g. $gte + $lte), and multi-field predicates —
+                            // (e.g. $gte + $lte), and multi-field predicates �
                             // all without full rmp_serde deserialization.
                             if !fast_preds.is_empty() {
                                 return fast_preds.iter().all(|(field, op, val)| {
@@ -101,11 +101,8 @@ pub fn fetch_documents(
                                         .unwrap_or(false)
                                 });
                             }
-                            let doc: Value = match rmp_serde::from_slice(doc_bytes) {
-                                Ok(d) => d,
-                                Err(_) => return false,
-                            };
-                            query::evaluate_where(&doc, &clause).unwrap_or(false)
+                            // Full where clause (e.g. $or/$and) — still evaluated on raw bytes.
+                            query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
                         },
                         0,
                         Some(params.offset + params.count_limit),
@@ -135,23 +132,36 @@ pub fn fetch_documents(
 /// Returns a **non-empty** Vec when every condition in the clause is
 /// fast-path compatible. Returns an **empty** Vec (fall back to full
 /// deserialization) when:
-///   - Any top-level key starts with `$` (logical operators: `$or`, `$and`, …)
+///   - Any top-level key starts with `$` (logical operators: `$or`, `$and`, �)
 ///   - Any operator is not in the fast-path set (e.g. unknown/custom operators)
 ///   - The clause is not a plain JSON object
 ///
 /// Examples:
 ///   `{ "brand": "Apple" }`
-///       → `[("brand", "$eq", "Apple")]`
+///       � `[("brand", "$eq", "Apple")]`
 ///
 ///   `{ "price": { "$gte": 1500, "$lte": 2500 } }`
-///       → `[("price", "$gte", 1500), ("price", "$lte", 2500)]`
+///       � `[("price", "$gte", 1500), ("price", "$lte", 2500)]`
 ///
 ///   `{ "in_stock": true, "price": { "$lt": 1000 } }`
-///       → `[("in_stock", "$eq", true), ("price", "$lt", 1000)]`
+///       � `[("in_stock", "$eq", true), ("price", "$lt", 1000)]`
 ///
 ///   - Any operator is not in the fast-path set (e.g. unknown/custom operators)
-///       → `[]`  (requires full deserialization)
+///       � `[]`  (requires full deserialization)
 fn extract_fast_predicates(clause: &Value) -> Vec<(String, String, Value)> {
+    // Handle array format: [{...}, {...}] — implicit AND; flatten all elements.
+    if let Some(arr) = clause.as_array() {
+        let mut result = Vec::new();
+        for item in arr {
+            let preds = extract_fast_predicates(item);
+            if preds.is_empty() {
+                return Vec::new();
+            }
+            result.extend(preds);
+        }
+        return result;
+    }
+
     let obj = match clause.as_object() {
         Some(o) => o,
         None => return Vec::new(),
@@ -160,7 +170,7 @@ fn extract_fast_predicates(clause: &Value) -> Vec<(String, String, Value)> {
     let mut result = Vec::new();
 
     for (field, condition) in obj {
-        // Logical operators ($or, $and, $not, …) require full deserialization.
+        // Logical operators ($or, $and, $not, �) require full deserialization.
         if field.starts_with('$') {
             return Vec::new();
         }
@@ -170,17 +180,17 @@ fn extract_fast_predicates(clause: &Value) -> Vec<(String, String, Value)> {
             Value::String(_) | Value::Number(_) | Value::Bool(_) => {
                 result.push((field.clone(), "$eq".to_string(), condition.clone()));
             }
-            // Explicit operator(s): { "field": { "$op": value, … } }
+            // Explicit operator(s): { "field": { "$op": value, � } }
             Value::Object(op_obj) => {
                 for (op, op_val) in op_obj {
                     if !is_fast_path_op(op) {
-                        // Unsupported operator — bail out entirely.
+                        // Unsupported operator � bail out entirely.
                         return Vec::new();
                     }
                     result.push((field.clone(), op.clone(), op_val.clone()));
                 }
             }
-            // Null, Array, or nested object — not directly comparable; fall back.
+            // Null, Array, or nested object � not directly comparable; fall back.
             _ => return Vec::new(),
         }
     }

@@ -42,6 +42,7 @@ pub use storage::{EncryptedStorage, StorageBackend};
 // Re-export LogEntry so it can be used by tests and other crates.
 pub use types::{DbError, LogEntry};
 
+use crate::common::system_field_tokens::expand_system_fields;
 use dashmap::DashMap;
 use serde_json::Value;
 #[allow(unused_imports)]
@@ -142,6 +143,9 @@ impl Db {
     /// Missing keys are silently skipped. Pass a single key to retrieve one document.
     pub fn get(&self, collection: &str, keys: Vec<String>) -> HashMap<String, Value> {
         operations::get(&self.state, &self.storage, collection, keys)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
     }
 
     /// Retrieve all documents in a collection.
@@ -152,6 +156,9 @@ impl Db {
         count: Option<usize>,
     ) -> Vec<(String, Value)> {
         operations::get_all(&self.state, &self.storage, collection, offset, count)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
     }
 
     /// Lazily scan a collection, returning only documents that match `predicate`.
@@ -175,6 +182,9 @@ impl Db {
             offset,
             count,
         )
+        .into_iter()
+        .map(|(k, v)| (k, expand_system_fields(v)))
+        .collect()
     }
 
     /// Lazily scan a collection and return the top-`cap` documents according
@@ -189,11 +199,14 @@ impl Db {
     pub fn scan_top_n(
         &self,
         collection: &str,
-        predicate: impl Fn(&Value) -> bool + Sync,
+        predicate: impl Fn(&str, &[u8]) -> bool + Sync,
         cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
         cap: usize,
     ) -> Vec<(String, Value)> {
         operations::scan_top_n(&self.state, &self.storage, collection, predicate, cmp, cap)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
     }
 
     /// Insert or overwrite multiple documents in one call.
@@ -413,6 +426,29 @@ impl Db {
             &*self.storage,
         )?;
         Ok(())
+    }
+
+    /// Calls `f` with a reference to the raw document map for a collection.
+    /// Each value is the raw tokenized MsgPack bytes stored in RAM — no clone, no deserialization.
+    /// Suitable for zero-copy analytics pipelines that scan bytes directly.
+    pub fn with_raw_collection<F, R>(&self, collection: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&DashMap<String, Box<[u8]>>) -> R,
+    {
+        self.state.get(collection).map(|r| f(r.value()))
+    }
+
+    /// Returns the number of documents in a collection.
+    /// (kept for backwards compat; prefer with_raw_collection for zero-copy access)
+    pub fn raw_collection(&self, collection: &str) -> Option<Arc<DashMap<String, Box<[u8]>>>> {
+        self.state
+            .get(collection)
+            .map(|r| Arc::new(r.value().clone()))
+    }
+
+    /// Returns the number of documents in a collection.
+    pub fn raw_chunk_count(&self, collection: &str) -> usize {
+        self.state.get(collection).map(|m| m.len()).unwrap_or(0)
     }
 
     /// Recover the database state to a specific point in time or sequence number.

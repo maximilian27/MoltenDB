@@ -1,6 +1,6 @@
 [package]
 name = "moltendb-auth"
-version = "1.0.0-rc9"
+version = "1.0.0-rc10"
 edition = "2024"
 authors = ["Maximilian Both <admin@moltendb.dev>"]
 description = "MoltenDB authentication — JWT, bcrypt password hashing, Axum auth middleware, UserStore."
