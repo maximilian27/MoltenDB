@@ -968,9 +968,9 @@ Authorization: Bearer {{token}}
 ###
 
 ### Paste the token from Step 1 here:
-@revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZW1wLWNsaWVudCIsImV4cCI6MTc3NzU2ODY4Miwic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6ImZkMWNjNWMzLTgzYTQtNDQzZS04NmU1LWQzZTczNmJmMjViZiJ9.7TvdjVFHO-h1KrtILoBiBA_AMrVGL-b0QvtLncJsbAQ
+@revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZW1wLWNsaWVudCIsImV4cCI6MTc4MTE5MTI1OSwic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6Ijk4YmJhOTE5LTE2MGEtNGI4Yi04OTg0LTdkYmY0NDA0ZmJmOSJ9.w51iF6E791IDtxu3cSNS9U6CWCxTTh02uTEOAanzF84
 ### Paste only the jti UUID from the decoded payload here (NOT the base64 segment):
-@revoke_jti = fd1cc5c3-83a4-443e-86e5-d3e736bf25bf
+@revoke_jti = 98bba919-160a-4b8b-8984-7dbf4404fbf9
 
 ###
 
