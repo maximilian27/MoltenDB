@@ -527,7 +527,9 @@ pub async fn handle_revoke(
 
     revocation_store.revoke(&jti, prune_after);
     // Persist immediately so the revocation survives a server restart.
-    revocation_store.save_to_file(&revocations_path.0);
+    // save_to_file is async — awaiting it here keeps the Tokio worker thread free
+    // during the disk flush instead of blocking it with synchronous I/O.
+    revocation_store.save_to_file(&revocations_path.0).await;
 
     (
         StatusCode::OK,

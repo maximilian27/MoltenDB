@@ -1,4 +1,33 @@
-﻿# [1.0.0-rc10] (Jun 5, 2026)
+﻿# [1.0.0-rc11] (Jun 11, 2026)
+
+### Security
+
+* **Async-safe revocation persistence** — `RevocationStore::save_to_file` is now `async` and uses `tokio::fs::write`
+  instead of `std::fs::write`. Previously, calling it inside the async `handle_revoke` handler blocked the Tokio worker
+  thread for the duration of the JSON serialization and disk flush, starving other concurrent requests. The background
+  prune task in `main.rs` and the `handle_revoke` handler both `.await` the call. `tokio` (with the `fs` feature) is
+  now an explicit dependency of `moltendb-auth`.
+
+* **Fail-closed on missing `jti` in `auth_middleware`** — tokens with an empty `jti` field (legacy tokens or
+  crafted tokens exploiting `#[serde(default)]`) previously bypassed the revocation check entirely. The middleware now
+  rejects any token without a `jti` with `401 Unauthorized`. The `#[serde(default)]` attribute has been removed from
+  the `jti` field in `Claims` — all tokens minted by this crate have always included a `jti`. Option A (strict /
+  fail-closed) was chosen.
+
+* **Eliminate `get_secret()` lock contention** — `JWT_SECRET` is now read from the environment exactly once at process
+  startup via `std::sync::OnceLock` and cached for the lifetime of the process. Previously, `get_secret()` called
+  `std::env::var("JWT_SECRET")` on every call to `verify_token` and `create_scoped_token`, acquiring a global OS-level
+  lock on each authenticated request. Under concurrent load this caused thread contention. No API surface change.
+
+* **Fix silent admin lockout in `UserStore::new`** — if `bcrypt` failed to hash the admin password at startup (e.g. RNG
+  exhaustion, OS error), the server would boot with an empty user store and permanently lock out the admin with no log,
+  no panic, and no indication. `UserStore::new` now returns `Result<Self, bcrypt::BcryptError>`; the server aborts
+  startup with a `CRITICAL` log line if hashing fails. This is a minor breaking change to the `UserStore::new`
+  signature — callers must handle the `Result`.
+
+---
+
+# [1.0.0-rc10] (Jun 5, 2026)
 
 ### ⚠️ Breaking Changes — Older log/WAL files are NOT compatible with this release
 

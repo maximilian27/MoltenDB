@@ -35,18 +35,20 @@
 // Axum types for building middleware.
 use axum::{
     extract::Request,
-    http::{StatusCode, HeaderMap},
+    http::{HeaderMap, StatusCode},
     middleware::Next,
-    response::{Response, IntoResponse},
+    response::{IntoResponse, Response},
     Json,
 };
 // JWT encoding/decoding functions and types.
-use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 // Serde traits for serializing/deserializing the Claims struct to/from JSON.
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+// OnceLock for reading JWT_SECRET exactly once at startup.
+use std::sync::OnceLock;
 // SystemTime and UNIX_EPOCH for computing token expiry timestamps.
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 // UUID for generating unique JWT IDs (jti).
 use uuid::Uuid;
 
@@ -73,8 +75,8 @@ pub struct Claims {
     #[serde(default)]
     pub scopes: Vec<String>,
     /// Unique JWT ID — used for token revocation.
-    /// Generated automatically by create_scoped_token; absent in legacy tokens.
-    #[serde(default)]
+    /// Required on all tokens minted by this crate. Tokens without a jti are
+    /// rejected by auth_middleware (fail-closed — no revocation bypass).
     pub jti: String,
 }
 
@@ -98,8 +100,8 @@ impl Claims {
             }
             let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
             let action_match = s_action == action;
-            let col_match    = s_col == "*" || s_col == collection;
-            let key_match    = key_matches(s_key, doc_key);
+            let col_match = s_col == "*" || s_col == collection;
+            let key_match = key_matches(s_key, doc_key);
             action_match && col_match && key_match
         })
     }
@@ -121,22 +123,25 @@ impl Claims {
     /// Used by `handle_get` to scope a query to only the documents the token
     /// is allowed to read when no collection-level wildcard is present.
     pub fn allowed_keys(&self, action: &str, collection: &str) -> Vec<String> {
-        self.scopes.iter().filter_map(|scope| {
-            let parts: Vec<&str> = scope.splitn(3, ':').collect();
-            if parts.len() != 3 {
-                return None;
-            }
-            let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
-            let action_match = s_action == action;
-            let col_match    = s_col == "*" || s_col == collection;
-            // Only return concrete (non-wildcard) keys.
-            // Prefix patterns (e.g. "store_A_*") are handled by has_access post-filtering.
-            if action_match && col_match && !s_key.contains('*') {
-                Some(s_key.to_string())
-            } else {
-                None
-            }
-        }).collect()
+        self.scopes
+            .iter()
+            .filter_map(|scope| {
+                let parts: Vec<&str> = scope.splitn(3, ':').collect();
+                if parts.len() != 3 {
+                    return None;
+                }
+                let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
+                let action_match = s_action == action;
+                let col_match = s_col == "*" || s_col == collection;
+                // Only return concrete (non-wildcard) keys.
+                // Prefix patterns (e.g. "store_A_*") are handled by has_access post-filtering.
+                if action_match && col_match && !s_key.contains('*') {
+                    Some(s_key.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Extracts the key prefixes this token is allowed to access for a given
@@ -149,19 +154,28 @@ impl Claims {
         if self.is_admin() {
             return vec![];
         }
-        self.scopes.iter().filter_map(|scope| {
-            let parts: Vec<&str> = scope.splitn(3, ':').collect();
-            if parts.len() != 3 { return None; }
-            let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
-            if s_action != action { return None; }
-            if s_col != "*" && s_col != collection { return None; }
-            // Only prefix wildcards (e.g. "store_A_*"), not full wildcard ("*").
-            if s_key.ends_with('*') && s_key != "*" {
-                Some(s_key.trim_end_matches('*').to_string())
-            } else {
-                None
-            }
-        }).collect()
+        self.scopes
+            .iter()
+            .filter_map(|scope| {
+                let parts: Vec<&str> = scope.splitn(3, ':').collect();
+                if parts.len() != 3 {
+                    return None;
+                }
+                let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
+                if s_action != action {
+                    return None;
+                }
+                if s_col != "*" && s_col != collection {
+                    return None;
+                }
+                // Only prefix wildcards (e.g. "store_A_*"), not full wildcard ("*").
+                if s_key.ends_with('*') && s_key != "*" {
+                    Some(s_key.trim_end_matches('*').to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Returns true if this token has any prefix-wildcard scope for the given
@@ -170,7 +184,9 @@ impl Claims {
     pub fn has_prefix_wildcard(&self, action: &str, collection: &str) -> bool {
         self.scopes.iter().any(|scope| {
             let parts: Vec<&str> = scope.splitn(3, ':').collect();
-            if parts.len() != 3 { return false; }
+            if parts.len() != 3 {
+                return false;
+            }
             let (s_action, s_col, s_key) = (parts[0], parts[1], parts[2]);
             s_action == action
                 && (s_col == "*" || s_col == collection)
@@ -238,13 +254,21 @@ pub struct LoginResponse {
 
 // ─── JWT helpers ──────────────────────────────────────────────────────────────
 
-/// Read the JWT signing secret from the JWT_SECRET environment variable.
+/// The JWT signing secret, read once at startup from the JWT_SECRET environment
+/// variable and cached for the lifetime of the process.
+///
+/// Using OnceLock avoids acquiring the global OS env-var lock on every request.
 /// Falls back to a hardcoded default if the variable is not set.
 ///
 /// WARNING: The default secret is publicly known — anyone can forge tokens
 /// signed with it. Always set JWT_SECRET in production.
-fn get_secret() -> String {
-    std::env::var("JWT_SECRET").unwrap_or_else(|_| "dev-secret-change-in-production".to_string())
+static JWT_SECRET: OnceLock<String> = OnceLock::new();
+
+fn get_secret() -> &'static str {
+    JWT_SECRET.get_or_init(|| {
+        std::env::var("JWT_SECRET")
+            .unwrap_or_else(|_| "dev-secret-change-in-production".to_string())
+    })
 }
 
 /// Create a signed JWT token for the given username.
@@ -272,7 +296,8 @@ pub fn create_scoped_token(
     let expiration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs() + ttl_secs;
+        .as_secs()
+        + ttl_secs;
 
     let jti = Uuid::new_v4().to_string();
 
@@ -371,7 +396,8 @@ impl RevocationStore {
     /// Remove entries whose prune_after time has passed.
     /// Call this from a background task every 60 seconds.
     pub fn prune(&self) {
-        self.revoked.retain(|_, prune_at| *prune_at > Instant::now());
+        self.revoked
+            .retain(|_, prune_at| *prune_at > Instant::now());
     }
 
     /// Persist the current revocation list to a JSON file.
@@ -379,7 +405,10 @@ impl RevocationStore {
     /// The file stores a map of `jti → unix_timestamp_secs` (the prune deadline).
     /// Call this after every `revoke()` and after every `prune()` so the on-disk
     /// state always reflects the in-memory state.
-    pub fn save_to_file(&self, path: &str) {
+    ///
+    /// This is an async function — it uses `tokio::fs::write` so it does not
+    /// block the Tokio worker thread during the disk flush.
+    pub async fn save_to_file(&self, path: &str) {
         // Convert Instant → u64 unix seconds for serialization.
         // Instant is not directly serializable, so we compute the remaining
         // duration from now and add it to the current unix timestamp.
@@ -407,8 +436,11 @@ impl RevocationStore {
 
         match serde_json::to_string(&map) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(path, json) {
-                    eprintln!("⚠️  Failed to persist revocation store to '{}': {}", path, e);
+                if let Err(e) = tokio::fs::write(path, json).await {
+                    eprintln!(
+                        "⚠️  Failed to persist revocation store to '{}': {}",
+                        path, e
+                    );
                 }
             }
             Err(e) => eprintln!("⚠️  Failed to serialize revocation store: {}", e),
@@ -476,9 +508,7 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Result<Response, impl IntoResponse> {
     // Read the Authorization header value as a string.
-    let auth_header = headers
-        .get("Authorization")
-        .and_then(|h| h.to_str().ok());
+    let auth_header = headers.get("Authorization").and_then(|h| h.to_str().ok());
 
     // Extract the token from "Bearer <token>".
     // The [7..] slice skips the "Bearer " prefix (7 characters).
@@ -496,10 +526,12 @@ pub async fn auth_middleware(
     // Verify the token signature and expiry.
     let claims = match verify_token(token) {
         Ok(c) => c,
-        Err(_) => return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Invalid or expired token"})),
-        )),
+        Err(_) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Invalid or expired token"})),
+            ));
+        }
     };
 
     // Check the revocation store — reject tokens that have been explicitly revoked.
@@ -508,7 +540,15 @@ pub async fn auth_middleware(
     // silently skipping the revocation check.
     match request.extensions().get::<RevocationStore>() {
         Some(store) => {
-            if !claims.jti.is_empty() && store.is_revoked(&claims.jti) {
+            // Fail-closed: reject tokens that have no jti — they cannot be checked
+            // against the revocation store and may be legacy or crafted tokens.
+            if claims.jti.is_empty() {
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error": "Token missing required jti claim"})),
+                ));
+            }
+            if store.is_revoked(&claims.jti) {
                 return Err((
                     StatusCode::UNAUTHORIZED,
                     Json(json!({"error": "Token has been revoked"})),
@@ -557,17 +597,22 @@ impl UserStore {
     /// The admin username and password are provided as arguments.
     /// The password is hashed with bcrypt before storing — the plaintext is
     /// never kept in memory after this function returns.
-    pub fn new(username: String, password: String) -> Self {
+    ///
+    /// Returns `Err` if bcrypt fails to hash the password (e.g. RNG exhaustion).
+    /// The caller should treat this as a fatal startup error — a store with no
+    /// users would permanently lock out the admin with no indication.
+    pub fn new(username: String, password: String) -> Result<Self, bcrypt::BcryptError> {
         let store = Self {
             users: Arc::new(DashMap::new()),
         };
 
         // Hash the password and store the hash (never the plaintext).
-        if let Ok(hash) = hash_password(&password) {
-            store.users.insert(username, hash);
-        }
+        // Propagate the error — a failed hash means zero users in the store,
+        // which would silently lock out the admin on startup.
+        let hash = hash_password(&password)?;
+        store.users.insert(username, hash);
 
-        store
+        Ok(store)
     }
 
     /// Verify a username + password pair against the stored hash.

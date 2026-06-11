@@ -84,8 +84,10 @@ The root user's token always carries `*:*:*`. Only the root user can mint new `*
 ## Public API
 
 ```rust
-// Seed the store with the root user at startup
-let store = UserStore::new("root".into(), "my-secret-password".into());
+// Seed the store with the root user at startup.
+// Returns Err if bcrypt fails — treat as fatal (abort startup).
+let store = UserStore::new("root".into(), "my-secret-password".into())
+.expect("Failed to hash admin password during startup");
 
 // Mint a root JWT (carries *:*:* scope, 24-hour TTL)
 let token = moltendb_auth::create_token("root") ?;
