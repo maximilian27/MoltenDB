@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = @token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MDc2NzU2Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI4MmE2ZTc2LWE2ODYtNGM3ZC05ZjE4LTIyNzBmYTBmNDllZCJ9.Q9ysF1UhBXIECfUxf_Qio--ZvIJvas7QQ7vcQvYiMtk
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MTI2OTU1Mywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImY5M2ZjY2UzLWYwMWQtNDA4MS05OWRjLTFiZGY2ZmQ2MDA1NCJ9.dSR1Jwf4Qd_S8fV4FkMLchEP0NnrLXnzljQvU6e7mtg
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
@@ -317,7 +317,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzg4MzY1OTAsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdLCJqdGkiOiI1YmE1NWYyOS0zY2ExLTRlMTYtYmFmMC1hOWNkOWNiNzdmZDgifQ.FFCqibQOqVPYIu-vr0ue2CvbTogLWS9W8Ms-Kb67ujc
+@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3ODExODY3ODUsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdLCJqdGkiOiIyOTExZGQ5YS0xNjM4LTRlMzctODM1Ni0yMWM4OTIzYjRkZjMifQ.CVtS-xsx1UNUQfdfRTe5vy7YfIzaxCOUMeVr2ODKfcA
 
 ### ✅ Fetch lp1 — in scope
 GET http://localhost:1538/collections/laptops/docs/lp1
@@ -500,7 +500,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@col_read_token = PASTE_TOKEN_HERE
+@col_read_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyZWFkLW9ubHktZGFzaGJvYXJkIiwiZXhwIjoxNzgxMTg2ODc5LCJzY29wZXMiOlsicmVhZDpsYXB0b3BzOioiXSwianRpIjoiNDQ1Yzc3NGItZWUwMy00ZWE3LTk4NTUtMWY3ZWRjOGRhYjM5In0.YlLT7lUpNO9fvrBB_3zSxFDyJQZ-vIBlddS8QcKeI4o
 
 ### ✅ Fetch any single document
 GET http://localhost:1538/collections/laptops/docs/lp1
@@ -590,7 +590,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@col_rw_token = PASTE_TOKEN_HERE
+@col_rw_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsYXB0b3BzLXNlcnZpY2UiLCJleHAiOjE3ODEyNjk3MjUsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6KiIsIndyaXRlOmxhcHRvcHM6KiJdLCJqdGkiOiI3MzBmNTdhYy1mZWFlLTRhYWMtYTEyNC05M2M4YjE3MDAyMmMifQ.xcff6f1TSt0dewB-Fh7RlabiGjyZoDCaHuVe5epNLZI
 
 ### ✅ Read a document
 GET http://localhost:1538/collections/laptops/docs/lp1
@@ -624,9 +624,11 @@ Authorization: Bearer {{col_rw_token}}
 
 {
   "collection": "laptops",
-  "key": "lp_new",
   "data": {
-    "price": 1799
+    "lp_new": {
+      "in_stock": true,
+      "price": 1799
+    }
   }
 }
 
