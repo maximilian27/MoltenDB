@@ -35,7 +35,7 @@ use sysinfo::{Disks, System};
 /// Scope format: "action:collection:document_key"
 /// Examples: "read:laptops:lp1", "write:users:*", "read:*:*", "*:*:*"
 pub async fn handle_delegate(
-    State((_, _, _, _, root_username)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((_, _, _, _, root_username, _)): State<(engine::Db, auth::UserStore, usize, usize, String, u64)>,
     Extension(claims): axum::extract::Extension<auth::Claims>,
     Json(payload): Json<auth::DelegateRequest>,
 ) -> Result<Json<auth::DelegateResponse>, (StatusCode, Json<Value>)> {
@@ -94,13 +94,20 @@ pub async fn handle_delegate(
 /// Returns 401 Unauthorized if credentials are wrong.
 /// Returns 500 Internal Server Error if token creation fails.
 pub async fn handle_login(
-    State((_, users, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((_, users, _, _, _, root_token_ttl)): State<(
+        engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+        u64,
+    )>,
     Json(payload): Json<auth::LoginRequest>,
 ) -> Result<Json<auth::LoginResponse>, (StatusCode, Json<Value>)> {
     // Verify the username and password against the in-memory user store.
     if users.verify_user(&payload.username, &payload.password) {
         // Credentials valid — create a signed JWT token for this user.
-        match auth::create_token(&payload.username) {
+        match auth::create_token(&payload.username, root_token_ttl) {
             Ok(token) => Ok(Json(auth::LoginResponse { token })),
             Err(_) => Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -121,12 +128,13 @@ pub async fn handle_login(
 /// Body: `{ "collection": "users", "data": { "u1": { "name": "Alice" } } }`
 /// Requires: write:{collection}:* scope (or admin).
 pub async fn handle_set(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
         engine::Db,
         auth::UserStore,
         usize,
         usize,
         String,
+        u64,
     )>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
@@ -155,12 +163,13 @@ pub async fn handle_set(
 /// Body: `{ "collection": "users", "data": { "u1": { "role": "admin" } } }`
 /// Requires: write:{collection}:* scope (or admin).
 pub async fn handle_update(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
         engine::Db,
         auth::UserStore,
         usize,
         usize,
         String,
+        u64,
     )>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
@@ -195,12 +204,13 @@ pub async fn handle_update(
 ///     - If no `"keys"` is specified, the result is filtered to only the docs the
 ///       token is allowed to read.
 pub async fn handle_get(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
         engine::Db,
         auth::UserStore,
         usize,
         usize,
         String,
+        u64,
     )>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
@@ -300,12 +310,13 @@ pub async fn handle_get(
 /// Body (drop all): `{ "collection": "users", "drop": true }`
 /// Requires: delete:{collection}:* scope (or admin).
 pub async fn handle_delete(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
         engine::Db,
         auth::UserStore,
         usize,
         usize,
         String,
+        u64,
     )>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
@@ -331,12 +342,13 @@ pub async fn handle_delete(
 
 #[cfg(feature = "schema")]
 pub async fn handle_schema(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
         engine::Db,
         auth::UserStore,
         usize,
         usize,
         String,
+        u64,
     )>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -350,7 +362,7 @@ pub async fn handle_schema(
 /// POST /snapshot — take a snapshot of the database on demand.
 /// Requires: admin scope.
 pub async fn handle_snapshot(
-    State((db, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String, u64)>,
     Extension(claims): Extension<auth::Claims>,
 ) -> (StatusCode, Json<Value>) {
     if !claims.is_admin() {
@@ -370,7 +382,7 @@ pub async fn handle_snapshot(
 /// GET  /stats — same, no body required (returns all collections).
 /// Requires: read scope or admin.
 pub async fn handle_stats_post(
-    State((db, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String, u64)>,
     Extension(_claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -382,7 +394,7 @@ pub async fn handle_stats_post(
 }
 
 pub async fn handle_stats_get(
-    State((db, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String, u64)>,
     Extension(_claims): Extension<auth::Claims>,
 ) -> (StatusCode, Json<Value>) {
     let (code, body) = handlers::process_stats(&db, &serde_json::Value::Object(Default::default()));
@@ -398,12 +410,13 @@ pub async fn handle_stats_get(
 ///   POST /get { "collection": collection, "keys": key }
 /// Requires: read:{collection}:{key} scope (or read:{collection}:* or read:*:* or admin).
 pub async fn handle_rest_get(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
         engine::Db,
         auth::UserStore,
         usize,
         usize,
         String,
+        u64,
     )>,
     Extension(claims): Extension<auth::Claims>,
     Path((collection, key)): Path<(String, String)>,
@@ -438,12 +451,13 @@ pub async fn handle_rest_get(
 ///
 /// Requires: read:{collection}:* scope (or admin).
 pub async fn handle_rest_get_collection(
-    State((db, _, max_body_size, max_keys_per_request, _)): State<(
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
         engine::Db,
         auth::UserStore,
         usize,
         usize,
         String,
+        u64,
     )>,
     Extension(claims): Extension<auth::Claims>,
     Path(collection): Path<String>,
@@ -631,12 +645,13 @@ pub async fn handle_health() -> (StatusCode, Json<Value>) {
 ///
 /// Admin-only. Returns uptime, process memory, host RAM/disk, and database internals.
 pub async fn handle_metrics(
-    State((db, _, _, _, _)): State<(
+    State((db, _, _, _, _, _)): State<(
         moltendb_core::engine::Db,
         auth::UserStore,
         usize,
         usize,
         String,
+        u64,
     )>,
     Extension(claims): Extension<auth::Claims>,
 ) -> (StatusCode, Json<Value>) {

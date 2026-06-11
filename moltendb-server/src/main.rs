@@ -44,11 +44,11 @@ use moltendb_core::engine::{self, StorageBackend};
 use axum::extract::DefaultBodyLimit;
 use axum::{
     http::{header, HeaderValue},
-    // middleware = lets us insert async functions between the router and handlers.
     middleware,
-    // routing = defines which HTTP methods map to which handlers.
     routing::{delete, get, post},
+    // middleware = lets us insert async functions between the router and handlers.
     Extension,
+    // routing = defines which HTTP methods map to which handlers.
     Router,
 };
 use std::net::SocketAddr;
@@ -116,6 +116,11 @@ struct Config {
     #[arg(long, env = "MOLTENDB_JWT_SECRET")]
     jwt_secret: Option<String>,
     // Note: jwt_secret is Option<String> so we can detect if it's unset and refuse to start.
+    /// Root token TTL in seconds. Controls how long the root JWT issued by POST /login is valid.
+    /// Default: 86400 (24 hours). [env: MOLTENDB_ROOT_TOKEN_TTL]
+    #[arg(long, default_value = "86400", env = "MOLTENDB_ROOT_TOKEN_TTL")]
+    root_token_ttl: u64,
+
     /// Root username [env: MOLTENDB_ROOT_USER]
     #[arg(long, env = "MOLTENDB_ROOT_USER")]
     root_user: Option<String>,
@@ -539,6 +544,7 @@ async fn main() {
         cfg.max_body_size,
         cfg.max_keys_per_request,
         root_user,
+        cfg.root_token_ttl,
     );
 
     let mut protected_routes = Router::new()

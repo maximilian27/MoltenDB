@@ -2,6 +2,12 @@
 
 ### New Features
 
+* **Configurable root token TTL** — the TTL of the root JWT issued by `POST /auth/login` is now configurable via
+  `--root-token-ttl <secs>` (CLI flag) or `MOLTENDB_ROOT_TOKEN_TTL` (environment variable). Defaults to `86400`
+  seconds (24 hours). `create_token(username, ttl_secs)` now accepts the TTL as a parameter instead of hardcoding
+  86400. Scoped tokens minted via `POST /auth/delegate` are unaffected — they continue to use the `ttl_secs` field
+         in the request body.
+
 * **`POST /auth/refresh` — client-initiated scoped token refresh** — clients can exchange a valid, non-expired scoped
   token for a new one with the same `sub` and `scopes` but a fresh `exp` and a new `jti`. The old `jti` is immediately
   added to the `RevocationStore` after the new token is issued, preventing replay attacks. Root tokens (`*:*:*`) are
@@ -46,7 +52,7 @@
 
 * **Fix silent admin lockout in `UserStore::new`** — if `bcrypt` failed to hash the admin password at startup (e.g. RNG
   exhaustion, OS error), the server would boot with an empty user store and permanently lock out the admin with no log,
-  no panic, and no indication. `UserStore::new` now returns `Result<Self, bcrypt::BcryptError>`; the server aborts
+  no panic, and no indication. `UserStore::new` now returns `Result<Self, AuthError>`; the server aborts
   startup with a `CRITICAL` log line if hashing fails. This is a minor breaking change to the `UserStore::new`
   signature — callers must handle the `Result`.
 

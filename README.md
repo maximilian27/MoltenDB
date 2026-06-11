@@ -96,7 +96,8 @@ an optional adapter layer built around the same core engine.
 - At-rest encryption with XChaCha20-Poly1305 (on by default, key from `--encryption-key`)
 - WebSocket endpoint (`/ws`) for real-time push notifications — subscribe and receive change events on every write
 - Passwords hashed with Argon2id
-- JWT tokens signed with HMAC-SHA256; root tokens carry `*:*:*` scope (24-hour expiry)
+- JWT tokens signed with HMAC-SHA256; root tokens carry `*:*:*` scope (TTL defaults to 24 hours, configurable via
+  `--root-token-ttl` / `MOLTENDB_ROOT_TOKEN_TTL`)
 - **Scoped token delegation:** root user mints narrow-permission JWTs for clients via `POST /auth/delegate`. Scope
   format: `action:collection:document_key` (e.g. `read:laptops:lp1`, `write:users:*`, `read:*:*`). Every endpoint
   enforces scopes — tokens missing the required scope receive `403 Forbidden`.

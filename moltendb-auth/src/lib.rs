@@ -276,10 +276,10 @@ fn get_secret() -> &'static str {
 
 /// Create a signed JWT token for the given username.
 ///
-/// The token expires 24 hours (86400 seconds) from now.
+/// The token expires after `ttl_secs` seconds from now (default: 86400 = 24 hours).
 /// Returns the compact serialization: "header.payload.signature"
-pub fn create_token(username: &str) -> Result<String, AuthError> {
-    create_scoped_token(username, vec!["*:*:*".to_string()], 86400).map(|(token, _)| token)
+pub fn create_token(username: &str, ttl_secs: u64) -> Result<String, AuthError> {
+    create_scoped_token(username, vec!["*:*:*".to_string()], ttl_secs).map(|(token, _)| token)
 }
 
 /// Create a scoped delegate token with a custom TTL (in seconds).

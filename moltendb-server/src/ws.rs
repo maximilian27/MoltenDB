@@ -6,11 +6,11 @@ use moltendb_auth as auth;
 use moltendb_core::engine;
 
 use axum::{
+    extract::ws::Utf8Bytes,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
-    extract::ws::Utf8Bytes,
     Extension,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -25,7 +25,14 @@ use tracing::warn;
 /// handshake. The actual socket logic runs in `handle_socket`.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
-    State((db, _, _max_body_size, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String)>,
+    State((db, _, _max_body_size, _, _, _)): State<(
+        engine::Db,
+        auth::UserStore,
+        usize,
+        usize,
+        String,
+        u64,
+    )>,
     Extension(revocation_store): Extension<auth::RevocationStore>,
 ) -> impl axum::response::IntoResponse {
     // `on_upgrade` completes the handshake and calls our handler with the socket.
@@ -51,7 +58,11 @@ pub async fn ws_handler(
 ///
 /// The socket is split into a sender and receiver, each running in their own task.
 /// This allows sending and receiving to happen concurrently without blocking each other.
-async fn handle_socket(mut socket: WebSocket, db: engine::Db, revocation_store: auth::RevocationStore) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    db: engine::Db,
+    revocation_store: auth::RevocationStore,
+) {
     // Step 1: Require the first message to be an AUTH frame.
     // We return a distinct error string for each failure mode so the client
     // knows exactly what went wrong instead of getting a generic message.
@@ -61,40 +72,41 @@ async fn handle_socket(mut socket: WebSocket, db: engine::Db, revocation_store: 
     }
 
     let auth_result = match socket.next().await {
-        Some(Ok(Message::Text(text))) => {
-            match serde_json::from_str::<serde_json::Value>(&text) {
-                Err(_) => AuthResult::Err(
-                    r#"{"error":"invalid_message","detail":"Could not parse JSON. Expected {\"action\":\"AUTH\",\"token\":\"<jwt>\"}"}"#,
-                ),
-                Ok(payload) => {
-                    if payload["action"].as_str() != Some("AUTH") {
-                        AuthResult::Err(
-                            r#"{"error":"invalid_action","detail":"First message must have \"action\":\"AUTH\". Use HTTP endpoints for CRUD operations."}"#,
-                        )
-                    } else if let Some(token) = payload["token"].as_str() {
-                        match auth::verify_token(token) {
-                            Err(_) => AuthResult::Err(
-                                r#"{"error":"invalid_token","detail":"JWT verification failed. The token may be expired, malformed, or signed with the wrong secret."}"#,
-                            ),
-                            Ok(c) => {
-                                if revocation_store.is_revoked(&c.jti) {
-                                    warn!("🔒 Rejected WebSocket connection: token JTI '{}' is revoked.", c.jti);
-                                    AuthResult::Err(
-                                        r#"{"error":"token_revoked","detail":"This token has been revoked. Mint a new token via POST /auth/tokens."}"#,
-                                    )
-                                } else {
-                                    AuthResult::Ok(c)
-                                }
+        Some(Ok(Message::Text(text))) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Err(_) => AuthResult::Err(
+                r#"{"error":"invalid_message","detail":"Could not parse JSON. Expected {\"action\":\"AUTH\",\"token\":\"<jwt>\"}"}"#,
+            ),
+            Ok(payload) => {
+                if payload["action"].as_str() != Some("AUTH") {
+                    AuthResult::Err(
+                        r#"{"error":"invalid_action","detail":"First message must have \"action\":\"AUTH\". Use HTTP endpoints for CRUD operations."}"#,
+                    )
+                } else if let Some(token) = payload["token"].as_str() {
+                    match auth::verify_token(token) {
+                        Err(_) => AuthResult::Err(
+                            r#"{"error":"invalid_token","detail":"JWT verification failed. The token may be expired, malformed, or signed with the wrong secret."}"#,
+                        ),
+                        Ok(c) => {
+                            if revocation_store.is_revoked(&c.jti) {
+                                warn!(
+                                    "🔒 Rejected WebSocket connection: token JTI '{}' is revoked.",
+                                    c.jti
+                                );
+                                AuthResult::Err(
+                                    r#"{"error":"token_revoked","detail":"This token has been revoked. Mint a new token via POST /auth/tokens."}"#,
+                                )
+                            } else {
+                                AuthResult::Ok(c)
                             }
                         }
-                    } else {
-                        AuthResult::Err(
-                            r#"{"error":"missing_token","detail":"AUTH message is missing the \"token\" field. Expected {\"action\":\"AUTH\",\"token\":\"<jwt>\"}"}"#,
-                        )
                     }
+                } else {
+                    AuthResult::Err(
+                        r#"{"error":"missing_token","detail":"AUTH message is missing the \"token\" field. Expected {\"action\":\"AUTH\",\"token\":\"<jwt>\"}"}"#,
+                    )
                 }
             }
-        }
+        },
         _ => AuthResult::Err(
             r#"{"error":"invalid_message","detail":"First message must be a text frame containing {\"action\":\"AUTH\",\"token\":\"<jwt>\"}"}"#,
         ),

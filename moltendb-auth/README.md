@@ -64,7 +64,8 @@ action:collection:document_key
 | `read:*:*`            | Read any document in any collection                       |
 | `*:*:*`               | Full admin access — read, write, delete across everything |
 
-The root user's token always carries `*:*:*`. Only the root user can mint new `*:*:*` tokens.
+The root user's token always carries `*:*:*`. Only the root user can mint new `*:*:*` tokens. The root token TTL
+defaults to 86400 seconds (24 hours) and is configurable via `--root-token-ttl` / `MOLTENDB_ROOT_TOKEN_TTL`.
 
 ---
 
@@ -89,8 +90,8 @@ The root user's token always carries `*:*:*`. Only the root user can mint new `*
 let store = UserStore::new("root".into(), "my-secret-password".into())
 .expect("Failed to hash admin password during startup");
 
-// Mint a root JWT (carries *:*:* scope, 24-hour TTL)
-let token = moltendb_auth::create_token("root") ?;
+// Mint a root JWT (carries *:*:* scope, TTL controlled by MOLTENDB_ROOT_TOKEN_TTL, default 86400s)
+let token = moltendb_auth::create_token("root", 86400) ?;
 
 // Mint a scoped JWT for a client (custom scopes + TTL)
 // Returns (token, jti) — store the jti if you need to revoke this token later
