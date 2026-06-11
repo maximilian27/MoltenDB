@@ -2,6 +2,14 @@
 
 ### Security
 
+* **HMAC-SHA256 integrity protection for the revocation store** — `RevocationStore::save_to_file` now signs the
+  `entries` JSON with HMAC-SHA256 (keyed with `JWT_SECRET`) and writes `{ "entries": {...}, "sig": "<hex>" }` to disk.
+  `load_from_file` verifies the signature before trusting any entries; a missing or invalid `sig` field causes the
+  server to abort startup with a `CRITICAL` log (fail-closed). A missing file is still treated as a clean first
+  startup. This closes the attack vector where an attacker with filesystem access could delete or truncate the
+  revocation file to silently re-validate previously revoked tokens. `hmac`, `sha2`, and `hex` are now explicit
+  dependencies of `moltendb-auth`. `load_from_file` return type changed from `Self` to `Result<Self, String>`.
+
 * **Async-safe revocation persistence** — `RevocationStore::save_to_file` is now `async` and uses `tokio::fs::write`
   instead of `std::fs::write`. Previously, calling it inside the async `handle_revoke` handler blocked the Tokio worker
   thread for the duration of the JSON serialization and disk flush, starving other concurrent requests. The background

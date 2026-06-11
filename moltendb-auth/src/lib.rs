@@ -40,11 +40,14 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+// HMAC-SHA256 for signing the revocation file.
+use hmac::{Hmac, Mac};
 // JWT encoding/decoding functions and types.
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 // Serde traits for serializing/deserializing the Claims struct to/from JSON.
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::Sha256;
 // OnceLock for reading JWT_SECRET exactly once at startup.
 use std::sync::OnceLock;
 // SystemTime and UNIX_EPOCH for computing token expiry timestamps.
@@ -351,6 +354,33 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::Bcryp
     bcrypt::verify(password, hash)
 }
 
+// ─── HMAC helpers ─────────────────────────────────────────────────────────────
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// Compute an HMAC-SHA256 over `data` using `JWT_SECRET` as the key.
+/// Returns the result as a lowercase hex string.
+fn hmac_sign(data: &[u8]) -> String {
+    let mut mac =
+        HmacSha256::new_from_slice(get_secret().as_bytes()).expect("HMAC accepts any key length");
+    mac.update(data);
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Verify an HMAC-SHA256 hex tag over `data` using `JWT_SECRET` as the key.
+/// Returns `true` if the tag is valid, `false` otherwise.
+/// Uses constant-time comparison internally (via the `hmac` crate) to prevent
+/// timing attacks.
+fn hmac_verify(data: &[u8], expected_hex: &str) -> bool {
+    let Ok(expected_bytes) = hex::decode(expected_hex) else {
+        return false;
+    };
+    let mut mac =
+        HmacSha256::new_from_slice(get_secret().as_bytes()).expect("HMAC accepts any key length");
+    mac.update(data);
+    mac.verify_slice(&expected_bytes).is_ok()
+}
+
 // ─── Token revocation ────────────────────────────────────────────────────────
 
 /// Newtype wrapper for the revocation store file path.
@@ -402,9 +432,13 @@ impl RevocationStore {
 
     /// Persist the current revocation list to a JSON file.
     ///
-    /// The file stores a map of `jti → unix_timestamp_secs` (the prune deadline).
-    /// Call this after every `revoke()` and after every `prune()` so the on-disk
-    /// state always reflects the in-memory state.
+    /// The file format is:
+    ///   `{ "entries": { "<jti>": <prune_unix_secs>, ... }, "sig": "<hmac-sha256-hex>" }`
+    ///
+    /// The `sig` field is an HMAC-SHA256 of the canonical JSON of `entries`,
+    /// keyed with `JWT_SECRET`. On load, the signature is verified before the
+    /// entries are trusted — a missing or invalid signature causes the server
+    /// to refuse startup (fail-closed).
     ///
     /// This is an async function — it uses `tokio::fs::write` so it does not
     /// block the Tokio worker thread during the disk flush.
@@ -434,7 +468,25 @@ impl RevocationStore {
             })
             .collect();
 
-        match serde_json::to_string(&map) {
+        // Serialize entries to a canonical JSON string — this is what we sign.
+        let entries_json = match serde_json::to_string(&map) {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("⚠️  Failed to serialize revocation store: {}", e);
+                return;
+            }
+        };
+
+        // Compute HMAC-SHA256 of the entries JSON using JWT_SECRET as the key.
+        let sig = hmac_sign(entries_json.as_bytes());
+
+        // Wrap entries + signature into the final file payload.
+        let payload = serde_json::json!({
+            "entries": map,
+            "sig": sig,
+        });
+
+        match serde_json::to_string(&payload) {
             Ok(json) => {
                 if let Err(e) = tokio::fs::write(path, json).await {
                     eprintln!(
@@ -443,30 +495,99 @@ impl RevocationStore {
                     );
                 }
             }
-            Err(e) => eprintln!("⚠️  Failed to serialize revocation store: {}", e),
+            Err(e) => eprintln!("⚠️  Failed to serialize revocation store payload: {}", e),
         }
     }
 
     /// Load the revocation list from a JSON file written by `save_to_file`.
     ///
-    /// Entries whose prune deadline has already passed are silently skipped —
-    /// they would have been pruned anyway. Missing file is treated as an empty
-    /// store (normal on first startup).
-    pub fn load_from_file(path: &str) -> Self {
+    /// The file must contain a valid HMAC-SHA256 signature over the `entries`
+    /// field (keyed with `JWT_SECRET`). If the file exists but the signature is
+    /// missing or invalid, this function returns `Err` — the caller must treat
+    /// this as a fatal startup error (fail-closed: do not boot with an untrusted
+    /// revocation store).
+    ///
+    /// A missing file is `Ok(empty store)` — normal on first startup.
+    /// Entries whose prune deadline has already passed are silently skipped.
+    pub fn load_from_file(path: &str) -> Result<Self, String> {
         let store = Self::default();
 
         let contents = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => return store, // File missing — fresh start, nothing to load.
-        };
-
-        let map: std::collections::HashMap<String, u64> = match serde_json::from_str(&contents) {
-            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // File missing — fresh start, nothing to load.
+                return Ok(store);
+            }
             Err(e) => {
-                eprintln!("⚠️  Failed to parse revocation store '{}': {}", path, e);
-                return store;
+                return Err(format!("Failed to read revocation store '{}': {}", path, e));
             }
         };
+
+        // Parse the outer envelope: { "entries": {...}, "sig": "..." }
+        let envelope: serde_json::Value = match serde_json::from_str(&contents) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to parse revocation store '{}': {}",
+                    path, e
+                ));
+            }
+        };
+
+        // Extract and verify the HMAC signature before trusting any entries.
+        let sig = match envelope.get("sig").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => {
+                return Err(format!(
+                    "Revocation store '{}' is missing the 'sig' field — \
+                     file may have been tampered with or was written by an older version. \
+                     Delete the file to start fresh, or restore it from a trusted backup.",
+                    path
+                ));
+            }
+        };
+
+        // Re-serialize the entries map to the canonical JSON string that was signed.
+        let entries_value = match envelope.get("entries") {
+            Some(v) => v,
+            None => {
+                return Err(format!(
+                    "Revocation store '{}' is missing the 'entries' field.",
+                    path
+                ));
+            }
+        };
+        let entries_json = match serde_json::to_string(entries_value) {
+            Ok(j) => j,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to re-serialize entries from '{}': {}",
+                    path, e
+                ));
+            }
+        };
+
+        // Verify the HMAC — fail-closed if it doesn't match.
+        if !hmac_verify(entries_json.as_bytes(), &sig) {
+            return Err(format!(
+                "Revocation store '{}' has an invalid HMAC signature — \
+                 the file may have been tampered with. \
+                 Delete the file to start fresh, or restore it from a trusted backup.",
+                path
+            ));
+        }
+
+        // Signature is valid — deserialize the entries map.
+        let map: std::collections::HashMap<String, u64> =
+            match serde_json::from_value(entries_value.clone()) {
+                Ok(m) => m,
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to deserialize revocation entries from '{}': {}",
+                        path, e
+                    ));
+                }
+            };
 
         let now_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -484,7 +605,7 @@ impl RevocationStore {
             store.revoked.insert(jti, prune_instant);
         }
 
-        store
+        Ok(store)
     }
 }
 

@@ -122,6 +122,16 @@ revocation_store.revoke( & jti, std::time::Instant::now() + std::time::Duration:
 // Check if a jti has been revoked (called automatically inside auth_middleware)
 if revocation_store.is_revoked( & jti) { /* reject */ }
 
+// Load the revocation store from disk at startup.
+// Returns Err if the file exists but has a missing or invalid HMAC-SHA256 signature
+// (tamper-evident, fail-closed). A missing file returns Ok(empty store).
+let store = RevocationStore::load_from_file("my_database.revocations.json")
+.expect("Revocation store integrity check failed — possible tampering");
+
+// Persist the revocation store to disk (async, signs with JWT_SECRET).
+// File format: { "entries": { "<jti>": <prune_unix_secs> }, "sig": "<hmac-sha256-hex>" }
+revocation_store.save_to_file("my_database.revocations.json").await;
+
 // Hash a password (Argon2id)
 let hash = moltendb_auth::hash_password("my-secret-password") ?;
 
@@ -146,15 +156,15 @@ let protected = Router::new()
 
 ## Types
 
-| Type               | Description                                                                                                        |
-|--------------------|--------------------------------------------------------------------------------------------------------------------|
-| `UserStore`        | In-memory `DashMap<String, String>` — username → Argon2 hash                                                       |
-| `Claims`           | JWT payload: `sub` (username), `exp` (Unix timestamp), `scopes: Vec<String>`                                       |
-| `LoginRequest`     | `{ username: String, password: String }`                                                                           |
-| `LoginResponse`    | `{ token: String }`                                                                                                |
-| `DelegateRequest`  | `{ client_id: String, scopes: Vec<String>, ttl_secs: Option<u64> }`                                                |
-| `DelegateResponse` | `{ token: String, jti: String, client_id: String, scopes: Vec<String> }` — `jti` is the UUID to use for revocation |
-| `RevocationStore`  | In-memory `DashMap<String, Instant>` — revoked JTIs with their prune deadline                                      |
+| Type               | Description                                                                                                                                                                               |
+|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `UserStore`        | In-memory `DashMap<String, String>` — username → Argon2 hash                                                                                                                              |
+| `Claims`           | JWT payload: `sub` (username), `exp` (Unix timestamp), `scopes: Vec<String>`                                                                                                              |
+| `LoginRequest`     | `{ username: String, password: String }`                                                                                                                                                  |
+| `LoginResponse`    | `{ token: String }`                                                                                                                                                                       |
+| `DelegateRequest`  | `{ client_id: String, scopes: Vec<String>, ttl_secs: Option<u64> }`                                                                                                                       |
+| `DelegateResponse` | `{ token: String, jti: String, client_id: String, scopes: Vec<String> }` — `jti` is the UUID to use for revocation                                                                        |
+| `RevocationStore`  | In-memory `DashMap<String, Instant>` — revoked JTIs with their prune deadline. Persisted as `{ "entries": {...}, "sig": "<hmac-sha256-hex>" }`; signature verified on load (fail-closed). |
 
 ---
 

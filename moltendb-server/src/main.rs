@@ -43,11 +43,11 @@ use moltendb_core::engine::{self, StorageBackend};
 // RustlsConfig = TLS configuration loaded from PEM certificate and key files.
 use axum::extract::DefaultBodyLimit;
 use axum::{
-    // middleware = lets us insert async functions between the router and handlers.
     http::{header, HeaderValue},
-    // routing = defines which HTTP methods map to which handlers.
     middleware,
+    // middleware = lets us insert async functions between the router and handlers.
     routing::{delete, get, post},
+    // routing = defines which HTTP methods map to which handlers.
     Extension,
     Router,
 };
@@ -474,7 +474,19 @@ async fn main() {
 
     // Initialize the token revocation store, loading any previously revoked JTIs
     // from disk so revocations survive server restarts.
-    let revocation_store = auth::RevocationStore::load_from_file(&revocations_path);
+    // load_from_file verifies the HMAC-SHA256 signature on the file before
+    // trusting its contents — a tampered or unsigned file is treated as fatal
+    // (fail-closed). A missing file is fine (first startup).
+    let revocation_store = match auth::RevocationStore::load_from_file(&revocations_path) {
+        Ok(store) => store,
+        Err(e) => {
+            error!(
+                "🔥 CRITICAL: Revocation store '{}' failed integrity check: {}",
+                revocations_path, e
+            );
+            std::process::exit(1);
+        }
+    };
     info!("🔒 Revocation store loaded from '{}'", revocations_path);
 
     // Spawn a background task to prune expired revocation entries every 60 seconds
