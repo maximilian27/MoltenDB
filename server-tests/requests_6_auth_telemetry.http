@@ -1015,6 +1015,129 @@ Authorization: Bearer {{col_token}}
 
 
 ### ══════════════════════════════════════════════════════════════════════════════
+### TOKEN REFRESH — POST /auth/refresh
+###
+### Scoped tokens can be silently refreshed by the client before they expire.
+### The client sends its current valid token in the Authorization header and
+### receives a new token with the same sub + scopes but a fresh exp and new jti.
+### The old jti is immediately revoked — it cannot be replayed after a refresh.
+###
+### Rules:
+###   - Only non-expired, non-revoked scoped tokens can be refreshed.
+###   - Root tokens (*:*:*) are NOT refreshable → 403 Forbidden.
+###     Root token expiry requires re-authentication via POST /login.
+###   - Expired tokens must re-authenticate via POST /login → 401 Unauthorized.
+###   - Optional body: { "ttl_secs": <u64> } — defaults to 3600 (1 hour).
+###
+### Response: { "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": <ttl_secs> }
+### ══════════════════════════════════════════════════════════════════════════════
+
+### Step 1 — Mint a short-lived scoped token to refresh
+POST http://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "refresh-demo-client",
+  "scopes": [
+    "read:laptops:*"
+  ],
+  "ttl_secs": 3600
+}
+
+###
+
+### Paste the token from Step 1 here:
+@refresh_token = PASTE_TOKEN_HERE
+
+###
+
+### Step 2 — Confirm the token works before refresh
+### ✅ Should return 200 OK
+GET http://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{refresh_token}}
+
+###
+
+### Step 3 — Refresh the token
+### ✅ Returns: { "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": 3600 }
+### The old token is immediately revoked after this call.
+POST http://localhost:1538/auth/refresh
+Content-Type: application/json
+Authorization: Bearer {{refresh_token}}
+
+{
+  "ttl_secs": 3600
+}
+
+###
+
+### Paste the new token from Step 3 here:
+@refreshed_token = PASTE_NEW_TOKEN_HERE
+
+###
+
+### Step 4 — Confirm the new token works
+### ✅ Should return 200 OK
+GET http://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{refreshed_token}}
+
+###
+
+### Step 5 — Confirm the OLD token is now rejected
+### ❌ Should return 401 Unauthorized: "Token has been revoked"
+### The old jti was added to the revocation store during the refresh.
+GET http://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{refresh_token}}
+
+###
+
+### ── Refresh without a body — uses default TTL of 3600 seconds ───────────────
+### ✅ Returns: { "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": 3600 }
+POST http://localhost:1538/auth/refresh
+Authorization: Bearer {{refreshed_token}}
+
+###
+
+### ── Refresh with a custom TTL ────────────────────────────────────────────────
+### ✅ Returns a token valid for 30 minutes instead of the default 1 hour.
+POST http://localhost:1538/auth/refresh
+Content-Type: application/json
+Authorization: Bearer {{refreshed_token}}
+
+{
+  "ttl_secs": 1800
+}
+
+###
+
+### ── Root token refresh is blocked ───────────────────────────────────────────
+### ❌ Returns 403 Forbidden — root tokens must re-authenticate via POST /login.
+### The root token is the one stored in @token (minted by POST /login).
+POST http://localhost:1538/auth/refresh
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "ttl_secs": 3600
+}
+
+###
+
+### ── Refreshing an already-revoked token ─────────────────────────────────────
+### ❌ Returns 401 Unauthorized — the old token was revoked in Step 3 above.
+POST http://localhost:1538/auth/refresh
+Content-Type: application/json
+Authorization: Bearer {{refresh_token}}
+
+{
+  "ttl_secs": 3600
+}
+
+###
+
+
+### ══════════════════════════════════════════════════════════════════════════════
 ### TELEMETRY
 ### ══════════════════════════════════════════════════════════════════════════════
 

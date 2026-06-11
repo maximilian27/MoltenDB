@@ -32,8 +32,8 @@ mod ws; // WebSocket upgrade handler and per-connection logic
 // Re-export handlers into scope for use in the router below.
 use route_handlers::{
     handle_delegate, handle_delete, handle_get, handle_health, handle_login, handle_metrics,
-    handle_rest_get, handle_rest_get_collection, handle_revoke, handle_set, handle_snapshot,
-    handle_stats_get, handle_stats_post, handle_update,
+    handle_refresh, handle_rest_get, handle_rest_get_collection, handle_revoke, handle_set,
+    handle_snapshot, handle_stats_get, handle_stats_post, handle_update,
 };
 use ws::ws_handler;
 
@@ -44,10 +44,10 @@ use moltendb_core::engine::{self, StorageBackend};
 use axum::extract::DefaultBodyLimit;
 use axum::{
     http::{header, HeaderValue},
-    middleware,
     // middleware = lets us insert async functions between the router and handlers.
-    routing::{delete, get, post},
+    middleware,
     // routing = defines which HTTP methods map to which handlers.
+    routing::{delete, get, post},
     Extension,
     Router,
 };
@@ -551,6 +551,7 @@ async fn main() {
         .route("/collections/{collection}", get(handle_rest_get_collection)) // GET all docs (paginated)
         .route("/collections/{collection}/docs/{key}", get(handle_rest_get)) // GET single doc
         .route("/auth/delegate", post(handle_delegate)) // Mint scoped tokens (admin only)
+        .route("/auth/refresh", post(handle_refresh)) // Refresh a scoped token (client-initiated)
         .route("/auth/tokens/{jti}", delete(handle_revoke)) // Revoke a token by JTI (admin only)
         .route("/system/metrics", get(handle_metrics)); // Resource usage — admin only
 

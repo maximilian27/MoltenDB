@@ -609,6 +609,85 @@ impl RevocationStore {
     }
 }
 
+// ─── Token refresh ────────────────────────────────────────────────────────────
+
+/// Refresh a scoped token. Returns a new `(token, jti)` pair with the same
+/// `sub` and `scopes` but a fresh `exp` and a new `jti`.
+///
+/// Rules:
+/// - The old token must be valid (non-expired, valid signature, not revoked).
+/// - Root tokens (`*:*:*`) are **not** refreshable — returns
+///   `Err(AuthError::RefreshNotAllowed)`.
+/// - The old `jti` is immediately added to the `RevocationStore` so the old
+///   token cannot be replayed after a successful refresh.
+///
+/// The caller is responsible for persisting the revocation store after this
+/// call (e.g. via `revocation_store.save_to_file(...).await`).
+pub fn refresh_scoped_token(
+    old_token: &str,
+    new_ttl_secs: u64,
+    revocation_store: &RevocationStore,
+) -> Result<(String, String), AuthError> {
+    // Verify signature + expiry.
+    let claims = verify_token(old_token).map_err(AuthError::InvalidToken)?;
+
+    // Fail-closed: reject tokens without a jti (cannot be revoked).
+    if claims.jti.is_empty() {
+        return Err(AuthError::InvalidToken(jsonwebtoken::errors::Error::from(
+            jsonwebtoken::errors::ErrorKind::InvalidToken,
+        )));
+    }
+
+    // Root tokens must not be refreshable — intentional friction.
+    if claims.is_admin() {
+        return Err(AuthError::RefreshNotAllowed);
+    }
+
+    // Check the revocation store — refuse to refresh an already-revoked token.
+    if revocation_store.is_revoked(&claims.jti) {
+        return Err(AuthError::TokenRevoked);
+    }
+
+    // Mint the new token with the same sub + scopes but a fresh exp + jti.
+    let (new_token, new_jti) =
+        create_scoped_token(&claims.sub, claims.scopes.clone(), new_ttl_secs)
+            .map_err(AuthError::InvalidToken)?;
+
+    // Revoke the old jti immediately — prevents replay attacks.
+    // Prune deadline = now + new_ttl_secs (safe upper bound; the old token
+    // would have expired within its original TTL anyway, but we use the new
+    // TTL as a conservative upper bound for the prune deadline).
+    let prune_after = Instant::now() + std::time::Duration::from_secs(new_ttl_secs);
+    revocation_store.revoke(&claims.jti, prune_after);
+
+    Ok((new_token, new_jti))
+}
+
+// ─── Auth error type ──────────────────────────────────────────────────────────
+
+/// Unified error type for public `moltendb-auth` API functions.
+#[derive(Debug)]
+pub enum AuthError {
+    /// The token failed signature or expiry validation.
+    InvalidToken(jsonwebtoken::errors::Error),
+    /// The token has been explicitly revoked.
+    TokenRevoked,
+    /// Attempted to refresh a root (`*:*:*`) token — not allowed.
+    RefreshNotAllowed,
+}
+
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthError::InvalidToken(e) => write!(f, "Invalid token: {}", e),
+            AuthError::TokenRevoked => write!(f, "Token has been revoked"),
+            AuthError::RefreshNotAllowed => {
+                write!(f, "Root tokens cannot be refreshed via this endpoint")
+            }
+        }
+    }
+}
+
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
 /// Axum middleware that enforces JWT authentication on protected routes.

@@ -477,6 +477,80 @@ pub async fn handle_rest_get_collection(
     )
 }
 
+/// POST /auth/refresh — exchange a valid scoped token for a new one with a fresh TTL.
+///
+/// The caller sends their current (non-expired, non-revoked) scoped token in the
+/// `Authorization: Bearer <token>` header. On success, the old token is immediately
+/// revoked and a new token with the same `sub` + `scopes` is returned.
+///
+/// Root tokens (`*:*:*`) are not refreshable — returns 403 Forbidden.
+/// Expired or revoked tokens return 401 Unauthorized.
+///
+/// Optional JSON body: `{ "ttl_secs": <u64> }` — defaults to 3600 (1 hour).
+///
+/// Response: `{ "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": <ttl_secs> }`
+pub async fn handle_refresh(
+    Extension(_claims): Extension<auth::Claims>,
+    Extension(revocation_store): Extension<auth::RevocationStore>,
+    Extension(revocations_path): Extension<auth::RevocationsPath>,
+    headers: axum::http::HeaderMap,
+    body: Option<Json<serde_json::Value>>,
+) -> (StatusCode, Json<Value>) {
+    // Extract the raw token from the Authorization header — we need it to pass
+    // to refresh_scoped_token (which re-verifies it internally).
+    let token = match headers
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+    {
+        Some(t) => t.to_string(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Missing or invalid Authorization header"})),
+            );
+        }
+    };
+
+    // Optional TTL from request body; default to 3600 seconds (1 hour).
+    let ttl_secs = body
+        .as_ref()
+        .and_then(|b| b.get("ttl_secs"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3600);
+
+    match auth::refresh_scoped_token(&token, ttl_secs, &revocation_store) {
+        Ok((new_token, new_jti)) => {
+            // Persist the updated revocation store (old jti is now revoked).
+            revocation_store.save_to_file(&revocations_path.0).await;
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "token": new_token,
+                    "jti": new_jti,
+                    "expires_in": ttl_secs,
+                })),
+            )
+        }
+        Err(auth::AuthError::RefreshNotAllowed) => (
+            StatusCode::FORBIDDEN,
+            Json(
+                json!({"error": "Root tokens cannot be refreshed — re-authenticate via POST /auth/login"}),
+            ),
+        ),
+        Err(auth::AuthError::TokenRevoked) => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Token has been revoked"})),
+        ),
+        Err(auth::AuthError::InvalidToken(_)) => (
+            StatusCode::UNAUTHORIZED,
+            Json(
+                json!({"error": "Invalid or expired token — re-authenticate via POST /auth/login"}),
+            ),
+        ),
+    }
+}
+
 /// DELETE /auth/tokens/:jti — revoke a JWT by its unique token ID.
 ///
 /// Only admin-scoped tokens may call this endpoint.

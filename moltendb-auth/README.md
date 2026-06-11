@@ -132,6 +132,16 @@ let store = RevocationStore::load_from_file("my_database.revocations.json")
 // File format: { "entries": { "<jti>": <prune_unix_secs> }, "sig": "<hmac-sha256-hex>" }
 revocation_store.save_to_file("my_database.revocations.json").await;
 
+// Refresh a scoped token — returns a new (token, jti) with the same sub + scopes.
+// Root tokens (*:*:*) return Err(AuthError::RefreshNotAllowed).
+// The old jti is immediately revoked in the store; persist afterwards.
+let (new_token, new_jti) = moltendb_auth::refresh_scoped_token(
+& old_token,
+3600, // new TTL in seconds
+& revocation_store,
+) ?;
+revocation_store.save_to_file("my_database.revocations.json").await;
+
 // Hash a password (Argon2id)
 let hash = moltendb_auth::hash_password("my-secret-password") ?;
 
@@ -164,6 +174,7 @@ let protected = Router::new()
 | `LoginResponse`    | `{ token: String }`                                                                                                                                                                       |
 | `DelegateRequest`  | `{ client_id: String, scopes: Vec<String>, ttl_secs: Option<u64> }`                                                                                                                       |
 | `DelegateResponse` | `{ token: String, jti: String, client_id: String, scopes: Vec<String> }` — `jti` is the UUID to use for revocation                                                                        |
+| `AuthError`        | `InvalidToken(jsonwebtoken::errors::Error)` \| `TokenRevoked` \| `RefreshNotAllowed` — returned by `refresh_scoped_token`                                                                 |
 | `RevocationStore`  | In-memory `DashMap<String, Instant>` — revoked JTIs with their prune deadline. Persisted as `{ "entries": {...}, "sig": "<hmac-sha256-hex>" }`; signature verified on load (fail-closed). |
 
 ---
