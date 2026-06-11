@@ -10,8 +10,12 @@
   `{ "ttl_secs": <u64> }` request body controls the new token's TTL (defaults to 3600 seconds). Response:
   `{ "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": <ttl_secs> }`. New public API in `moltendb-auth`:
   `refresh_scoped_token(old_token, new_ttl_secs, revocation_store) -> Result<(String, String), AuthError>`.
-  New `AuthError` enum (`InvalidToken`, `TokenRevoked`, `RefreshNotAllowed`) replaces raw `jsonwebtoken::errors::Error`
-  in the public refresh API.
+  New `AuthError` enum (`InvalidToken`, `TokenExpired`, `TokenRevoked`, `RefreshNotAllowed`, `RoleNotFound`,
+  `HashError`)
+  is now the unified error type for all public `moltendb-auth` API functions — `create_token`, `create_scoped_token`,
+  `verify_token`, `hash_password`, `verify_password`, `refresh_scoped_token`, and `UserStore::new` all return
+  `AuthError`
+  instead of raw `jsonwebtoken::errors::Error` or `bcrypt::BcryptError`.
 
 ### Security
 

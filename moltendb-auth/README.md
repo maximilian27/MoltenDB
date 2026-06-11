@@ -166,16 +166,16 @@ let protected = Router::new()
 
 ## Types
 
-| Type               | Description                                                                                                                                                                               |
-|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `UserStore`        | In-memory `DashMap<String, String>` — username → Argon2 hash                                                                                                                              |
-| `Claims`           | JWT payload: `sub` (username), `exp` (Unix timestamp), `scopes: Vec<String>`                                                                                                              |
-| `LoginRequest`     | `{ username: String, password: String }`                                                                                                                                                  |
-| `LoginResponse`    | `{ token: String }`                                                                                                                                                                       |
-| `DelegateRequest`  | `{ client_id: String, scopes: Vec<String>, ttl_secs: Option<u64> }`                                                                                                                       |
-| `DelegateResponse` | `{ token: String, jti: String, client_id: String, scopes: Vec<String> }` — `jti` is the UUID to use for revocation                                                                        |
-| `AuthError`        | `InvalidToken(jsonwebtoken::errors::Error)` \| `TokenRevoked` \| `RefreshNotAllowed` — returned by `refresh_scoped_token`                                                                 |
-| `RevocationStore`  | In-memory `DashMap<String, Instant>` — revoked JTIs with their prune deadline. Persisted as `{ "entries": {...}, "sig": "<hmac-sha256-hex>" }`; signature verified on load (fail-closed). |
+| Type               | Description                                                                                                                                                                                                            |
+|--------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `UserStore`        | In-memory `DashMap<String, String>` — username → Argon2 hash                                                                                                                                                           |
+| `Claims`           | JWT payload: `sub` (username), `exp` (Unix timestamp), `scopes: Vec<String>`                                                                                                                                           |
+| `LoginRequest`     | `{ username: String, password: String }`                                                                                                                                                                               |
+| `LoginResponse`    | `{ token: String }`                                                                                                                                                                                                    |
+| `DelegateRequest`  | `{ client_id: String, scopes: Vec<String>, ttl_secs: Option<u64> }`                                                                                                                                                    |
+| `DelegateResponse` | `{ token: String, jti: String, client_id: String, scopes: Vec<String> }` — `jti` is the UUID to use for revocation                                                                                                     |
+| `AuthError`        | `InvalidToken(jsonwebtoken::errors::Error)` \| `TokenExpired` \| `TokenRevoked` \| `RefreshNotAllowed` \| `RoleNotFound(String)` \| `HashError(bcrypt::BcryptError)` — unified error type for all public API functions |
+| `RevocationStore`  | In-memory `DashMap<String, Instant>` — revoked JTIs with their prune deadline. Persisted as `{ "entries": {...}, "sig": "<hmac-sha256-hex>" }`; signature verified on load (fail-closed).                              |
 
 ---
 

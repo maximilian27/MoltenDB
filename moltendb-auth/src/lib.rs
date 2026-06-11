@@ -278,7 +278,7 @@ fn get_secret() -> &'static str {
 ///
 /// The token expires 24 hours (86400 seconds) from now.
 /// Returns the compact serialization: "header.payload.signature"
-pub fn create_token(username: &str) -> Result<String, jsonwebtoken::errors::Error> {
+pub fn create_token(username: &str) -> Result<String, AuthError> {
     create_scoped_token(username, vec!["*:*:*".to_string()], 86400).map(|(token, _)| token)
 }
 
@@ -295,7 +295,7 @@ pub fn create_scoped_token(
     username: &str,
     scopes: Vec<String>,
     ttl_secs: u64,
-) -> Result<(String, String), jsonwebtoken::errors::Error> {
+) -> Result<(String, String), AuthError> {
     let expiration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -315,7 +315,14 @@ pub fn create_scoped_token(
         &Header::default(),
         &claims,
         &EncodingKey::from_secret(get_secret().as_bytes()),
-    )?;
+    )
+    .map_err(|e| {
+        if e.kind() == &jsonwebtoken::errors::ErrorKind::ExpiredSignature {
+            AuthError::TokenExpired
+        } else {
+            AuthError::InvalidToken(e)
+        }
+    })?;
 
     Ok((token, jti))
 }
@@ -327,13 +334,20 @@ pub fn create_scoped_token(
 ///   2. The expiry — has the token expired?
 ///
 /// Returns Err if the token is invalid, expired, or malformed.
-pub fn verify_token(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+pub fn verify_token(token: &str) -> Result<Claims, AuthError> {
     let token_data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(get_secret().as_bytes()),
         // Validation::default() checks signature + expiry automatically.
         &Validation::default(),
-    )?;
+    )
+    .map_err(|e| {
+        if e.kind() == &jsonwebtoken::errors::ErrorKind::ExpiredSignature {
+            AuthError::TokenExpired
+        } else {
+            AuthError::InvalidToken(e)
+        }
+    })?;
     Ok(token_data.claims)
 }
 
@@ -344,14 +358,14 @@ pub fn verify_token(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> 
 
 /// Hash a plaintext password using bcrypt. Returns the hash string.
 /// Store the hash, never the plaintext password.
-pub fn hash_password(password: &str) -> Result<String, bcrypt::BcryptError> {
-    bcrypt::hash(password, bcrypt::DEFAULT_COST)
+pub fn hash_password(password: &str) -> Result<String, AuthError> {
+    bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(AuthError::HashError)
 }
 
 /// Verify a plaintext password against a stored bcrypt hash.
 /// Returns true if the password matches, false otherwise.
-pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::BcryptError> {
-    bcrypt::verify(password, hash)
+pub fn verify_password(password: &str, hash: &str) -> Result<bool, AuthError> {
+    bcrypt::verify(password, hash).map_err(AuthError::HashError)
 }
 
 // ─── HMAC helpers ─────────────────────────────────────────────────────────────
@@ -629,7 +643,7 @@ pub fn refresh_scoped_token(
     revocation_store: &RevocationStore,
 ) -> Result<(String, String), AuthError> {
     // Verify signature + expiry.
-    let claims = verify_token(old_token).map_err(AuthError::InvalidToken)?;
+    let claims = verify_token(old_token)?;
 
     // Fail-closed: reject tokens without a jti (cannot be revoked).
     if claims.jti.is_empty() {
@@ -650,8 +664,7 @@ pub fn refresh_scoped_token(
 
     // Mint the new token with the same sub + scopes but a fresh exp + jti.
     let (new_token, new_jti) =
-        create_scoped_token(&claims.sub, claims.scopes.clone(), new_ttl_secs)
-            .map_err(AuthError::InvalidToken)?;
+        create_scoped_token(&claims.sub, claims.scopes.clone(), new_ttl_secs)?;
 
     // Revoke the old jti immediately — prevents replay attacks.
     // Prune deadline = now + new_ttl_secs (safe upper bound; the old token
@@ -665,25 +678,34 @@ pub fn refresh_scoped_token(
 
 // ─── Auth error type ──────────────────────────────────────────────────────────
 
-/// Unified error type for public `moltendb-auth` API functions.
+/// Unified error type for all public `moltendb-auth` API functions.
 #[derive(Debug)]
 pub enum AuthError {
-    /// The token failed signature or expiry validation.
+    /// The token failed signature validation or is otherwise malformed.
     InvalidToken(jsonwebtoken::errors::Error),
-    /// The token has been explicitly revoked.
+    /// The token's `exp` claim is in the past — it has expired.
+    TokenExpired,
+    /// The token has been explicitly revoked via the revocation store.
     TokenRevoked,
     /// Attempted to refresh a root (`*:*:*`) token — not allowed.
     RefreshNotAllowed,
+    /// A role name was referenced that does not exist in the `RoleStore`.
+    RoleNotFound(String),
+    /// A bcrypt password hashing or verification operation failed.
+    HashError(bcrypt::BcryptError),
 }
 
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AuthError::InvalidToken(e) => write!(f, "Invalid token: {}", e),
+            AuthError::TokenExpired => write!(f, "Token has expired"),
             AuthError::TokenRevoked => write!(f, "Token has been revoked"),
             AuthError::RefreshNotAllowed => {
                 write!(f, "Root tokens cannot be refreshed via this endpoint")
             }
+            AuthError::RoleNotFound(role) => write!(f, "Role not found: {}", role),
+            AuthError::HashError(e) => write!(f, "Password hashing error: {}", e),
         }
     }
 }
@@ -801,7 +823,7 @@ impl UserStore {
     /// Returns `Err` if bcrypt fails to hash the password (e.g. RNG exhaustion).
     /// The caller should treat this as a fatal startup error — a store with no
     /// users would permanently lock out the admin with no indication.
-    pub fn new(username: String, password: String) -> Result<Self, bcrypt::BcryptError> {
+    pub fn new(username: String, password: String) -> Result<Self, AuthError> {
         let store = Self {
             users: Arc::new(DashMap::new()),
         };

@@ -542,11 +542,17 @@ pub async fn handle_refresh(
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "Token has been revoked"})),
         ),
+        Err(auth::AuthError::TokenExpired) => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Token has expired — re-authenticate via POST /auth/login"})),
+        ),
         Err(auth::AuthError::InvalidToken(_)) => (
             StatusCode::UNAUTHORIZED,
-            Json(
-                json!({"error": "Invalid or expired token — re-authenticate via POST /auth/login"}),
-            ),
+            Json(json!({"error": "Invalid token — re-authenticate via POST /auth/login"})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Unexpected error: {}", e)})),
         ),
     }
 }
