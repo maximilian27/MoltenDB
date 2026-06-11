@@ -1,5 +1,16 @@
 ﻿# [1.0.0-rc11] (Jun 11, 2026)
 
+### Refactoring
+
+* **`moltendb-server` internal structure** — extracted shared types and constants into dedicated modules, mirroring
+  the pattern used in `moltendb-core` and `moltendb-auth`:
+  - `src/types.rs` — `AppState` type alias for the 6-tuple Axum state (`Db`, `UserStore`, `usize`, `usize`, `String`,
+    `u64`). All handler signatures and `ws_handler` now use `State<AppState>` instead of repeating the full tuple type.
+  - `src/constants.rs` — named constants replacing all magic numbers and strings: `DEFAULT_DELEGATE_TTL_SECS` (3600),
+    `DEFAULT_REVOKE_TTL_SECS` (86400), `DEFAULT_ROOT_TOKEN_TTL_SECS` (86400), `ACTION_READ`, `ACTION_WRITE`,
+    `ACTION_DELETE`, `ADMIN_SCOPE`, `REVOCATION_PRUNE_INTERVAL_SECS` (60), `RATE_LIMIT_CLEANUP_INTERVAL_SECS` (300),
+    `GRACEFUL_SHUTDOWN_TIMEOUT_SECS` (30).
+
 ### New Features
 
 * **Configurable root token TTL** — the TTL of the root JWT issued by `POST /auth/login` is now configurable via

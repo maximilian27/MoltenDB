@@ -5,6 +5,8 @@
 use moltendb_auth as auth;
 use moltendb_core::engine;
 
+use crate::types::AppState;
+
 use axum::{
     extract::ws::Utf8Bytes,
     extract::{
@@ -25,14 +27,7 @@ use tracing::warn;
 /// handshake. The actual socket logic runs in `handle_socket`.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
-    State((db, _, _max_body_size, _, _, _)): State<(
-        engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((db, _, _max_body_size, _, _, _)): State<AppState>,
     Extension(revocation_store): Extension<auth::RevocationStore>,
 ) -> impl axum::response::IntoResponse {
     // `on_upgrade` completes the handshake and calls our handler with the socket.

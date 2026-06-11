@@ -23,10 +23,12 @@
 // Each `mod X` tells Rust to look for src/X.rs and compile it as part of this crate.
 use moltendb_auth as auth;
 // JWT authentication, user store, auth middleware
+mod constants; // Server-level constants (magic numbers, action strings, intervals)
 mod rate_limit; // Per-IP sliding-window rate limiter
 mod route_handlers; // HTTP route handlers (one per API endpoint)
 mod server; // TLS config loading and graceful shutdown signal
 mod ttl_sweep; // Background TTL eviction sweep (event-driven min-heap)
+mod types; // Shared types (AppState)
 mod ws; // WebSocket upgrade handler and per-connection logic
 
 // Re-export handlers into scope for use in the router below.
@@ -45,10 +47,10 @@ use axum::extract::DefaultBodyLimit;
 use axum::{
     http::{header, HeaderValue},
     middleware,
-    routing::{delete, get, post},
     // middleware = lets us insert async functions between the router and handlers.
-    Extension,
+    routing::{delete, get, post},
     // routing = defines which HTTP methods map to which handlers.
+    Extension,
     Router,
 };
 use std::net::SocketAddr;
@@ -118,7 +120,7 @@ struct Config {
     // Note: jwt_secret is Option<String> so we can detect if it's unset and refuse to start.
     /// Root token TTL in seconds. Controls how long the root JWT issued by POST /login is valid.
     /// Default: 86400 (24 hours). [env: MOLTENDB_ROOT_TOKEN_TTL]
-    #[arg(long, default_value = "86400", env = "MOLTENDB_ROOT_TOKEN_TTL")]
+    #[arg(long, default_value_t = constants::DEFAULT_ROOT_TOKEN_TTL_SECS, env = "MOLTENDB_ROOT_TOKEN_TTL")]
     root_token_ttl: u64,
 
     /// Root username [env: MOLTENDB_ROOT_USER]
@@ -500,7 +502,9 @@ async fn main() {
     let prune_store = revocation_store.clone();
     let prune_revocations_path = revocations_path.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            constants::REVOCATION_PRUNE_INTERVAL_SECS,
+        ));
         loop {
             interval.tick().await;
             prune_store.prune();
@@ -528,17 +532,19 @@ async fn main() {
     // Without this, the rate limiter's DashMap would grow forever as new IPs connect.
     let cleanup_limiter = rate_limiter.clone();
     tokio::spawn(async move {
-        // Run cleanup every 5 minutes (300 seconds).
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        // Run cleanup every 5 minutes.
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            constants::RATE_LIMIT_CLEANUP_INTERVAL_SECS,
+        ));
         loop {
             interval.tick().await;
             cleanup_limiter.cleanup();
         }
     });
 
-    // The app state is a tuple of (Db, UserStore, max_body_size) injected into every handler via State<...>.
+    // The app state is injected into every handler via State<AppState>.
     // Axum clones this for each request — Db and UserStore are cheap to clone (Arc-backed).
-    let app_state = (
+    let app_state: types::AppState = (
         db.clone(),
         users,
         cfg.max_body_size,
@@ -705,7 +711,9 @@ async fn main() {
         info!("⏳ Draining in-flight requests (up to 30s)...");
         // Tell the server to stop accepting new connections and wait up to 30s
         // for all in-flight requests to complete before forcibly closing them.
-        shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
+        shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(
+            constants::GRACEFUL_SHUTDOWN_TIMEOUT_SECS,
+        )));
     });
 
     if cfg.dev_mode {

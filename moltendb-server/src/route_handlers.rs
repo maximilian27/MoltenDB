@@ -11,7 +11,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 use moltendb_auth as auth;
-use moltendb_core::{engine, handlers};
+use moltendb_core::handlers;
+
+use crate::constants::{
+    ACTION_DELETE, ACTION_READ, ACTION_WRITE, ADMIN_SCOPE, DEFAULT_DELEGATE_TTL_SECS,
+    DEFAULT_REVOKE_TTL_SECS,
+};
+use crate::types::AppState;
 
 use axum::{
     extract::{Extension, Path, Query as AxumQuery, State},
@@ -35,7 +41,7 @@ use sysinfo::{Disks, System};
 /// Scope format: "action:collection:document_key"
 /// Examples: "read:laptops:lp1", "write:users:*", "read:*:*", "*:*:*"
 pub async fn handle_delegate(
-    State((_, _, _, _, root_username, _)): State<(engine::Db, auth::UserStore, usize, usize, String, u64)>,
+    State((_, _, _, _, root_username, _)): State<AppState>,
     Extension(claims): axum::extract::Extension<auth::Claims>,
     Json(payload): Json<auth::DelegateRequest>,
 ) -> Result<Json<auth::DelegateResponse>, (StatusCode, Json<Value>)> {
@@ -48,7 +54,7 @@ pub async fn handle_delegate(
     }
 
     // Only the root user may mint *:*:* (admin) tokens.
-    if payload.scopes.iter().any(|s| s == "*:*:*") && claims.sub != root_username {
+    if payload.scopes.iter().any(|s| s == ADMIN_SCOPE) && claims.sub != root_username {
         return Err((
             StatusCode::FORBIDDEN,
             Json(json!({"error": "Only the root user can mint '*:*:*' (admin) tokens"})),
@@ -57,7 +63,7 @@ pub async fn handle_delegate(
 
     // Validate that every scope is well-formed.
     for scope in &payload.scopes {
-        if scope != "*:*:*" {
+        if scope != ADMIN_SCOPE {
             let parts: Vec<&str> = scope.splitn(3, ':').collect();
             if parts.len() != 3 {
                 return Err((
@@ -70,7 +76,7 @@ pub async fn handle_delegate(
         }
     }
 
-    let ttl = payload.ttl_secs.unwrap_or(3600);
+    let ttl = payload.ttl_secs.unwrap_or(DEFAULT_DELEGATE_TTL_SECS);
     let (token, jti) = auth::create_scoped_token(&payload.client_id, payload.scopes.clone(), ttl)
         .map_err(|e| {
         (
@@ -94,14 +100,7 @@ pub async fn handle_delegate(
 /// Returns 401 Unauthorized if credentials are wrong.
 /// Returns 500 Internal Server Error if token creation fails.
 pub async fn handle_login(
-    State((_, users, _, _, _, root_token_ttl)): State<(
-        engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((_, users, _, _, _, root_token_ttl)): State<AppState>,
     Json(payload): Json<auth::LoginRequest>,
 ) -> Result<Json<auth::LoginResponse>, (StatusCode, Json<Value>)> {
     // Verify the username and password against the in-memory user store.
@@ -128,14 +127,7 @@ pub async fn handle_login(
 /// Body: `{ "collection": "users", "data": { "u1": { "name": "Alice" } } }`
 /// Requires: write:{collection}:* scope (or admin).
 pub async fn handle_set(
-    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
-        engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<AppState>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -143,7 +135,7 @@ pub async fn handle_set(
         .get(PayloadField::Collection.as_str())
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if !claims.has_collection_access("write", collection) {
+    if !claims.has_collection_access(ACTION_WRITE, collection) {
         return (
             StatusCode::FORBIDDEN,
             Json(
@@ -163,14 +155,7 @@ pub async fn handle_set(
 /// Body: `{ "collection": "users", "data": { "u1": { "role": "admin" } } }`
 /// Requires: write:{collection}:* scope (or admin).
 pub async fn handle_update(
-    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
-        engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<AppState>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -178,7 +163,7 @@ pub async fn handle_update(
         .get(PayloadField::Collection.as_str())
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if !claims.has_collection_access("write", collection) {
+    if !claims.has_collection_access(ACTION_WRITE, collection) {
         return (
             StatusCode::FORBIDDEN,
             Json(
@@ -204,14 +189,7 @@ pub async fn handle_update(
 ///     - If no `"keys"` is specified, the result is filtered to only the docs the
 ///       token is allowed to read.
 pub async fn handle_get(
-    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
-        engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<AppState>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -221,7 +199,7 @@ pub async fn handle_get(
         .unwrap_or("");
 
     // Fast path: collection-level (or broader) access — no filtering needed.
-    if claims.has_collection_access("read", collection) {
+    if claims.has_collection_access(ACTION_READ, collection) {
         let (code, body) =
             handlers::process_get(&db, &payload, max_body_size, max_keys_per_request);
         return (
@@ -232,7 +210,7 @@ pub async fn handle_get(
 
     // Slow path: token only has document-level scopes.
     // Collect the explicit keys this token may read in this collection.
-    let allowed_keys: Vec<String> = claims.allowed_keys("read", collection);
+    let allowed_keys: Vec<String> = claims.allowed_keys(ACTION_READ, collection);
     if allowed_keys.is_empty() {
         return (
             StatusCode::FORBIDDEN,
@@ -253,7 +231,7 @@ pub async fn handle_get(
             _ => vec![],
         };
         for k in &requested {
-            if !claims.has_access("read", collection, k) {
+            if !claims.has_access(ACTION_READ, collection, k) {
                 return (
                     StatusCode::FORBIDDEN,
                     Json(
@@ -275,8 +253,8 @@ pub async fn handle_get(
     // If the token has prefix-wildcard scopes (e.g. "read:laptops:store_A_*"), inject
     // the prefixes into the payload so the core engine can gate keys before the expensive
     // AST evaluator runs (Prefix Gatekeeper). Otherwise pre-scope to exact allowed keys.
-    if claims.has_prefix_wildcard("read", collection) {
-        let prefixes = claims.extract_prefixes("read", collection);
+    if claims.has_prefix_wildcard(ACTION_READ, collection) {
+        let prefixes = claims.extract_prefixes(ACTION_READ, collection);
         // Strip any client-supplied _allowed_prefixes first (never trust client input).
         let mut scoped_payload = payload.clone();
         scoped_payload
@@ -310,14 +288,7 @@ pub async fn handle_get(
 /// Body (drop all): `{ "collection": "users", "drop": true }`
 /// Requires: delete:{collection}:* scope (or admin).
 pub async fn handle_delete(
-    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
-        engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<AppState>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -325,7 +296,7 @@ pub async fn handle_delete(
         .get(PayloadField::Collection.as_str())
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if !claims.has_collection_access("delete", collection) {
+    if !claims.has_collection_access(ACTION_DELETE, collection) {
         return (
             StatusCode::FORBIDDEN,
             Json(
@@ -342,14 +313,7 @@ pub async fn handle_delete(
 
 #[cfg(feature = "schema")]
 pub async fn handle_schema(
-    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
-        engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<AppState>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let (code, body) = handlers::process_schema(&db, &payload, max_body_size, max_keys_per_request);
@@ -362,7 +326,7 @@ pub async fn handle_schema(
 /// POST /snapshot — take a snapshot of the database on demand.
 /// Requires: admin scope.
 pub async fn handle_snapshot(
-    State((db, _, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String, u64)>,
+    State((db, _, _, _, _, _)): State<AppState>,
     Extension(claims): Extension<auth::Claims>,
 ) -> (StatusCode, Json<Value>) {
     if !claims.is_admin() {
@@ -382,7 +346,7 @@ pub async fn handle_snapshot(
 /// GET  /stats — same, no body required (returns all collections).
 /// Requires: read scope or admin.
 pub async fn handle_stats_post(
-    State((db, _, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String, u64)>,
+    State((db, _, _, _, _, _)): State<AppState>,
     Extension(_claims): Extension<auth::Claims>,
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
@@ -394,7 +358,7 @@ pub async fn handle_stats_post(
 }
 
 pub async fn handle_stats_get(
-    State((db, _, _, _, _, _)): State<(engine::Db, auth::UserStore, usize, usize, String, u64)>,
+    State((db, _, _, _, _, _)): State<AppState>,
     Extension(_claims): Extension<auth::Claims>,
 ) -> (StatusCode, Json<Value>) {
     let (code, body) = handlers::process_stats(&db, &serde_json::Value::Object(Default::default()));
@@ -410,18 +374,11 @@ pub async fn handle_stats_get(
 ///   POST /get { "collection": collection, "keys": key }
 /// Requires: read:{collection}:{key} scope (or read:{collection}:* or read:*:* or admin).
 pub async fn handle_rest_get(
-    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
-        engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<AppState>,
     Extension(claims): Extension<auth::Claims>,
     Path((collection, key)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
-    if !claims.has_access("read", &collection, &key) {
+    if !claims.has_access(ACTION_READ, &collection, &key) {
         return (
             StatusCode::FORBIDDEN,
             Json(
@@ -451,19 +408,12 @@ pub async fn handle_rest_get(
 ///
 /// Requires: read:{collection}:* scope (or admin).
 pub async fn handle_rest_get_collection(
-    State((db, _, max_body_size, max_keys_per_request, _, _)): State<(
-        engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((db, _, max_body_size, max_keys_per_request, _, _)): State<AppState>,
     Extension(claims): Extension<auth::Claims>,
     Path(collection): Path<String>,
     AxumQuery(params): AxumQuery<QueryMap<String, String>>,
 ) -> (StatusCode, Json<Value>) {
-    if !claims.has_collection_access("read", &collection) {
+    if !claims.has_collection_access(ACTION_READ, &collection) {
         return (
             StatusCode::FORBIDDEN,
             Json(
@@ -526,12 +476,12 @@ pub async fn handle_refresh(
         }
     };
 
-    // Optional TTL from request body; default to 3600 seconds (1 hour).
+    // Optional TTL from request body; default to DEFAULT_DELEGATE_TTL_SECS (1 hour).
     let ttl_secs = body
         .as_ref()
         .and_then(|b| b.get("ttl_secs"))
         .and_then(|v| v.as_u64())
-        .unwrap_or(3600);
+        .unwrap_or(DEFAULT_DELEGATE_TTL_SECS);
 
     match auth::refresh_scoped_token(&token, ttl_secs, &revocation_store) {
         Ok((new_token, new_jti)) => {
@@ -616,7 +566,7 @@ pub async fn handle_revoke(
         let remaining = exp_secs.saturating_sub(now_secs);
         Instant::now() + Duration::from_secs(remaining)
     } else {
-        Instant::now() + Duration::from_secs(86400)
+        Instant::now() + Duration::from_secs(DEFAULT_REVOKE_TTL_SECS)
     };
 
     revocation_store.revoke(&jti, prune_after);
@@ -645,14 +595,7 @@ pub async fn handle_health() -> (StatusCode, Json<Value>) {
 ///
 /// Admin-only. Returns uptime, process memory, host RAM/disk, and database internals.
 pub async fn handle_metrics(
-    State((db, _, _, _, _, _)): State<(
-        moltendb_core::engine::Db,
-        auth::UserStore,
-        usize,
-        usize,
-        String,
-        u64,
-    )>,
+    State((db, _, _, _, _, _)): State<AppState>,
     Extension(claims): Extension<auth::Claims>,
 ) -> (StatusCode, Json<Value>) {
     if !claims.is_admin() {
