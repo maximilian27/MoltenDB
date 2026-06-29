@@ -30,3 +30,6 @@ pub use token::{create_scoped_token, create_token, refresh_scoped_token, verify_
 pub use types::{
     AuthError, Claims, DelegateRequest, DelegateResponse, LoginRequest, LoginResponse,
 };
+
+#[cfg(test)]
+mod tests;

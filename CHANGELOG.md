@@ -1,5 +1,21 @@
 ﻿# [1.0.0-rc11] (Jun 11, 2026)
 
+### Testing
+
+* **`moltendb-auth` unit test suite** — 25 automated tests added in `moltendb-auth/src/tests.rs`, covering all
+  critical auth paths:
+  - `refresh_scoped_token`: happy path (new token issued, old `jti` revoked), admin token blocked
+    (`RefreshNotAllowed`), expired token rejected (`TokenExpired`), revoked token rejected (`TokenRevoked`), replay
+    protection (second refresh with old token fails), scope preservation.
+  - `verify_token`: valid token succeeds, tampered token rejected, expired token returns `TokenExpired`.
+  - `RevocationStore::load_from_file`: missing file → `Ok(empty store)`, tampered HMAC signature → `Err`, missing
+    `sig` field → `Err`, round-trip save/load → entry survives, expired entries silently dropped on load.
+  - `UserStore::new`: valid credentials succeed, wrong password rejected, unknown username rejected.
+  - `Claims`: `is_admin` true/false, `has_access` exact match / collection wildcard / admin wildcard.
+  - `key_matches`: full wildcard, prefix wildcard, exact match.
+  - `tokio` dependency updated to include `macros` and `rt` features to support `#[tokio::test]` for async
+    `save_to_file` round-trip tests.
+
 ### Refactoring
 
 * **`moltendb-server` internal structure** — extracted shared types and constants into dedicated modules, mirroring
