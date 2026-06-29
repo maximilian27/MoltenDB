@@ -447,7 +447,7 @@ pub async fn handle_rest_get_collection(
 /// `Authorization: Bearer <token>` header. On success, the old token is immediately
 /// revoked and a new token with the same `sub` + `scopes` is returned.
 ///
-/// Root tokens (`*:*:*`) are not refreshable — returns 403 Forbidden.
+/// Admin tokens (`*:*:*`) are not refreshable — returns 403 Forbidden.
 /// Expired or revoked tokens return 401 Unauthorized.
 ///
 /// Optional JSON body: `{ "ttl_secs": <u64> }` — defaults to 3600 (1 hour).
@@ -499,7 +499,7 @@ pub async fn handle_refresh(
         Err(auth::AuthError::RefreshNotAllowed) => (
             StatusCode::FORBIDDEN,
             Json(
-                json!({"error": "Root tokens cannot be refreshed — re-authenticate via POST /auth/login"}),
+                json!({"error": "Admin tokens cannot be refreshed — re-delegate via POST /auth/delegate"}),
             ),
         ),
         Err(auth::AuthError::TokenRevoked) => (

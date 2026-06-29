@@ -109,7 +109,7 @@ pub fn verify_token(token: &str) -> Result<Claims, AuthError> {
 ///
 /// Rules:
 /// - The old token must be valid (non-expired, valid signature, not revoked).
-/// - Root tokens (`*:*:*`) are **not** refreshable — returns
+/// - Admin tokens (`*:*:*`) are **not** refreshable — returns
 ///   `Err(AuthError::RefreshNotAllowed)`.
 /// - The old `jti` is immediately added to the `RevocationStore` so the old
 ///   token cannot be replayed after a successful refresh.
@@ -133,7 +133,7 @@ pub fn refresh_scoped_token(
         )));
     }
 
-    // Root tokens must not be refreshable — intentional friction.
+    // Admin tokens must not be refreshable — intentional friction.
     if claims.is_admin() {
         return Err(AuthError::RefreshNotAllowed);
     }

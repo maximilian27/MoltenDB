@@ -1026,8 +1026,8 @@ Authorization: Bearer {{col_token}}
 ###
 ### Rules:
 ###   - Only non-expired, non-revoked scoped tokens can be refreshed.
-###   - Root tokens (*:*:*) are NOT refreshable → 403 Forbidden.
-###     Root token expiry requires re-authentication via POST /login.
+###   - Admin tokens (*:*:*) are NOT refreshable → 403 Forbidden.
+###     Admin token expiry requires re-delegation via POST /auth/delegate.
 ###   - Expired tokens must re-authenticate via POST /login → 401 Unauthorized.
 ###   - Optional body: { "ttl_secs": <u64> } — defaults to 3600 (1 hour).
 ###
@@ -1113,9 +1113,9 @@ Authorization: Bearer {{refreshed_token}}
 
 ###
 
-### ── Root token refresh is blocked ───────────────────────────────────────────
-### ❌ Returns 403 Forbidden — root tokens must re-authenticate via POST /login.
-### The root token is the one stored in @token (minted by POST /login).
+### ── Admin token refresh is blocked ────────────────────────────────────────
+### ❌ Returns 403 Forbidden — admin tokens must re-delegate via POST /auth/delegate.
+### The admin token is the one stored in @token (minted by POST /login for the root user).
 POST http://localhost:1538/auth/refresh
 Content-Type: application/json
 Authorization: Bearer {{token}}

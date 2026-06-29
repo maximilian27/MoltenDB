@@ -208,7 +208,10 @@ impl std::fmt::Display for AuthError {
             AuthError::TokenExpired => write!(f, "Token has expired"),
             AuthError::TokenRevoked => write!(f, "Token has been revoked"),
             AuthError::RefreshNotAllowed => {
-                write!(f, "Root tokens cannot be refreshed via this endpoint")
+                write!(
+                    f,
+                    "Admin tokens (*:*:*) cannot be refreshed via this endpoint — re-delegate via POST /auth/delegate"
+                )
             }
             AuthError::RoleNotFound(role) => write!(f, "Role not found: {}", role),
             AuthError::HashError(e) => write!(f, "Password hashing error: {}", e),

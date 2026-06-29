@@ -134,7 +134,7 @@ let store = RevocationStore::load_from_file("my_database.revocations.json")
 revocation_store.save_to_file("my_database.revocations.json").await;
 
 // Refresh a scoped token — returns a new (token, jti) with the same sub + scopes.
-// Root tokens (*:*:*) return Err(AuthError::RefreshNotAllowed).
+// Admin tokens (*:*:*) return Err(AuthError::RefreshNotAllowed).
 // The old jti is immediately revoked in the store; persist afterwards.
 let (new_token, new_jti) = moltendb_auth::refresh_scoped_token(
 & old_token,

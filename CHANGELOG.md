@@ -21,9 +21,9 @@
 
 * **`POST /auth/refresh` — client-initiated scoped token refresh** — clients can exchange a valid, non-expired scoped
   token for a new one with the same `sub` and `scopes` but a fresh `exp` and a new `jti`. The old `jti` is immediately
-  added to the `RevocationStore` after the new token is issued, preventing replay attacks. Root tokens (`*:*:*`) are
+  added to the `RevocationStore` after the new token is issued, preventing replay attacks. Admin tokens (`*:*:*`) are
   explicitly not refreshable — the endpoint returns `403 Forbidden` with a clear message directing the caller to
-  re-authenticate via `POST /auth/login`. Expired or revoked tokens return `401 Unauthorized`. An optional
+  re-delegate via `POST /auth/delegate`. Expired or revoked tokens return `401 Unauthorized`. An optional
   `{ "ttl_secs": <u64> }` request body controls the new token's TTL (defaults to 3600 seconds). Response:
   `{ "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": <ttl_secs> }`. New public API in `moltendb-auth`:
   `refresh_scoped_token(old_token, new_ttl_secs, revocation_store) -> Result<(String, String), AuthError>`.
