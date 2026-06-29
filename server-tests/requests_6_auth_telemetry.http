@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = @token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MDc2NzU2Nywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI4MmE2ZTc2LWE2ODYtNGM3ZC05ZjE4LTIyNzBmYTBmNDllZCJ9.Q9ysF1UhBXIECfUxf_Qio--ZvIJvas7QQ7vcQvYiMtk
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4Mjg0MzUxMSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjIxYjNmNGUwLTFhOGQtNDMwMy04ODM4LTU5Y2ZkN2E3ODI3OCJ9.p4z1X0EJZY34O7A7wQUa-V3ZuEOr_Nql9wVD9DwR49Y
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
@@ -317,7 +317,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3Nzg4MzY1OTAsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdLCJqdGkiOiI1YmE1NWYyOS0zY2ExLTRlMTYtYmFmMC1hOWNkOWNiNzdmZDgifQ.FFCqibQOqVPYIu-vr0ue2CvbTogLWS9W8Ms-Kb67ujc
+@doc_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaWVsZC1yZXAiLCJleHAiOjE3ODExODY3ODUsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6bHAxIiwicmVhZDpsYXB0b3BzOmxwMiJdLCJqdGkiOiIyOTExZGQ5YS0xNjM4LTRlMzctODM1Ni0yMWM4OTIzYjRkZjMifQ.CVtS-xsx1UNUQfdfRTe5vy7YfIzaxCOUMeVr2ODKfcA
 
 ### ✅ Fetch lp1 — in scope
 GET http://localhost:1538/collections/laptops/docs/lp1
@@ -500,7 +500,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@col_read_token = PASTE_TOKEN_HERE
+@col_read_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyZWFkLW9ubHktZGFzaGJvYXJkIiwiZXhwIjoxNzgxMTg2ODc5LCJzY29wZXMiOlsicmVhZDpsYXB0b3BzOioiXSwianRpIjoiNDQ1Yzc3NGItZWUwMy00ZWE3LTk4NTUtMWY3ZWRjOGRhYjM5In0.YlLT7lUpNO9fvrBB_3zSxFDyJQZ-vIBlddS8QcKeI4o
 
 ### ✅ Fetch any single document
 GET http://localhost:1538/collections/laptops/docs/lp1
@@ -590,7 +590,7 @@ Authorization: Bearer {{token}}
 
 ###
 
-@col_rw_token = PASTE_TOKEN_HERE
+@col_rw_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsYXB0b3BzLXNlcnZpY2UiLCJleHAiOjE3ODEyNjk3MjUsInNjb3BlcyI6WyJyZWFkOmxhcHRvcHM6KiIsIndyaXRlOmxhcHRvcHM6KiJdLCJqdGkiOiI3MzBmNTdhYy1mZWFlLTRhYWMtYTEyNC05M2M4YjE3MDAyMmMifQ.xcff6f1TSt0dewB-Fh7RlabiGjyZoDCaHuVe5epNLZI
 
 ### ✅ Read a document
 GET http://localhost:1538/collections/laptops/docs/lp1
@@ -624,9 +624,11 @@ Authorization: Bearer {{col_rw_token}}
 
 {
   "collection": "laptops",
-  "key": "lp_new",
   "data": {
-    "price": 1799
+    "lp_new": {
+      "in_stock": true,
+      "price": 1799
+    }
   }
 }
 
@@ -966,9 +968,9 @@ Authorization: Bearer {{token}}
 ###
 
 ### Paste the token from Step 1 here:
-@revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZW1wLWNsaWVudCIsImV4cCI6MTc3NzU2ODY4Miwic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6ImZkMWNjNWMzLTgzYTQtNDQzZS04NmU1LWQzZTczNmJmMjViZiJ9.7TvdjVFHO-h1KrtILoBiBA_AMrVGL-b0QvtLncJsbAQ
+@revoke_token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZW1wLWNsaWVudCIsImV4cCI6MTc4MTE5MTI1OSwic2NvcGVzIjpbInJlYWQ6bGFwdG9wczoqIl0sImp0aSI6Ijk4YmJhOTE5LTE2MGEtNGI4Yi04OTg0LTdkYmY0NDA0ZmJmOSJ9.w51iF6E791IDtxu3cSNS9U6CWCxTTh02uTEOAanzF84
 ### Paste only the jti UUID from the decoded payload here (NOT the base64 segment):
-@revoke_jti = fd1cc5c3-83a4-443e-86e5-d3e736bf25bf
+@revoke_jti = 98bba919-160a-4b8b-8984-7dbf4404fbf9
 
 ###
 
@@ -1009,6 +1011,129 @@ Authorization: Bearer {{col_token}}
 
 {
   "exp": 9999999999
+}
+
+###
+
+
+### ══════════════════════════════════════════════════════════════════════════════
+### TOKEN REFRESH — POST /auth/refresh
+###
+### Scoped tokens can be silently refreshed by the client before they expire.
+### The client sends its current valid token in the Authorization header and
+### receives a new token with the same sub + scopes but a fresh exp and new jti.
+### The old jti is immediately revoked — it cannot be replayed after a refresh.
+###
+### Rules:
+###   - Only non-expired, non-revoked scoped tokens can be refreshed.
+###   - Admin tokens (*:*:*) are NOT refreshable → 403 Forbidden.
+###     Admin token expiry requires re-delegation via POST /auth/delegate.
+###   - Expired tokens must re-authenticate via POST /login → 401 Unauthorized.
+###   - Optional body: { "ttl_secs": <u64> } — defaults to 3600 (1 hour).
+###
+### Response: { "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": <ttl_secs> }
+### ══════════════════════════════════════════════════════════════════════════════
+
+### Step 1 — Mint a short-lived scoped token to refresh
+POST http://localhost:1538/auth/delegate
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "client_id": "refresh-demo-client",
+  "scopes": [
+    "read:laptops:*"
+  ],
+  "ttl_secs": 3600
+}
+
+###
+
+### Paste the token from Step 1 here:
+@refresh_token = PASTE_TOKEN_HERE
+
+###
+
+### Step 2 — Confirm the token works before refresh
+### ✅ Should return 200 OK
+GET http://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{refresh_token}}
+
+###
+
+### Step 3 — Refresh the token
+### ✅ Returns: { "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": 3600 }
+### The old token is immediately revoked after this call.
+POST http://localhost:1538/auth/refresh
+Content-Type: application/json
+Authorization: Bearer {{refresh_token}}
+
+{
+  "ttl_secs": 3600
+}
+
+###
+
+### Paste the new token from Step 3 here:
+@refreshed_token = PASTE_NEW_TOKEN_HERE
+
+###
+
+### Step 4 — Confirm the new token works
+### ✅ Should return 200 OK
+GET http://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{refreshed_token}}
+
+###
+
+### Step 5 — Confirm the OLD token is now rejected
+### ❌ Should return 401 Unauthorized: "Token has been revoked"
+### The old jti was added to the revocation store during the refresh.
+GET http://localhost:1538/collections/laptops/docs/lp1
+Authorization: Bearer {{refresh_token}}
+
+###
+
+### ── Refresh without a body — uses default TTL of 3600 seconds ───────────────
+### ✅ Returns: { "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": 3600 }
+POST http://localhost:1538/auth/refresh
+Authorization: Bearer {{refreshed_token}}
+
+###
+
+### ── Refresh with a custom TTL ────────────────────────────────────────────────
+### ✅ Returns a token valid for 30 minutes instead of the default 1 hour.
+POST http://localhost:1538/auth/refresh
+Content-Type: application/json
+Authorization: Bearer {{refreshed_token}}
+
+{
+  "ttl_secs": 1800
+}
+
+###
+
+### ── Admin token refresh is blocked ────────────────────────────────────────
+### ❌ Returns 403 Forbidden — admin tokens must re-delegate via POST /auth/delegate.
+### The admin token is the one stored in @token (minted by POST /login for the root user).
+POST http://localhost:1538/auth/refresh
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "ttl_secs": 3600
+}
+
+###
+
+### ── Refreshing an already-revoked token ─────────────────────────────────────
+### ❌ Returns 401 Unauthorized — the old token was revoked in Step 3 above.
+POST http://localhost:1538/auth/refresh
+Content-Type: application/json
+Authorization: Bearer {{refresh_token}}
+
+{
+  "ttl_secs": 3600
 }
 
 ###

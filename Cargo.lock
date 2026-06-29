@@ -1116,6 +1116,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "hkdf"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1631,20 +1637,24 @@ dependencies = [
 
 [[package]]
 name = "moltendb-auth"
-version = "1.0.0-rc10"
+version = "1.0.0-rc11"
 dependencies = [
  "axum",
  "bcrypt",
  "dashmap",
+ "hex",
+ "hmac",
  "jsonwebtoken",
  "serde",
  "serde_json",
+ "sha2",
+ "tokio",
  "uuid",
 ]
 
 [[package]]
 name = "moltendb-core"
-version = "1.0.0-rc10"
+version = "1.0.0-rc11"
 dependencies = [
  "argon2",
  "base64",
@@ -1677,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-server"
-version = "1.0.0-rc10"
+version = "1.0.0-rc11"
 dependencies = [
  "axum",
  "axum-server",
@@ -1703,7 +1713,7 @@ dependencies = [
 
 [[package]]
 name = "moltendb-wasm"
-version = "1.0.0-rc10"
+version = "1.0.0-rc11"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

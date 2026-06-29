@@ -1,4 +1,91 @@
-﻿# [1.0.0-rc10] (Jun 5, 2026)
+﻿# [1.0.0-rc11] (Jun 11, 2026)
+
+### Testing
+
+* **`moltendb-auth` unit test suite** — 25 automated tests added in `moltendb-auth/src/tests.rs`, covering all
+  critical auth paths:
+  - `refresh_scoped_token`: happy path (new token issued, old `jti` revoked), admin token blocked
+    (`RefreshNotAllowed`), expired token rejected (`TokenExpired`), revoked token rejected (`TokenRevoked`), replay
+    protection (second refresh with old token fails), scope preservation.
+  - `verify_token`: valid token succeeds, tampered token rejected, expired token returns `TokenExpired`.
+  - `RevocationStore::load_from_file`: missing file → `Ok(empty store)`, tampered HMAC signature → `Err`, missing
+    `sig` field → `Err`, round-trip save/load → entry survives, expired entries silently dropped on load.
+  - `UserStore::new`: valid credentials succeed, wrong password rejected, unknown username rejected.
+  - `Claims`: `is_admin` true/false, `has_access` exact match / collection wildcard / admin wildcard.
+  - `key_matches`: full wildcard, prefix wildcard, exact match.
+  - `tokio` dependency updated to include `macros` and `rt` features to support `#[tokio::test]` for async
+    `save_to_file` round-trip tests.
+
+### Refactoring
+
+* **`moltendb-server` internal structure** — extracted shared types and constants into dedicated modules, mirroring
+  the pattern used in `moltendb-core` and `moltendb-auth`:
+  - `src/types.rs` — `AppState` type alias for the 6-tuple Axum state (`Db`, `UserStore`, `usize`, `usize`, `String`,
+    `u64`). All handler signatures and `ws_handler` now use `State<AppState>` instead of repeating the full tuple type.
+  - `src/constants.rs` — named constants replacing all magic numbers and strings: `DEFAULT_DELEGATE_TTL_SECS` (3600),
+    `DEFAULT_REVOKE_TTL_SECS` (86400), `DEFAULT_ROOT_TOKEN_TTL_SECS` (86400), `ACTION_READ`, `ACTION_WRITE`,
+    `ACTION_DELETE`, `ADMIN_SCOPE`, `REVOCATION_PRUNE_INTERVAL_SECS` (60), `RATE_LIMIT_CLEANUP_INTERVAL_SECS` (300),
+    `GRACEFUL_SHUTDOWN_TIMEOUT_SECS` (30).
+
+### New Features
+
+* **Configurable root token TTL** — the TTL of the root JWT issued by `POST /auth/login` is now configurable via
+  `--root-token-ttl <secs>` (CLI flag) or `MOLTENDB_ROOT_TOKEN_TTL` (environment variable). Defaults to `86400`
+  seconds (24 hours). `create_token(username, ttl_secs)` now accepts the TTL as a parameter instead of hardcoding
+  86400. Scoped tokens minted via `POST /auth/delegate` are unaffected — they continue to use the `ttl_secs` field
+         in the request body.
+
+* **`POST /auth/refresh` — client-initiated scoped token refresh** — clients can exchange a valid, non-expired scoped
+  token for a new one with the same `sub` and `scopes` but a fresh `exp` and a new `jti`. The old `jti` is immediately
+  added to the `RevocationStore` after the new token is issued, preventing replay attacks. Admin tokens (`*:*:*`) are
+  explicitly not refreshable — the endpoint returns `403 Forbidden` with a clear message directing the caller to
+  re-delegate via `POST /auth/delegate`. Expired or revoked tokens return `401 Unauthorized`. An optional
+  `{ "ttl_secs": <u64> }` request body controls the new token's TTL (defaults to 3600 seconds). Response:
+  `{ "token": "<new_jwt>", "jti": "<new_jti>", "expires_in": <ttl_secs> }`. New public API in `moltendb-auth`:
+  `refresh_scoped_token(old_token, new_ttl_secs, revocation_store) -> Result<(String, String), AuthError>`.
+  New `AuthError` enum (`InvalidToken`, `TokenExpired`, `TokenRevoked`, `RefreshNotAllowed`, `RoleNotFound`,
+  `HashError`)
+  is now the unified error type for all public `moltendb-auth` API functions — `create_token`, `create_scoped_token`,
+  `verify_token`, `hash_password`, `verify_password`, `refresh_scoped_token`, and `UserStore::new` all return
+  `AuthError`
+  instead of raw `jsonwebtoken::errors::Error` or `bcrypt::BcryptError`.
+
+### Security
+
+* **HMAC-SHA256 integrity protection for the revocation store** — `RevocationStore::save_to_file` now signs the
+  `entries` JSON with HMAC-SHA256 (keyed with `JWT_SECRET`) and writes `{ "entries": {...}, "sig": "<hex>" }` to disk.
+  `load_from_file` verifies the signature before trusting any entries; a missing or invalid `sig` field causes the
+  server to abort startup with a `CRITICAL` log (fail-closed). A missing file is still treated as a clean first
+  startup. This closes the attack vector where an attacker with filesystem access could delete or truncate the
+  revocation file to silently re-validate previously revoked tokens. `hmac`, `sha2`, and `hex` are now explicit
+  dependencies of `moltendb-auth`. `load_from_file` return type changed from `Self` to `Result<Self, String>`.
+
+* **Async-safe revocation persistence** — `RevocationStore::save_to_file` is now `async` and uses `tokio::fs::write`
+  instead of `std::fs::write`. Previously, calling it inside the async `handle_revoke` handler blocked the Tokio worker
+  thread for the duration of the JSON serialization and disk flush, starving other concurrent requests. The background
+  prune task in `main.rs` and the `handle_revoke` handler both `.await` the call. `tokio` (with the `fs` feature) is
+  now an explicit dependency of `moltendb-auth`.
+
+* **Fail-closed on missing `jti` in `auth_middleware`** — tokens with an empty `jti` field (legacy tokens or
+  crafted tokens exploiting `#[serde(default)]`) previously bypassed the revocation check entirely. The middleware now
+  rejects any token without a `jti` with `401 Unauthorized`. The `#[serde(default)]` attribute has been removed from
+  the `jti` field in `Claims` — all tokens minted by this crate have always included a `jti`. Option A (strict /
+  fail-closed) was chosen.
+
+* **Eliminate `get_secret()` lock contention** — `JWT_SECRET` is now read from the environment exactly once at process
+  startup via `std::sync::OnceLock` and cached for the lifetime of the process. Previously, `get_secret()` called
+  `std::env::var("JWT_SECRET")` on every call to `verify_token` and `create_scoped_token`, acquiring a global OS-level
+  lock on each authenticated request. Under concurrent load this caused thread contention. No API surface change.
+
+* **Fix silent admin lockout in `UserStore::new`** — if `bcrypt` failed to hash the admin password at startup (e.g. RNG
+  exhaustion, OS error), the server would boot with an empty user store and permanently lock out the admin with no log,
+  no panic, and no indication. `UserStore::new` now returns `Result<Self, AuthError>`; the server aborts
+  startup with a `CRITICAL` log line if hashing fails. This is a minor breaking change to the `UserStore::new`
+  signature — callers must handle the `Result`.
+
+---
+
+# [1.0.0-rc10] (Jun 5, 2026)
 
 ### ⚠️ Breaking Changes — Older log/WAL files are NOT compatible with this release
 

@@ -21,44 +21,47 @@
 
 // Declare the modules that make up the server.
 // Each `mod X` tells Rust to look for src/X.rs and compile it as part of this crate.
-use moltendb_auth as auth; // JWT authentication, user store, auth middleware
-mod rate_limit;       // Per-IP sliding-window rate limiter
-mod route_handlers;   // HTTP route handlers (one per API endpoint)
-mod server;           // TLS config loading and graceful shutdown signal
-mod ttl_sweep;        // Background TTL eviction sweep (event-driven min-heap)
-mod ws;               // WebSocket upgrade handler and per-connection logic
+use moltendb_auth as auth;
+// JWT authentication, user store, auth middleware
+mod constants; // Server-level constants (magic numbers, action strings, intervals)
+mod rate_limit; // Per-IP sliding-window rate limiter
+mod route_handlers; // HTTP route handlers (one per API endpoint)
+mod server; // TLS config loading and graceful shutdown signal
+mod ttl_sweep; // Background TTL eviction sweep (event-driven min-heap)
+mod types; // Shared types (AppState)
+mod ws; // WebSocket upgrade handler and per-connection logic
 
 // Re-export handlers into scope for use in the router below.
 use route_handlers::{
     handle_delegate, handle_delete, handle_get, handle_health, handle_login, handle_metrics,
-    handle_rest_get, handle_rest_get_collection, handle_revoke, handle_set, handle_snapshot,
-    handle_stats_get, handle_stats_post, handle_update,
+    handle_refresh, handle_rest_get, handle_rest_get_collection, handle_revoke, handle_set,
+    handle_snapshot, handle_stats_get, handle_stats_post, handle_update,
 };
 use ws::ws_handler;
 
 // Core engine — imported from the moltendb-core crate
 use moltendb_core::engine::{self, StorageBackend};
 
+// RustlsConfig = TLS configuration loaded from PEM certificate and key files.
+use axum::extract::DefaultBodyLimit;
 use axum::{
-    http::{HeaderValue, header},
-    // middleware = lets us insert async functions between the router and handlers.
+    http::{header, HeaderValue},
     middleware,
-    // routing = defines which HTTP methods map to which handlers.
+    // middleware = lets us insert async functions between the router and handlers.
     routing::{delete, get, post},
+    // routing = defines which HTTP methods map to which handlers.
     Extension,
     Router,
 };
-// RustlsConfig = TLS configuration loaded from PEM certificate and key files.
 use std::net::SocketAddr;
 use std::sync::Arc;
-use axum::extract::DefaultBodyLimit;
+// CorsLayer = middleware that adds CORS headers to responses.
+// Any = a CORS policy that allows any origin (⚠️ not suitable for production).
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 // RequestBodyLimitLayer = middleware that rejects request bodies exceeding a size limit.
 use tower_http::limit::RequestBodyLimitLayer;
 // SetResponseHeaderLayer = middleware that adds a fixed header to every response.
 use tower_http::set_header::SetResponseHeaderLayer;
-// CorsLayer = middleware that adds CORS headers to responses.
-// Any = a CORS policy that allows any origin (⚠️ not suitable for production).
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::{error, info, warn};
 
 use clap::Parser;
@@ -115,6 +118,10 @@ struct Config {
     #[arg(long, env = "MOLTENDB_JWT_SECRET")]
     jwt_secret: Option<String>,
     // Note: jwt_secret is Option<String> so we can detect if it's unset and refuse to start.
+    /// Root token TTL in seconds. Controls how long the root JWT issued by POST /login is valid.
+    /// Default: 86400 (24 hours). [env: MOLTENDB_ROOT_TOKEN_TTL]
+    #[arg(long, default_value_t = constants::DEFAULT_ROOT_TOKEN_TTL_SECS, env = "MOLTENDB_ROOT_TOKEN_TTL")]
+    root_token_ttl: u64,
 
     /// Root username [env: MOLTENDB_ROOT_USER]
     #[arg(long, env = "MOLTENDB_ROOT_USER")]
@@ -167,23 +174,23 @@ enum Commands {
         /// Path to the source database log file
         #[arg(long)]
         log: String,
-        
+
         /// Optional path to an older snapshot to start from (faster)
         #[arg(long)]
         snapshot: Option<String>,
-        
+
         /// Target timestamp (Unix ms) to recover to
         #[arg(long)]
         to_time: Option<u64>,
-        
+
         /// Target sequence number (log line count) to recover to
         #[arg(long)]
         to_seq: Option<u64>,
-        
+
         /// Output path for the recovered snapshot file
         #[arg(long)]
         out: String,
-        
+
         /// Encryption password if the log is encrypted
         #[arg(long, env = "ENCRYPTION_KEY")]
         encryption_key: Option<String>,
@@ -206,18 +213,30 @@ async fn main() {
     // and exits the process before this line even runs.
     let cfg = Config::parse();
 
-        if let Some(Commands::Recover { log, snapshot: _, to_time, to_seq, out, encryption_key }) = &cfg.command {
+    if let Some(Commands::Recover {
+        log,
+        snapshot: _,
+        to_time,
+        to_seq,
+        out,
+        encryption_key,
+    }) = &cfg.command
+    {
         // Recovery Mode
         tracing_subscriber::fmt().init();
         info!("🕒 MoltenDB Point-in-Time Recovery Tool");
         info!("📖 Reading log: {}", log);
 
-        let password = encryption_key.clone().unwrap_or_else(|| "default_molten_password".to_string());
+        let password = encryption_key
+            .clone()
+            .unwrap_or_else(|| "default_molten_password".to_string());
         let master_key = engine::EncryptedStorage::derive_key(&password, "moltendb_log_salt");
 
         // Open storage
-        let base_storage = Arc::new(engine::SyncDiskStorage::new(log).expect("Failed to open log file"));
-        let storage: Arc<dyn engine::StorageBackend> = Arc::new(engine::EncryptedStorage::new(base_storage, &master_key));
+        let base_storage =
+            Arc::new(engine::SyncDiskStorage::new(log).expect("Failed to open log file"));
+        let storage: Arc<dyn engine::StorageBackend> =
+            Arc::new(engine::EncryptedStorage::new(base_storage, &master_key));
 
         match engine::Db::recover_to(&*storage, *to_time, *to_seq) {
             Ok(entries) => {
@@ -225,32 +244,37 @@ async fn main() {
                 // For recovery, we set seq = to_seq if provided, or 0 (it will be ignored by out-of-band loading anyway)
                 // Actually, the snapshot we produce should probably have a seq that reflects the log state.
                 // But for a 'recovered' snapshot, it's a fresh ground truth.
-                
+
                 // We reuse the disk-level write_snapshot if possible, but it's crate-private.
                 // However, engine::Db::compact uses storage.compact(entries).
                 // Let's use a temporary DB to write the snapshot.
-                
+
                 // For PITR, we want to write a snapshot file at `out`.
                 // MoltenDB snapshots are normally `{log_path}.snapshot.bin`.
                 // We can just use the provided `out` path directly.
-                
+
                 // Since write_snapshot is private to moltendb-core::engine::storage::disk,
                 // we might need to expose a way to write a snapshot from the engine.
                 // Or just use the recovered entries to create a new log and then compact it.
-                
+
                 info!("💾 Saving recovered state to: {}", out);
-                
+
                 // Create a temporary log file for the recovered state
                 let temp_log = format!("{}.log", out);
                 {
-                    let recovered_storage = engine::SyncDiskStorage::new(&temp_log).expect("Failed to create recovery log");
+                    let recovered_storage = engine::SyncDiskStorage::new(&temp_log)
+                        .expect("Failed to create recovery log");
                     // Rebuild state map from recovered entries for compact_from_maps
-                    let state: dashmap::DashMap<Arc<str>, dashmap::DashMap<String, Box<[u8]>>> = dashmap::DashMap::new();
+                    let state: dashmap::DashMap<Arc<str>, dashmap::DashMap<String, Box<[u8]>>> =
+                        dashmap::DashMap::new();
                     for entry in &entries {
                         if entry.cmd == "INSERT" {
                             if let Ok(bytes) = rmp_serde::to_vec(&entry.value) {
                                 let boxed: Box<[u8]> = bytes.into_boxed_slice();
-                                state.entry(Arc::from(entry.collection.as_str())).or_default().insert(entry.key.clone(), boxed);
+                                state
+                                    .entry(Arc::from(entry.collection.as_str()))
+                                    .or_default()
+                                    .insert(entry.key.clone(), boxed);
                             }
                         } else if entry.cmd == "DELETE" {
                             if let Some(col) = state.get(entry.collection.as_str()) {
@@ -259,15 +283,21 @@ async fn main() {
                         }
                     }
                     let schemas = dashmap::DashMap::new();
-                    recovered_storage.compact_from_maps(&state, &schemas).expect("Failed to compact recovery log");
+                    recovered_storage
+                        .compact_from_maps(&state, &schemas)
+                        .expect("Failed to compact recovery log");
                 }
-                
+
                 // The snapshot is now at temp_log.snapshot.bin
                 let snapshot_path = format!("{}.snapshot.bin", temp_log);
-                std::fs::rename(snapshot_path, out).expect("Failed to move snapshot to output path");
+                std::fs::rename(snapshot_path, out)
+                    .expect("Failed to move snapshot to output path");
                 std::fs::remove_file(temp_log).ok();
-                
-                info!("✨ Recovery complete! You can now use {} as your database snapshot.", out);
+
+                info!(
+                    "✨ Recovery complete! You can now use {} as your database snapshot.",
+                    out
+                );
             }
             Err(e) => {
                 error!("❌ Recovery failed: {}", e);
@@ -317,12 +347,16 @@ async fn main() {
     // MOLTENDB_ROOT_USER and MOLTENDB_ROOT_PASSWORD are required for the built-in root account.
     // If not set, we stop the app for security reasons.
     if cfg.root_user.is_none() {
-        error!("🔥 CRITICAL: --root-user (MOLTENDB_ROOT_USER) not set! This is required for security.");
+        error!(
+            "🔥 CRITICAL: --root-user (MOLTENDB_ROOT_USER) not set! This is required for security."
+        );
         std::process::exit(1);
     }
 
     if cfg.root_password.is_none() {
-        error!("🔥 CRITICAL: --root-password (MOLTENDB_ROOT_PASSWORD) not set! This is required for security.");
+        error!(
+            "🔥 CRITICAL: --root-password (MOLTENDB_ROOT_PASSWORD) not set! This is required for security."
+        );
         std::process::exit(1);
     }
 
@@ -366,16 +400,17 @@ async fn main() {
     //   be declared in the same scope.
     //
     // If we wrote `let key = Some(derive_key(...)); Db::open(db_config)`
-    // in a single expression, and db_config used key.as_ref(), the temporary 
+    // in a single expression, and db_config used key.as_ref(), the temporary
     // `key` would be dropped before Db::open() could use the reference.
-    // However, since DbConfig now takes an owned Option<[u8; 32]>, this 
+    // However, since DbConfig now takes an owned Option<[u8; 32]>, this
     // specific borrow checker issue is simplified.
     let encryption_key_storage;
     let encryption_key: Option<&[u8; 32]> = if cfg.disable_encryption {
         warn!("⚠️  Encryption is DISABLED — data will be stored as plain JSON!");
         None
     } else {
-        let password = cfg.encryption_key
+        let password = cfg
+            .encryption_key
             .unwrap_or_else(|| "moltendb-default-encryption-key".to_string());
         let key = engine::EncryptedStorage::derive_key(&password, &db_path);
         encryption_key_storage = Some(key);
@@ -407,27 +442,58 @@ async fn main() {
     };
 
     if is_in_memory {
-        warn!("⚡ IN-MEMORY MODE — all data is stored in RAM only. Nothing will be persisted to disk. Data will be lost on exit.");
+        warn!(
+            "⚡ IN-MEMORY MODE — all data is stored in RAM only. Nothing will be persisted to disk. Data will be lost on exit."
+        );
     }
-
 
     // Initialize the user store with the admin user and password from Config.
     // We've already verified they are present above.
-    let users = auth::UserStore::new(root_user.clone(), root_password);
+    // UserStore::new returns Err if bcrypt fails — treat that as fatal: a store
+    // with no users would silently lock out the admin with no indication.
+    let users = match auth::UserStore::new(root_user.clone(), root_password) {
+        Ok(store) => store,
+        Err(e) => {
+            error!(
+                "🔥 CRITICAL: Failed to hash admin password during startup: {}",
+                e
+            );
+            std::process::exit(1);
+        }
+    };
     info!("👤 User authentication initialized");
 
     // Derive the revocation store file path from the database path.
     // e.g. "my_database.log" → "my_database.revocations.json"
     let revocations_path = {
         let base = std::path::Path::new(&db_path);
-        let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("my_database");
-        let dir = base.parent().and_then(|p| p.to_str()).filter(|s| !s.is_empty()).unwrap_or(".");
+        let stem = base
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("my_database");
+        let dir = base
+            .parent()
+            .and_then(|p| p.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(".");
         format!("{}/{}.revocations.json", dir, stem)
     };
 
     // Initialize the token revocation store, loading any previously revoked JTIs
     // from disk so revocations survive server restarts.
-    let revocation_store = auth::RevocationStore::load_from_file(&revocations_path);
+    // load_from_file verifies the HMAC-SHA256 signature on the file before
+    // trusting its contents — a tampered or unsigned file is treated as fatal
+    // (fail-closed). A missing file is fine (first startup).
+    let revocation_store = match auth::RevocationStore::load_from_file(&revocations_path) {
+        Ok(store) => store,
+        Err(e) => {
+            error!(
+                "🔥 CRITICAL: Revocation store '{}' failed integrity check: {}",
+                revocations_path, e
+            );
+            std::process::exit(1);
+        }
+    };
     info!("🔒 Revocation store loaded from '{}'", revocations_path);
 
     // Spawn a background task to prune expired revocation entries every 60 seconds
@@ -436,20 +502,26 @@ async fn main() {
     let prune_store = revocation_store.clone();
     let prune_revocations_path = revocations_path.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            constants::REVOCATION_PRUNE_INTERVAL_SECS,
+        ));
         loop {
             interval.tick().await;
             prune_store.prune();
             if !is_in_memory {
-                prune_store.save_to_file(&prune_revocations_path);
+                prune_store.save_to_file(&prune_revocations_path).await;
             }
         }
     });
     info!("🔒 Token revocation store initialized");
 
     // Initialize the rate limiter with the configured limits.
-    let rate_limiter = rate_limit::RateLimiter::new(rate_limit_requests as usize, rate_limit_window);
-    info!("🚦 Rate limiting: {} requests per {} seconds", rate_limit_requests, rate_limit_window);
+    let rate_limiter =
+        rate_limit::RateLimiter::new(rate_limit_requests as usize, rate_limit_window);
+    info!(
+        "🚦 Rate limiting: {} requests per {} seconds",
+        rate_limit_requests, rate_limit_window
+    );
 
     // Spawn the background TTL eviction sweep task.
     // Uses an event-driven min-heap — sleeps until the next expiry, zero CPU when idle.
@@ -460,30 +532,40 @@ async fn main() {
     // Without this, the rate limiter's DashMap would grow forever as new IPs connect.
     let cleanup_limiter = rate_limiter.clone();
     tokio::spawn(async move {
-        // Run cleanup every 5 minutes (300 seconds).
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        // Run cleanup every 5 minutes.
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            constants::RATE_LIMIT_CLEANUP_INTERVAL_SECS,
+        ));
         loop {
             interval.tick().await;
             cleanup_limiter.cleanup();
         }
     });
 
-    // The app state is a tuple of (Db, UserStore, max_body_size) injected into every handler via State<...>.
+    // The app state is injected into every handler via State<AppState>.
     // Axum clones this for each request — Db and UserStore are cheap to clone (Arc-backed).
-    let app_state = (db.clone(), users, cfg.max_body_size, cfg.max_keys_per_request, root_user);
+    let app_state: types::AppState = (
+        db.clone(),
+        users,
+        cfg.max_body_size,
+        cfg.max_keys_per_request,
+        root_user,
+        cfg.root_token_ttl,
+    );
 
     let mut protected_routes = Router::new()
-        .route("/set", post(handle_set))           // Insert/upsert documents
-        .route("/update", post(handle_update))     // Patch/merge documents
-        .route("/delete", post(handle_delete))     // Delete documents or drop collection
-        .route("/snapshot", post(handle_snapshot))   // Take a snapshot on demand
-        .route("/get", post(handle_get))           // Query documents (with WHERE, fields, joins, etc.)
+        .route("/set", post(handle_set)) // Insert/upsert documents
+        .route("/update", post(handle_update)) // Patch/merge documents
+        .route("/delete", post(handle_delete)) // Delete documents or drop collection
+        .route("/snapshot", post(handle_snapshot)) // Take a snapshot on demand
+        .route("/get", post(handle_get)) // Query documents (with WHERE, fields, joins, etc.)
         .route("/stats", post(handle_stats_post).get(handle_stats_get)) // Collection stats
-        .route("/collections/{collection}", get(handle_rest_get_collection))       // GET all docs (paginated)
-        .route("/collections/{collection}/docs/{key}", get(handle_rest_get))       // GET single doc
-        .route("/auth/delegate", post(handle_delegate))                            // Mint scoped tokens (admin only)
-        .route("/auth/tokens/{jti}", delete(handle_revoke))                        // Revoke a token by JTI (admin only)
-        .route("/system/metrics", get(handle_metrics));                            // Resource usage — admin only
+        .route("/collections/{collection}", get(handle_rest_get_collection)) // GET all docs (paginated)
+        .route("/collections/{collection}/docs/{key}", get(handle_rest_get)) // GET single doc
+        .route("/auth/delegate", post(handle_delegate)) // Mint scoped tokens (admin only)
+        .route("/auth/refresh", post(handle_refresh)) // Refresh a scoped token (client-initiated)
+        .route("/auth/tokens/{jti}", delete(handle_revoke)) // Revoke a token by JTI (admin only)
+        .route("/system/metrics", get(handle_metrics)); // Resource usage — admin only
 
     #[cfg(feature = "schema")]
     {
@@ -503,9 +585,9 @@ async fn main() {
 
     // Public routes are accessible without authentication.
     let public_routes = Router::new()
-        .route("/login", post(handle_login))          // Returns a JWT token on valid credentials
-        .route("/ws", get(ws_handler))                // WebSocket upgrade endpoint
-        .route("/system/health", get(handle_health))  // Liveness check — no auth required
+        .route("/login", post(handle_login)) // Returns a JWT token on valid credentials
+        .route("/ws", get(ws_handler)) // WebSocket upgrade endpoint
+        .route("/system/health", get(handle_health)) // Liveness check — no auth required
         // Inject the RevocationStore so ws_handler can reject revoked tokens.
         .layer(Extension(revocation_store));
 
@@ -531,7 +613,10 @@ async fn main() {
                 .filter_map(|s| s.parse::<HeaderValue>().ok())
                 .collect();
             if origins.is_empty() {
-                error!("🔥 CRITICAL: --cors-origin value '{}' produced no valid origins.", origin_str);
+                error!(
+                    "🔥 CRITICAL: --cors-origin value '{}' produced no valid origins.",
+                    origin_str
+                );
                 std::process::exit(1);
             }
             info!("🔒 CORS restricted to: {}", origin_str);
@@ -599,15 +684,15 @@ async fn main() {
 
     // Parse the configured host + port into a SocketAddr.
     // Supports both IPv4 ("0.0.0.0", "127.0.0.1") and IPv6 ("::" , "::1").
-    let addr: SocketAddr = format!("{}:{}", host, port)
-        .parse()
-        .unwrap_or_else(|e| {
-            error!("🔥 Invalid --host value '{}': {}", host, e);
-            std::process::exit(1);
-        });
+    let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap_or_else(|e| {
+        error!("🔥 Invalid --host value '{}': {}", host, e);
+        std::process::exit(1);
+    });
 
     if cfg.dev_mode {
-        warn!("⚠️  DEV MODE ENABLED — server is running over plain HTTP/WS. NEVER use in production!");
+        warn!(
+            "⚠️  DEV MODE ENABLED — server is running over plain HTTP/WS. NEVER use in production!"
+        );
     } else {
         info!("🔒 TLS enabled - loading certificates...");
     }
@@ -626,12 +711,18 @@ async fn main() {
         info!("⏳ Draining in-flight requests (up to 30s)...");
         // Tell the server to stop accepting new connections and wait up to 30s
         // for all in-flight requests to complete before forcibly closing them.
-        shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
+        shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(
+            constants::GRACEFUL_SHUTDOWN_TIMEOUT_SECS,
+        )));
     });
 
     if cfg.dev_mode {
         // Dev mode: plain HTTP/WS — no TLS.
-        info!("🚀 MoltenDB running on http://{}:{} (HTTP + WS) [DEV MODE]", addr.ip(), addr.port());
+        info!(
+            "🚀 MoltenDB running on http://{}:{} (HTTP + WS) [DEV MODE]",
+            addr.ip(),
+            addr.port()
+        );
         axum_server::bind(addr)
             .handle(handle)
             .serve(app.into_make_service())
@@ -641,7 +732,11 @@ async fn main() {
         // Production mode: HTTPS/WSS via rustls.
         match server::load_tls_config(&cert_path, &key_path).await {
             Ok(tls_config) => {
-                info!("🚀 MoltenDB running on https://{}:{} (HTTPS + WSS)", addr.ip(), addr.port());
+                info!(
+                    "🚀 MoltenDB running on https://{}:{} (HTTPS + WSS)",
+                    addr.ip(),
+                    addr.port()
+                );
 
                 // `.serve(...).await` blocks here until graceful shutdown completes.
                 // `into_make_service()` converts the Router into a service factory
