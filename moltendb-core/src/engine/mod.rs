@@ -46,9 +46,9 @@ use crate::common::system_field_tokens::expand_system_fields;
 use dashmap::DashMap;
 use serde_json::Value;
 #[allow(unused_imports)]
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 
 /// The central database handle. Cheap to clone — all clones share the same state.
@@ -106,6 +106,11 @@ pub struct Db {
     /// Each document inserted into a collection gets a unique, strictly-increasing
     /// `_seq` value. Used for FIFO eviction when `maxSize` is set.
     pub seq_counters: Arc<DashMap<String, AtomicU64>>,
+
+    /// Per-collection BTreeMap index: seq → document key.
+    /// Maintained on every insert and delete so `get_filtered` can iterate
+    /// documents in insertion order without a full sort pass.
+    pub seq_index: Arc<DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>>,
 
     /// Per-collection maximum document count.
     /// When a collection exceeds this limit after an insert batch, the oldest
@@ -177,6 +182,7 @@ impl Db {
         operations::get_filtered(
             &self.state,
             &self.storage,
+            &self.seq_index,
             collection,
             predicate,
             offset,
@@ -209,6 +215,34 @@ impl Db {
             .collect()
     }
 
+    /// High-performance top-N scan using lazy byte extraction.
+    ///
+    /// Extracts only the numeric sort field from raw MsgPack bytes during the
+    /// parallel scan phase — no full deserialization until the final `cap`
+    /// winners are known. Falls back gracefully when the field is absent or
+    /// non-numeric (those documents are excluded from results).
+    pub fn scan_top_n_raw(
+        &self,
+        collection: &str,
+        predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
+        sort_field: &str,
+        is_descending: bool,
+        cap: usize,
+    ) -> Vec<(String, Value)> {
+        operations::scan_top_n_raw(
+            &self.state,
+            &self.storage,
+            collection,
+            predicate,
+            sort_field,
+            is_descending,
+            cap,
+        )
+        .into_iter()
+        .map(|(k, v)| (k, expand_system_fields(v)))
+        .collect()
+    }
+
     /// Insert or overwrite multiple documents in one call.
     /// Each item is a (key, value) pair. Writes are persisted to storage.
     /// If the collection has a TTL default, the collection expiry is reset
@@ -227,8 +261,13 @@ impl Db {
         // restore the stale documents, causing the same _v counter bug after reload.
         if let Some(exp) = self.ttl_expiry.get(collection).map(|v| *v) {
             if operations::ttl::collection_is_expired(exp, operations::ttl::now_ms()) {
-                let _ =
-                    operations::delete_collection(&self.state, &self.storage, &self.tx, collection);
+                let _ = operations::delete_collection(
+                    &self.state,
+                    &self.storage,
+                    &self.tx,
+                    &self.seq_index,
+                    collection,
+                );
                 self.ttl_expiry.remove(collection);
             }
         }
@@ -239,6 +278,7 @@ impl Db {
             #[cfg(feature = "schema")]
             schemas: &self.schemas,
             seq_counters: &self.seq_counters,
+            seq_index: &self.seq_index,
             collection,
             items,
         })?;
@@ -251,6 +291,7 @@ impl Db {
                     &self.state,
                     &self.storage,
                     &self.tx,
+                    &self.seq_index,
                     collection,
                     overflow,
                 );
@@ -321,6 +362,7 @@ impl Db {
             &self.state,
             &self.storage,
             &self.tx,
+            &self.seq_index,
             collection,
             predicate,
             count_limit,
@@ -334,12 +376,25 @@ impl Db {
                 "Background disk I/O failed. System is in read-only mode.".into(),
             ));
         }
-        operations::delete(&self.state, &self.storage, &self.tx, collection, keys)
+        operations::delete(
+            &self.state,
+            &self.storage,
+            &self.tx,
+            &self.seq_index,
+            collection,
+            keys,
+        )
     }
 
     /// Drop an entire collection — removes all documents.
     pub fn delete_collection(&self, collection: &str) -> Result<(), DbError> {
-        operations::delete_collection(&self.state, &self.storage, &self.tx, collection)
+        operations::delete_collection(
+            &self.state,
+            &self.storage,
+            &self.tx,
+            &self.seq_index,
+            collection,
+        )
     }
 
     /// Returns the next sequence number for a collection (atomic fetch-and-add).

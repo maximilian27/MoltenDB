@@ -12,8 +12,8 @@ use super::super::StorageBackend;
 use crate::common::system_field_tokens::{msgpack_to_value, read_msgpack_seq_token};
 use dashmap::DashMap;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, RwLock};
 
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
@@ -79,13 +79,15 @@ pub fn get(
 
 /// Retrieve documents matching a predicate.
 ///
-/// Native: scans the collection in parallel via rayon, then applies
-/// `offset`/`limit` after collecting matches (order is non-deterministic, same
-/// as the previous DashMap iteration order).
+/// Native (no sort): iterates the seq_index BTreeMap in insertion order,
+/// applying the predicate and stopping as soon as `offset + limit` matches
+/// are found — true early-exit with correct ordering.
+/// Native (sort present, count=None): parallel Rayon scan collects all matches.
 /// Wasm: sequential scan with early-stop on `limit`.
 pub fn get_filtered(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
+    seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
     collection: &str,
     predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
     offset: usize,
@@ -98,58 +100,49 @@ pub fn get_filtered(
             None => return Vec::new(),
         };
 
-        let limit = count.unwrap_or(usize::MAX);
-        let deep = count.is_none() || (offset + limit > 5000);
+        // No-sort path: iterate the BTreeMap seq_index in insertion order for
+        // true early-exit with correct ordering. Falls back to a full sequential
+        // scan (sorted by _seq) when the index is not yet populated.
+        if let Some(lim) = count {
+            let need = offset + lim;
+            let mut found: Vec<(String, Value)> = Vec::with_capacity(need);
 
-        let page_items: Vec<CompactItem> = if !deep {
-            use std::collections::BinaryHeap;
-            let heap = col
-                .par_iter()
-                .fold(
-                    || BinaryHeap::<CompactItem>::with_capacity(offset + limit + 1),
-                    |mut h, entry| {
-                        if predicate(entry.key(), entry.value()) {
+            if let Some(idx) = seq_index.get(collection) {
+                if let Ok(map) = idx.read() {
+                    for (_seq, key) in map.iter() {
+                        if let Some(bytes) = col.get(key.as_str()) {
+                            if predicate(key.as_str(), bytes.value()) {
+                                if let Some(val) = decode(bytes.value()) {
+                                    found.push((key.clone(), val));
+                                    if found.len() >= need {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Fallback: seq_index not yet built — scan and sort by _seq.
+                let mut raw: Vec<(u64, String, Value)> = Vec::new();
+                for entry in col.iter() {
+                    if predicate(entry.key(), entry.value()) {
+                        if let Some(val) = decode(entry.value()) {
                             let seq = read_msgpack_seq_token(entry.value());
-                            let item = CompactItem {
-                                sort_value: seq as f64,
-                                seq,
-                            };
-                            if h.len() >= offset + limit {
-                                if let Some(worst) = h.peek() {
-                                    if item < *worst {
-                                        h.pop();
-                                        h.push(item);
-                                    }
-                                }
-                            } else {
-                                h.push(item);
-                            }
+                            raw.push((seq, entry.key().clone(), val));
                         }
-                        h
-                    },
-                )
-                .reduce(
-                    || BinaryHeap::<CompactItem>::with_capacity(offset + limit + 1),
-                    |mut a, b| {
-                        for item in b {
-                            if a.len() >= offset + limit {
-                                if let Some(worst) = a.peek() {
-                                    if item < *worst {
-                                        a.pop();
-                                        a.push(item);
-                                    }
-                                }
-                            } else {
-                                a.push(item);
-                            }
-                        }
-                        a
-                    },
-                );
-            let sorted = heap.into_sorted_vec();
-            let start = offset.min(sorted.len());
-            sorted[start..].to_vec()
-        } else {
+                    }
+                }
+                raw.sort_unstable_by_key(|(seq, _, _)| *seq);
+                found = raw.into_iter().map(|(_, k, v)| (k, v)).collect();
+            }
+
+            return found.into_iter().skip(offset).take(lim).collect();
+        }
+
+        // Sort present: collect all matching documents in parallel, then let
+        // the caller sort and paginate.
+        let page_items: Vec<CompactItem> = {
             let mut matching: Vec<CompactItem> = col
                 .par_iter()
                 .filter_map(|entry| {
@@ -167,16 +160,10 @@ pub fn get_filtered(
 
             let total_len = matching.len();
             let start = offset;
-            let end = match count {
-                Some(l) => (offset + l).min(total_len),
-                None => total_len,
-            };
+            let end = total_len;
 
             if start < total_len {
                 matching.select_nth_unstable_by(start, |a, b| a.cmp(b));
-                if end < total_len {
-                    matching[start..].select_nth_unstable_by(end - start, |a, b| a.cmp(b));
-                }
                 let page_slice = &mut matching[start..end];
                 page_slice.sort_unstable_by(|a, b| a.cmp(b));
                 page_slice.to_vec()
@@ -223,34 +210,46 @@ pub fn get_filtered(
             None => return Vec::new(),
         };
 
-        let limit = count.unwrap_or(usize::MAX);
-        let deep = count.is_none() || (offset + limit > 5000);
+        // No-sort path: iterate seq_index in insertion order with early-exit.
+        if let Some(lim) = count {
+            let need = offset + lim;
+            let mut found: Vec<(String, Value)> = Vec::with_capacity(need);
 
-        let page_items: Vec<CompactItem> = if !deep {
-            let mut heap = std::collections::BinaryHeap::with_capacity(offset + limit + 1);
-            for entry in col.iter() {
-                if predicate(entry.key(), entry.value()) {
-                    let seq = read_msgpack_seq_token(entry.value());
-                    let item = CompactItem {
-                        sort_value: seq as f64,
-                        seq,
-                    };
-                    if heap.len() >= offset + limit {
-                        if let Some(worst) = heap.peek() {
-                            if item < *worst {
-                                heap.pop();
-                                heap.push(item);
+            if let Some(idx) = seq_index.get(collection) {
+                if let Ok(map) = idx.read() {
+                    for (_seq, key) in map.iter() {
+                        if let Some(bytes) = col.get(key.as_str()) {
+                            if predicate(key.as_str(), bytes.value()) {
+                                if let Some(val) = decode(bytes.value()) {
+                                    found.push((key.clone(), val));
+                                    if found.len() >= need {
+                                        break;
+                                    }
+                                }
                             }
                         }
-                    } else {
-                        heap.push(item);
                     }
                 }
+            } else {
+                let mut raw: Vec<(u64, String, Value)> = Vec::new();
+                for entry in col.iter() {
+                    if predicate(entry.key(), entry.value()) {
+                        if let Some(val) = decode(entry.value()) {
+                            let seq = read_msgpack_seq_token(entry.value());
+                            raw.push((seq, entry.key().clone(), val));
+                        }
+                    }
+                }
+                raw.sort_unstable_by_key(|(seq, _, _)| *seq);
+                found = raw.into_iter().map(|(_, k, v)| (k, v)).collect();
             }
-            let sorted = heap.into_sorted_vec();
-            let start = offset.min(sorted.len());
-            sorted[start..].to_vec()
-        } else {
+
+            return found.into_iter().skip(offset).take(lim).collect();
+        }
+
+        // Sort present: collect all matching documents sequentially, then let
+        // the caller sort and paginate.
+        let page_items: Vec<CompactItem> = {
             let mut matching: Vec<CompactItem> = col
                 .iter()
                 .filter_map(|entry| {
@@ -268,16 +267,10 @@ pub fn get_filtered(
 
             let total_len = matching.len();
             let start = offset;
-            let end = match count {
-                Some(l) => (offset + l).min(total_len),
-                None => total_len,
-            };
+            let end = total_len;
 
             if start < total_len {
                 matching.select_nth_unstable_by(start, |a, b| a.cmp(b));
-                if end < total_len {
-                    matching[start..].select_nth_unstable_by(end - start, |a, b| a.cmp(b));
-                }
                 let page_slice = &mut matching[start..end];
                 page_slice.sort_unstable_by(|a, b| a.cmp(b));
                 page_slice.to_vec()
@@ -457,6 +450,186 @@ where
             .into_iter()
             .map(|h| (h.key, h.value))
             .collect()
+    }
+}
+
+/// A lightweight heap item that stores the document key directly alongside
+/// an extracted numeric sort primitive. Used by `scan_top_n_raw` to avoid
+/// full MsgPack deserialization during the parallel scan phase.
+#[derive(Clone, Debug)]
+pub struct KeyedCompactItem {
+    pub key: Arc<str>,
+    pub sort_value: f64,
+}
+
+impl PartialEq for KeyedCompactItem {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.sort_value.total_cmp(&other.sort_value) == std::cmp::Ordering::Equal
+            && self.key == other.key
+    }
+}
+impl Eq for KeyedCompactItem {}
+
+impl PartialOrd for KeyedCompactItem {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for KeyedCompactItem {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.sort_value
+            .total_cmp(&other.sort_value)
+            .then_with(|| self.key.cmp(&other.key))
+    }
+}
+
+/// High-performance top-N scan that avoids full MsgPack deserialization during
+/// the parallel scan phase. Instead of decoding every matching document into a
+/// `serde_json::Value`, it uses `find_msgpack_value` + `read_msgpack_number` to
+/// extract only the sort field as a raw `f64`. Full deserialization is deferred
+/// to the final `cap` winners only.
+///
+/// `is_descending`: when true the sort order is reversed (largest first).
+pub fn scan_top_n_raw(
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    _storage: &Arc<dyn StorageBackend>,
+    collection: &str,
+    predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
+    sort_field: &str,
+    is_descending: bool,
+    cap: usize,
+) -> Vec<(String, Value)> {
+    if cap == 0 {
+        return Vec::new();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::collections::BinaryHeap;
+
+        let col = match state.get(collection) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        let path_parts: Vec<&str> = sort_field.split('.').collect();
+
+        let merged_heap: BinaryHeap<KeyedCompactItem> = col
+            .par_iter()
+            .fold(
+                || BinaryHeap::with_capacity(cap + 1),
+                |mut heap, entry| {
+                    let key = entry.key();
+                    let bytes = entry.value();
+
+                    if predicate(key, bytes) {
+                        if let Some(val_slice) =
+                            crate::query::find_msgpack_value(bytes, &path_parts)
+                        {
+                            if let Some(num) = crate::query::read_msgpack_number(val_slice) {
+                                let sort_value = if is_descending { -num } else { num };
+                                let item = KeyedCompactItem {
+                                    key: Arc::from(key.as_str()),
+                                    sort_value,
+                                };
+                                if heap.len() >= cap {
+                                    if let Some(worst) = heap.peek() {
+                                        if item < *worst {
+                                            heap.pop();
+                                            heap.push(item);
+                                        }
+                                    }
+                                } else {
+                                    heap.push(item);
+                                }
+                            }
+                        }
+                    }
+                    heap
+                },
+            )
+            .reduce(
+                || BinaryHeap::with_capacity(cap + 1),
+                |mut a, b| {
+                    for item in b {
+                        if a.len() >= cap {
+                            if let Some(worst) = a.peek() {
+                                if item < *worst {
+                                    a.pop();
+                                    a.push(item);
+                                }
+                            }
+                        } else {
+                            a.push(item);
+                        }
+                    }
+                    a
+                },
+            );
+
+        // Decode only the winning documents.
+        merged_heap
+            .into_sorted_vec()
+            .into_iter()
+            .filter_map(|item| {
+                let entry = col.get(item.key.as_ref())?;
+                let decoded_val = msgpack_to_value(entry.value())?;
+                Some((item.key.to_string(), decoded_val))
+            })
+            .collect()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use std::collections::BinaryHeap;
+
+        let mut heap: BinaryHeap<KeyedCompactItem> = BinaryHeap::with_capacity(cap + 1);
+        let path_parts: Vec<&str> = sort_field.split('.').collect();
+
+        if let Some(col) = state.get(collection) {
+            for entry in col.iter() {
+                let key = entry.key();
+                let bytes = entry.value();
+
+                if !predicate(key, bytes) {
+                    continue;
+                }
+                if let Some(val_slice) = crate::query::find_msgpack_value(bytes, &path_parts) {
+                    if let Some(num) = crate::query::read_msgpack_number(val_slice) {
+                        let sort_value = if is_descending { -num } else { num };
+                        let item = KeyedCompactItem {
+                            key: Arc::from(key.as_str()),
+                            sort_value,
+                        };
+                        if heap.len() >= cap {
+                            if let Some(worst) = heap.peek() {
+                                if item < *worst {
+                                    heap.pop();
+                                    heap.push(item);
+                                }
+                            }
+                        } else {
+                            heap.push(item);
+                        }
+                    }
+                }
+            }
+
+            heap.into_sorted_vec()
+                .into_iter()
+                .filter_map(|item| {
+                    let entry = col.get(item.key.as_ref())?;
+                    let decoded_val = msgpack_to_value(entry.value())?;
+                    Some((item.key.to_string(), decoded_val))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
     }
 }
 

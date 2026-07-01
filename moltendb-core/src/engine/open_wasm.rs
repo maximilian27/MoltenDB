@@ -4,21 +4,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
-use std::sync::Arc;
+use dashmap::DashMap;
+#[cfg(target_arch = "wasm32")]
+use std::collections::BTreeMap;
 #[cfg(target_arch = "wasm32")]
 use std::sync::atomic::AtomicBool;
 #[cfg(target_arch = "wasm32")]
-use dashmap::DashMap;
+use std::sync::{Arc, RwLock};
 #[cfg(target_arch = "wasm32")]
 use tokio::sync::broadcast;
 
-use crate::engine::Db;
-#[cfg(target_arch = "wasm32")]
-use crate::engine::DbError;
 #[cfg(target_arch = "wasm32")]
 use crate::engine::config::DbConfig;
 #[cfg(target_arch = "wasm32")]
 use crate::engine::storage;
+use crate::engine::Db;
+#[cfg(target_arch = "wasm32")]
+use crate::engine::DbError;
 
 impl Db {
     /// Open (or create) a database in the browser using OPFS.
@@ -42,6 +44,7 @@ impl Db {
         let ttl_defaults = Arc::new(DashMap::new());
         let ttl_expiry = Arc::new(DashMap::new());
         let seq_counters = Arc::new(DashMap::new());
+        let seq_index = Arc::new(DashMap::new());
         let max_sizes = Arc::new(DashMap::new());
 
         // Choose storage backend: pure RAM (no OPFS) or OPFS file.
@@ -57,7 +60,8 @@ impl Db {
 
             // Apply encryption wrapper if a key is provided.
             let wrapped = if let Some(key) = encryption_key {
-                Arc::new(storage::EncryptedStorage::new(base, &key)) as Arc<dyn crate::engine::storage::StorageBackend>
+                Arc::new(storage::EncryptedStorage::new(base, &key))
+                    as Arc<dyn crate::engine::storage::StorageBackend>
             } else {
                 base
             };
@@ -66,9 +70,23 @@ impl Db {
             storage::stream_into_state(
                 &*wrapped,
                 &state,
-                #[cfg(feature = "schema")] &schemas,
+                #[cfg(feature = "schema")]
+                &schemas,
                 &ttl_expiry,
             )?;
+
+            // Build seq_index from replayed state.
+            for col_ref in state.iter() {
+                let col_name = col_ref.key().clone();
+                let col_map = col_ref.value();
+                let mut btree: BTreeMap<u64, String> = BTreeMap::new();
+                for entry in col_map.iter() {
+                    let seq =
+                        crate::common::system_field_tokens::read_msgpack_seq_token(entry.value());
+                    btree.insert(seq, entry.key().clone());
+                }
+                seq_index.insert(col_name, Arc::new(RwLock::new(btree)));
+            }
 
             wrapped
         };
@@ -86,6 +104,7 @@ impl Db {
             ttl_defaults,
             ttl_expiry,
             seq_counters,
+            seq_index,
             max_sizes,
             io_fault: Arc::new(AtomicBool::new(false)),
         })

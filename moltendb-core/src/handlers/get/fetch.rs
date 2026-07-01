@@ -105,7 +105,13 @@ pub fn fetch_documents(
                             query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
                         },
                         0,
-                        Some(params.offset + params.count_limit),
+                        // When a sort is present the caller must see all matching
+                        // documents before sorting, so we cannot short-circuit early.
+                        if params.has_sort {
+                            None
+                        } else {
+                            Some(params.offset + params.count_limit)
+                        },
                     );
                 }
             }
@@ -116,7 +122,12 @@ pub fn fetch_documents(
                     params.col_name,
                     move |key, _| pfxs.iter().any(|p| key.starts_with(p)),
                     params.offset,
-                    Some(params.count_limit),
+                    // When a sort is present all matches are needed before sorting.
+                    if params.has_sort {
+                        None
+                    } else {
+                        Some(params.count_limit)
+                    },
                 );
             }
 
