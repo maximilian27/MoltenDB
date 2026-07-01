@@ -113,6 +113,7 @@ pub fn fetch_documents(
                             Some(params.offset + params.count_limit)
                         },
                         params.default_order_asc,
+                        params.has_where,
                     );
                 }
             }
@@ -130,6 +131,7 @@ pub fn fetch_documents(
                         Some(params.count_limit)
                     },
                     params.default_order_asc,
+                    params.has_where,
                 );
             }
 

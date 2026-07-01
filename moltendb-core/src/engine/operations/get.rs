@@ -93,6 +93,7 @@ pub fn get_filtered(
     offset: usize,
     count: Option<usize>,
     default_order_asc: bool,
+    has_where: bool,
 ) -> Vec<(String, Value)> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -107,6 +108,47 @@ pub fn get_filtered(
         if let Some(lim) = count {
             let need = offset + lim;
             let mut found: Vec<(String, Value)> = Vec::with_capacity(need);
+
+            // WHERE + no-sort: use Rayon parallel scan with atomic early-exit.
+            // The BTreeMap path would degrade to O(N) for sparse matches; Rayon
+            // uses all cores and stops softly once `need` matches are collected.
+            if has_where {
+                use std::sync::atomic::{AtomicUsize, Ordering};
+                let found_count = Arc::new(AtomicUsize::new(0));
+                let fc = Arc::clone(&found_count);
+                let mut raw: Vec<(u64, String, Value)> = col
+                    .par_iter()
+                    .filter_map(|entry| {
+                        if fc.load(Ordering::Relaxed) >= need {
+                            return None;
+                        }
+                        if predicate(entry.key(), entry.value()) {
+                            let prev = fc.fetch_add(1, Ordering::Relaxed);
+                            if prev < need {
+                                decode(entry.value()).map(|v| {
+                                    let seq = read_msgpack_seq_token(entry.value());
+                                    (seq, entry.key().clone(), v)
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if default_order_asc {
+                    raw.sort_unstable_by_key(|(seq, _, _)| *seq);
+                } else {
+                    raw.sort_unstable_by_key(|(seq, _, _)| std::cmp::Reverse(*seq));
+                }
+                return raw
+                    .into_iter()
+                    .skip(offset)
+                    .take(lim)
+                    .map(|(_, k, v)| (k, v))
+                    .collect();
+            }
 
             if let Some(idx) = seq_index.get(collection) {
                 if let Ok(map) = idx.read() {

@@ -179,6 +179,7 @@ impl Db {
         offset: usize,
         count: Option<usize>,
         default_order_asc: bool,
+        has_where: bool,
     ) -> Vec<(String, Value)> {
         operations::get_filtered(
             &self.state,
@@ -189,6 +190,7 @@ impl Db {
             offset,
             count,
             default_order_asc,
+            has_where,
         )
         .into_iter()
         .map(|(k, v)| (k, expand_system_fields(v)))

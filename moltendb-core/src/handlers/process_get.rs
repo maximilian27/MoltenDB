@@ -69,6 +69,7 @@ pub fn process_get(
         where_clause: params.where_clause,
         has_joins,
         has_sort: params.sort_specs.is_some(),
+        has_where: params.where_clause.is_some(),
         default_order_asc,
         offset: params.offset,
         count_limit: params.count_limit,

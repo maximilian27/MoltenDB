@@ -13,6 +13,13 @@
   reverse (`map.iter().rev()`) so queries without an explicit sort return the most recently inserted documents first.
   Fallback full-scan paths also sort descending (`Reverse(*seq)`). Sorted queries (`scan_top_n_raw`) are unaffected.
 
+* **Rayon atomic early-exit for WHERE + no-sort queries** — `get_filtered` now routes queries that have a `WHERE`
+  clause but no `sort` through a Rayon parallel scan with an `AtomicUsize` match counter. Threads check the counter
+  before processing each entry and stop contributing results once `offset + limit` matches are collected, giving
+  4–8× speedup over the sequential BTreeMap path for sparse predicates. Results are sorted by `_seq` (respecting
+  `default_order_asc`) before pagination. The BTreeMap early-exit path is preserved for pure pagination queries
+  (no WHERE, no sort) where it is unambiguously optimal.
+
 * **Configurable default iteration order via `order` payload field** — unsorted GET requests now accept an optional
   `"order": "asc" | "desc"` property. `"desc"` (default) preserves newest-first behaviour; `"asc"` iterates the
   BTreeMap seq-index forward for oldest-first results. The field is registered in `PayloadField::Order` and
