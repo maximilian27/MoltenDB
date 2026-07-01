@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4Mjg0MzUxMSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjIxYjNmNGUwLTFhOGQtNDMwMy04ODM4LTU5Y2ZkN2E3ODI3OCJ9.p4z1X0EJZY34O7A7wQUa-V3ZuEOr_Nql9wVD9DwR49Y
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4Mjk3ODQ1MCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImZkNzZjMmY5LTQ4MzUtNGYxOC1hNzk3LTRkZGRhMDM3MWVjMCJ9.Rd_H5Y6msMQe7lxyRot-S-QfPP-PtsFNtXlA6KSQEHQ
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document
@@ -264,6 +264,7 @@ Authorization: Bearer {{token}}
   }
 }
 
+### todo this is slow
 ### §3h. Items with model name containing "Model-0001" ($contains on string)
 POST http://localhost:1538/get
 Content-Type: application/json

@@ -232,6 +232,7 @@ impl Db {
         operations::scan_top_n_raw(
             &self.state,
             &self.storage,
+            &self.seq_index,
             collection,
             predicate,
             sort_field,

@@ -497,6 +497,7 @@ impl Ord for KeyedCompactItem {
 pub fn scan_top_n_raw(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
+    seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
     collection: &str,
     predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
     sort_field: &str,
@@ -518,15 +519,31 @@ pub fn scan_top_n_raw(
 
         let path_parts: Vec<&str> = sort_field.split('.').collect();
 
-        let merged_heap: BinaryHeap<KeyedCompactItem> = col
+        // Use BTreeMap keys as Rayon input for better cache locality than
+        // iterating DashMap shards directly. Collect keys in insertion order
+        // then hand a contiguous Vec to Rayon's work-stealing scheduler.
+        let keys: Vec<String> = if let Some(idx) = seq_index.get(collection) {
+            if let Ok(map) = idx.read() {
+                map.values().cloned().collect()
+            } else {
+                col.iter().map(|e| e.key().clone()).collect()
+            }
+        } else {
+            col.iter().map(|e| e.key().clone()).collect()
+        };
+
+        let merged_heap: BinaryHeap<KeyedCompactItem> = keys
             .par_iter()
             .fold(
                 || BinaryHeap::with_capacity(cap + 1),
-                |mut heap, entry| {
-                    let key = entry.key();
-                    let bytes = entry.value();
+                |mut heap, key| {
+                    let bytes = match col.get(key.as_str()) {
+                        Some(b) => b,
+                        None => return heap,
+                    };
+                    let bytes = bytes.value();
 
-                    if predicate(key, bytes) {
+                    if predicate(key.as_str(), bytes) {
                         if let Some(val_slice) =
                             crate::query::find_msgpack_value(bytes, &path_parts)
                         {
