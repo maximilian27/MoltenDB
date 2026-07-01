@@ -178,6 +178,7 @@ impl Db {
         predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
         offset: usize,
         count: Option<usize>,
+        default_order_asc: bool,
     ) -> Vec<(String, Value)> {
         operations::get_filtered(
             &self.state,
@@ -187,6 +188,7 @@ impl Db {
             predicate,
             offset,
             count,
+            default_order_asc,
         )
         .into_iter()
         .map(|(k, v)| (k, expand_system_fields(v)))

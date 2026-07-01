@@ -92,6 +92,7 @@ pub fn get_filtered(
     predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
     offset: usize,
     count: Option<usize>,
+    default_order_asc: bool,
 ) -> Vec<(String, Value)> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -100,27 +101,39 @@ pub fn get_filtered(
             None => return Vec::new(),
         };
 
-        // No-sort path: iterate the BTreeMap seq_index in insertion order for
-        // true early-exit with correct ordering. Falls back to a full sequential
-        // scan (sorted by _seq) when the index is not yet populated.
+        // No-sort path: iterate the BTreeMap seq_index in reverse insertion order
+        // (newest first) for true early-exit with correct ordering. Falls back to
+        // a full sequential scan (sorted by _seq desc) when the index is not yet populated.
         if let Some(lim) = count {
             let need = offset + lim;
             let mut found: Vec<(String, Value)> = Vec::with_capacity(need);
 
             if let Some(idx) = seq_index.get(collection) {
                 if let Ok(map) = idx.read() {
-                    for (_seq, key) in map.iter() {
-                        if let Some(bytes) = col.get(key.as_str()) {
-                            if predicate(key.as_str(), bytes.value()) {
-                                if let Some(val) = decode(bytes.value()) {
-                                    found.push((key.clone(), val));
-                                    if found.len() >= need {
-                                        break;
+                    let iter_fn = |found: &mut Vec<(String, Value)>| {
+                        macro_rules! iterate {
+                            ($it:expr) => {
+                                for (_seq, key) in $it {
+                                    if let Some(bytes) = col.get(key.as_str()) {
+                                        if predicate(key.as_str(), bytes.value()) {
+                                            if let Some(val) = decode(bytes.value()) {
+                                                found.push((key.clone(), val));
+                                                if found.len() >= need {
+                                                    break;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                            }
+                            };
                         }
-                    }
+                        if default_order_asc {
+                            iterate!(map.iter());
+                        } else {
+                            iterate!(map.iter().rev());
+                        }
+                    };
+                    iter_fn(&mut found);
                 }
             } else {
                 // Fallback: seq_index not yet built — scan and sort by _seq.
@@ -133,7 +146,11 @@ pub fn get_filtered(
                         }
                     }
                 }
-                raw.sort_unstable_by_key(|(seq, _, _)| *seq);
+                if default_order_asc {
+                    raw.sort_unstable_by_key(|(seq, _, _)| *seq);
+                } else {
+                    raw.sort_unstable_by_key(|(seq, _, _)| std::cmp::Reverse(*seq));
+                }
                 found = raw.into_iter().map(|(_, k, v)| (k, v)).collect();
             }
 
@@ -210,24 +227,34 @@ pub fn get_filtered(
             None => return Vec::new(),
         };
 
-        // No-sort path: iterate seq_index in insertion order with early-exit.
+        // No-sort path: iterate seq_index in reverse insertion order (newest first)
+        // with early-exit.
         if let Some(lim) = count {
             let need = offset + lim;
             let mut found: Vec<(String, Value)> = Vec::with_capacity(need);
 
             if let Some(idx) = seq_index.get(collection) {
                 if let Ok(map) = idx.read() {
-                    for (_seq, key) in map.iter() {
-                        if let Some(bytes) = col.get(key.as_str()) {
-                            if predicate(key.as_str(), bytes.value()) {
-                                if let Some(val) = decode(bytes.value()) {
-                                    found.push((key.clone(), val));
-                                    if found.len() >= need {
-                                        break;
+                    macro_rules! iterate {
+                        ($it:expr) => {
+                            for (_seq, key) in $it {
+                                if let Some(bytes) = col.get(key.as_str()) {
+                                    if predicate(key.as_str(), bytes.value()) {
+                                        if let Some(val) = decode(bytes.value()) {
+                                            found.push((key.clone(), val));
+                                            if found.len() >= need {
+                                                break;
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
+                        };
+                    }
+                    if default_order_asc {
+                        iterate!(map.iter());
+                    } else {
+                        iterate!(map.iter().rev());
                     }
                 }
             } else {
@@ -240,7 +267,11 @@ pub fn get_filtered(
                         }
                     }
                 }
-                raw.sort_unstable_by_key(|(seq, _, _)| *seq);
+                if default_order_asc {
+                    raw.sort_unstable_by_key(|(seq, _, _)| *seq);
+                } else {
+                    raw.sort_unstable_by_key(|(seq, _, _)| std::cmp::Reverse(*seq));
+                }
                 found = raw.into_iter().map(|(_, k, v)| (k, v)).collect();
             }
 

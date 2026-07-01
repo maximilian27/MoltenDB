@@ -279,7 +279,7 @@ Authorization: Bearer {{token}}
   ],
   "where": {
     "model": {
-      "$ct": "Model-0001"
+      "$ct": "Model-000"
     }
   }
 }

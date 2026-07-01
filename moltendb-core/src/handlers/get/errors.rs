@@ -8,6 +8,8 @@ pub enum GetError {
     CollectionExpired,
     WhereEvalError(String),
     NoDocumentsFound,
+    OrderSortMutuallyExclusive,
+    InvalidOrderValue,
 }
 
 impl fmt::Display for GetError {
@@ -17,6 +19,10 @@ impl fmt::Display for GetError {
             GetError::CollectionExpired => write!(f, "No documents found"),
             GetError::WhereEvalError(details) => write!(f, "{details}"),
             GetError::NoDocumentsFound => write!(f, "No documents found"),
+            GetError::OrderSortMutuallyExclusive => {
+                write!(f, "'order' and 'sort' cannot be used together")
+            }
+            GetError::InvalidOrderValue => write!(f, "'order' must be \"asc\" or \"desc\""),
         }
     }
 }
@@ -28,6 +34,8 @@ impl OperationError for GetError {
         match self {
             GetError::CountExceeded(_) => 400,
             GetError::WhereEvalError(_) => 400,
+            GetError::OrderSortMutuallyExclusive => 400,
+            GetError::InvalidOrderValue => 400,
             GetError::CollectionExpired | GetError::NoDocumentsFound => 404,
         }
     }

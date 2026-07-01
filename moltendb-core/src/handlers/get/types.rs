@@ -21,6 +21,7 @@ pub struct FetchParams<'a> {
     pub(crate) where_clause: Option<&'a Value>,
     pub(crate) has_joins: bool,
     pub(crate) has_sort: bool,
+    pub(crate) default_order_asc: bool,
     pub(crate) offset: usize,
     pub(crate) count_limit: usize,
     pub(crate) allowed_prefixes: Option<&'a Vec<Value>>,

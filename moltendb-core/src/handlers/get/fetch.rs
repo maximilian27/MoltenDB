@@ -112,6 +112,7 @@ pub fn fetch_documents(
                         } else {
                             Some(params.offset + params.count_limit)
                         },
+                        params.default_order_asc,
                     );
                 }
             }
@@ -128,6 +129,7 @@ pub fn fetch_documents(
                     } else {
                         Some(params.count_limit)
                     },
+                    params.default_order_asc,
                 );
             }
 

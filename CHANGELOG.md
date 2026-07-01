@@ -9,11 +9,21 @@
   deferred to the final `cap` winners only. A new `KeyedCompactItem` struct (`Arc<str>` key + `f64` sort_value) replaces
   the previous heap item type, reducing per-item memory from a full JSON DOM tree to 32 bytes.
 
+* **Newest-first default ordering for unsorted queries** — `get_filtered` now iterates the BTreeMap seq-index in
+  reverse (`map.iter().rev()`) so queries without an explicit sort return the most recently inserted documents first.
+  Fallback full-scan paths also sort descending (`Reverse(*seq)`). Sorted queries (`scan_top_n_raw`) are unaffected.
+
+* **Configurable default iteration order via `order` payload field** — unsorted GET requests now accept an optional
+  `"order": "asc" | "desc"` property. `"desc"` (default) preserves newest-first behaviour; `"asc"` iterates the
+  BTreeMap seq-index forward for oldest-first results. The field is registered in `PayloadField::Order` and
+  `GET_ALLOWED`. Validation rejects any value other than `"asc"` or `"desc"`, and providing both `"order"` and
+  `"sort"` in the same request returns a 400 error — they are mutually exclusive.
+
 * **BTreeMap seq-index for insertion-order iteration with true early-exit** — added a per-collection
   `BTreeMap<u64, String>` (seq → document key) secondary index on the `Db` struct (
   `seq_index: Arc<DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>>`). The index is maintained on every insert and
   delete so `get_filtered` can iterate documents in insertion (`_seq`) order without a full collection scan or
-  post-sort. For unsorted queries, `get_filtered` now iterates the BTreeMap in ascending seq order and breaks as soon as
+  post-sort. For unsorted queries, `get_filtered` now iterates the BTreeMap in reverse seq order and breaks as soon as
   `offset + limit` matches are found — true O(matches_needed) early-exit. A fallback full sequential scan (sorted by
   `_seq`) is used when the index is not yet populated (e.g. immediately after startup before the first insert).
 

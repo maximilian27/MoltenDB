@@ -11,6 +11,7 @@ pub(crate) const GET_ALLOWED: &[&str] = &[
     PayloadField::Count.as_str(),
     PayloadField::Offset.as_str(),
     PayloadField::AllowedPrefixes.as_str(),
+    PayloadField::Order.as_str(),
 ];
 
 // src/core/constants.rs

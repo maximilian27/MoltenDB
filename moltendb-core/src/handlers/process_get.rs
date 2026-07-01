@@ -57,12 +57,19 @@ pub fn process_get(
     // Fetch, filter, join.
     let has_joins = params.joins_req.map(|j| !j.is_empty()).unwrap_or(false);
 
+    let default_order_asc = payload
+        .get(PayloadField::Order.as_str())
+        .and_then(|v| v.as_str())
+        .map(|s| s == "asc")
+        .unwrap_or(false);
+
     let fetch_params = FetchParams {
         col_name: params.col_name,
         payload,
         where_clause: params.where_clause,
         has_joins,
         has_sort: params.sort_specs.is_some(),
+        default_order_asc,
         offset: params.offset,
         count_limit: params.count_limit,
         allowed_prefixes: params.allowed_prefixes,
@@ -108,6 +115,20 @@ fn validate_get_request(
             "'fields' and 'excludedFields' cannot be used together".to_string(),
         )
         .into_response());
+    }
+
+    let has_sort = payload.get(PayloadField::Sort.as_str()).is_some();
+    let order_val = payload.get(PayloadField::Order.as_str());
+    if has_sort && order_val.is_some() {
+        return Err(GetError::OrderSortMutuallyExclusive.into_response());
+    }
+    if let Some(ord) = order_val {
+        match ord.as_str() {
+            Some("asc") | Some("desc") => {}
+            _ => {
+                return Err(GetError::InvalidOrderValue.into_response());
+            }
+        }
     }
 
     Ok(())
