@@ -141,7 +141,8 @@ Authorization: Bearer {{token}}
     "brand": {
       "$eq": "Apple"
     }
-  }
+  },
+  "order": "desc"
 }
 
 ### §3b. In-stock items under $1 000

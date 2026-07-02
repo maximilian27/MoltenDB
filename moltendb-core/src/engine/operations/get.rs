@@ -116,44 +116,36 @@ where
             let need = offset + lim;
             let mut found: Vec<(String, Value)> = Vec::with_capacity(need);
 
-            // WHERE + no-sort: use Rayon parallel scan with atomic early-exit.
-            // The BTreeMap path would degrade to O(N) for sparse matches; Rayon
-            // uses all cores and stops softly once `need` matches are collected.
+            // WHERE + no-sort: two-phase approach identical to the sort path.
+            // Phase 1: collect (seq, key) pairs only — no MsgPack decode.
+            // Sort by _seq, paginate, then decode only the page items.
             if has_where {
-                use std::sync::atomic::{AtomicUsize, Ordering};
-                let found_count = Arc::new(AtomicUsize::new(0));
-                let fc = Arc::clone(&found_count);
-                let mut raw: Vec<(u64, String, Value)> = col
+                let mut pairs: Vec<(u64, String)> = col
                     .par_iter()
                     .filter_map(|entry| {
-                        if fc.load(Ordering::Relaxed) >= need {
-                            return None;
-                        }
                         if predicate(entry.key(), entry.value()) {
-                            let prev = fc.fetch_add(1, Ordering::Relaxed);
-                            if prev < need {
-                                decode(entry.value()).map(|v| {
-                                    let seq = read_msgpack_seq_token(entry.value());
-                                    (seq, entry.key().clone(), v)
-                                })
-                            } else {
-                                None
-                            }
+                            let seq = read_msgpack_seq_token(entry.value());
+                            Some((seq, entry.key().clone()))
                         } else {
                             None
                         }
                     })
                     .collect();
                 if default_order_asc {
-                    raw.sort_unstable_by_key(|(seq, _, _)| *seq);
+                    pairs.sort_unstable_by_key(|(seq, _)| *seq);
                 } else {
-                    raw.sort_unstable_by_key(|(seq, _, _)| std::cmp::Reverse(*seq));
+                    pairs.sort_unstable_by_key(|(seq, _)| std::cmp::Reverse(*seq));
                 }
-                return raw
+                // Phase 2: decode only the page items.
+                return pairs
                     .into_iter()
                     .skip(offset)
                     .take(lim)
-                    .map(|(_, k, v)| (k, v))
+                    .filter_map(|(_, key)| {
+                        let entry = col.get(&key)?;
+                        let val = decode(entry.value())?;
+                        Some((key, val))
+                    })
                     .collect();
             }
 
