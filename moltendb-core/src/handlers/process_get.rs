@@ -5,6 +5,7 @@ use super::get::types::{FetchParams, GetParams};
 use super::get::{apply_joins, fetch_documents, make_comparator, shape_doc};
 use crate::common::payload_fields::PayloadField;
 use crate::engine::ttl;
+use crate::engine::{ScanTopNParams, ScanTopNRawParams};
 use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::validation;
 use crate::{engine, query};
@@ -248,18 +249,18 @@ fn run_fast_sort_path(
         };
 
         if !field.is_empty() {
-            let raw = db.scan_top_n_raw(
-                params.col_name,
-                move |_key, doc_bytes| {
+            let raw = db.scan_top_n_raw(ScanTopNRawParams {
+                collection: params.col_name,
+                predicate: move |_key, doc_bytes| {
                     where_clause_owned
                         .as_ref()
                         .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
                         .unwrap_or(true)
                 },
-                &field,
-                descending,
+                sort_field: &field,
+                is_descending: descending,
                 cap,
-            );
+            });
             // scan_top_n_raw returns items sorted ascending by sort_value (smallest
             // first). For descending queries the values were negated, so the order
             // is already correct — largest original value comes first.
@@ -267,9 +268,9 @@ fn run_fast_sort_path(
         } else {
             // Field name could not be parsed; fall back to generic path.
             let cmp = make_comparator(specs);
-            db.scan_top_n(
-                params.col_name,
-                move |_key, doc_bytes| {
+            db.scan_top_n(ScanTopNParams {
+                collection: params.col_name,
+                predicate: move |_key, doc_bytes| {
                     where_clause_owned
                         .as_ref()
                         .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
@@ -277,14 +278,14 @@ fn run_fast_sort_path(
                 },
                 cmp,
                 cap,
-            )
+            })
         }
     } else {
         // Multi-field sort: fall back to the generic Value-based comparator.
         let cmp = make_comparator(specs);
-        db.scan_top_n(
-            params.col_name,
-            move |_key, doc_bytes| {
+        db.scan_top_n(ScanTopNParams {
+            collection: params.col_name,
+            predicate: move |_key, doc_bytes| {
                 where_clause_owned
                     .as_ref()
                     .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
@@ -292,7 +293,7 @@ fn run_fast_sort_path(
             },
             cmp,
             cap,
-        )
+        })
     };
 
     let array: Vec<Value> = top

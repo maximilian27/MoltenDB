@@ -9,6 +9,7 @@
 // gives a near-linear speedup. On wasm32 we fall back to a sequential scan.
 // ─────────────────────────────────────────────────────────────────────────────
 use super::super::StorageBackend;
+use super::types::{GetFilteredParams, ScanTopNParams, ScanTopNRawParams};
 use crate::common::system_field_tokens::{msgpack_to_value, read_msgpack_seq_token};
 use dashmap::DashMap;
 use serde_json::Value;
@@ -84,17 +85,23 @@ pub fn get(
 /// are found — true early-exit with correct ordering.
 /// Native (sort present, count=None): parallel Rayon scan collects all matches.
 /// Wasm: sequential scan with early-stop on `limit`.
-pub fn get_filtered(
+pub fn get_filtered<P>(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
     seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
-    collection: &str,
-    predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
-    offset: usize,
-    count: Option<usize>,
-    default_order_asc: bool,
-    has_where: bool,
-) -> Vec<(String, Value)> {
+    params: GetFilteredParams<'_, P>,
+) -> Vec<(String, Value)>
+where
+    P: Fn(&str, &[u8]) -> bool + Sync + Send,
+{
+    let GetFilteredParams {
+        collection,
+        predicate,
+        offset,
+        count,
+        default_order_asc,
+        has_where,
+    } = params;
     #[cfg(not(target_arch = "wasm32"))]
     {
         let col = match state.get(collection) {
@@ -391,18 +398,21 @@ pub fn get_filtered(
 /// Native: each rayon worker maintains its own bounded heap, results are merged
 /// at the end.
 /// Wasm: single-threaded bounded heap.
-pub fn scan_top_n<P, C>(
+pub fn scan_top_n<'a, P, C>(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
-    collection: &str,
-    predicate: P,
-    cmp: C,
-    cap: usize,
+    params: ScanTopNParams<'a, P, C>,
 ) -> Vec<(String, Value)>
 where
     P: Fn(&str, &[u8]) -> bool + Sync,
     C: Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
 {
+    let ScanTopNParams {
+        collection,
+        predicate,
+        cmp,
+        cap,
+    } = params;
     use std::cmp::Ordering;
     use std::collections::BinaryHeap;
     if cap == 0 {
@@ -435,7 +445,7 @@ where
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let Some(col) = state.get(collection) else {
+        let Some(col) = state.get(collection as &str) else {
             return Vec::new();
         };
         // Each rayon worker keeps its own bounded heap (size ≤ cap) and we merge
@@ -568,16 +578,22 @@ impl Ord for KeyedCompactItem {
 /// to the final `cap` winners only.
 ///
 /// `is_descending`: when true the sort order is reversed (largest first).
-pub fn scan_top_n_raw(
+pub fn scan_top_n_raw<P>(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     _storage: &Arc<dyn StorageBackend>,
     seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
-    collection: &str,
-    predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
-    sort_field: &str,
-    is_descending: bool,
-    cap: usize,
-) -> Vec<(String, Value)> {
+    params: ScanTopNRawParams<'_, P>,
+) -> Vec<(String, Value)>
+where
+    P: Fn(&str, &[u8]) -> bool + Sync + Send,
+{
+    let ScanTopNRawParams {
+        collection,
+        predicate,
+        sort_field,
+        is_descending,
+        cap,
+    } = params;
     if cap == 0 {
         return Vec::new();
     }

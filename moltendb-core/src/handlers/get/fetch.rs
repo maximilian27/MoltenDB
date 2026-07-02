@@ -1,5 +1,6 @@
 ﻿use crate::common::payload_fields::PayloadField;
 use crate::common::where_operators::WhereOperator;
+use crate::engine::GetFilteredParams;
 use crate::handlers::get::types::FetchParams;
 use crate::{engine, query};
 use serde_json::Value;
@@ -139,9 +140,9 @@ pub fn fetch_documents(db: &engine::Db, params: &FetchParams<'_>) -> Vec<(String
             let clause = params.where_clause.unwrap().clone();
             let fast_preds = extract_fast_predicates(&clause);
 
-            db.get_filtered(
-                params.col_name,
-                move |_key, doc_bytes| {
+            db.get_filtered(GetFilteredParams {
+                collection: params.col_name,
+                predicate: move |_key, doc_bytes| {
                     if !fast_preds.is_empty() {
                         // Fast path: evaluate all conditions directly on MsgPack
                         // bytes — no full rmp_serde deserialization needed.
@@ -154,11 +155,11 @@ pub fn fetch_documents(db: &engine::Db, params: &FetchParams<'_>) -> Vec<(String
                         query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
                     }
                 },
-                0,
-                early_exit_count,
-                params.default_order_asc,
-                params.has_where,
-            )
+                offset: 0,
+                count: early_exit_count,
+                default_order_asc: params.default_order_asc,
+                has_where: params.has_where,
+            })
         }
 
         // Prefix only: BTreeMap insertion-order scan filtered by key prefix.
@@ -169,14 +170,16 @@ pub fn fetch_documents(db: &engine::Db, params: &FetchParams<'_>) -> Vec<(String
                 .map(str::to_string)
                 .collect();
 
-            db.get_filtered(
-                params.col_name,
-                move |key, _| pfxs.iter().any(|p| key.starts_with(p.as_str())),
-                0,
-                early_exit_count,
-                params.default_order_asc,
-                params.has_where,
-            )
+            db.get_filtered(GetFilteredParams {
+                collection: params.col_name,
+                predicate: move |key: &str, _: &[u8]| {
+                    pfxs.iter().any(|p| key.starts_with(p.as_str()))
+                },
+                offset: 0,
+                count: early_exit_count,
+                default_order_asc: params.default_order_asc,
+                has_where: params.has_where,
+            })
         }
 
         // WHERE + prefix: single pass combining both checks.
@@ -189,9 +192,9 @@ pub fn fetch_documents(db: &engine::Db, params: &FetchParams<'_>) -> Vec<(String
                 .map(str::to_string)
                 .collect();
 
-            db.get_filtered(
-                params.col_name,
-                move |key, doc_bytes| {
+            db.get_filtered(GetFilteredParams {
+                collection: params.col_name,
+                predicate: move |key: &str, doc_bytes: &[u8]| {
                     if !pfxs.iter().any(|p| key.starts_with(p.as_str())) {
                         return false;
                     }
@@ -204,23 +207,23 @@ pub fn fetch_documents(db: &engine::Db, params: &FetchParams<'_>) -> Vec<(String
                         query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
                     }
                 },
-                0,
-                early_exit_count,
-                params.default_order_asc,
-                params.has_where,
-            )
+                offset: 0,
+                count: early_exit_count,
+                default_order_asc: params.default_order_asc,
+                has_where: params.has_where,
+            })
         }
 
         // Full scan: trivially-true predicate; BTreeMap seq_index gives
         // insertion-order results with early-exit.
-        ScanStrategy::FullScan => db.get_filtered(
-            params.col_name,
-            |_, _| true,
-            0,
-            early_exit_count,
-            params.default_order_asc,
-            false,
-        ),
+        ScanStrategy::FullScan => db.get_filtered(GetFilteredParams {
+            collection: params.col_name,
+            predicate: |_, _| true,
+            offset: 0,
+            count: early_exit_count,
+            default_order_asc: params.default_order_asc,
+            has_where: false,
+        }),
     }
 }
 

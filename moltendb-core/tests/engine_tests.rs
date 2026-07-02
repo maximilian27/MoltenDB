@@ -62,7 +62,14 @@ fn test_batch_operations() {
 
     db.insert("bench", items).expect("Batch insert failed");
 
-    let all = db.get_filtered("bench", |_, _| true, 0, None, true, false);
+    let all = db.get_filtered(moltendb_core::engine::GetFilteredParams {
+        collection: "bench",
+        predicate: |_, _| true,
+        offset: 0,
+        count: None,
+        default_order_asc: true,
+        has_where: false,
+    });
     assert_eq!(all.len(), 100);
 
     let keys = vec!["k0".to_string(), "k50".to_string(), "k99".to_string()];

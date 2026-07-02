@@ -24,6 +24,7 @@
 // Declare the sub-modules of the engine.
 mod config; // DbConfig struct
 mod operations;
+pub use operations::{GetFilteredParams, ScanTopNParams, ScanTopNRawParams};
 #[cfg(feature = "schema")]
 mod schema; // JSON Schema validation
 mod storage; // StorageBackend trait + concrete implementations
@@ -159,29 +160,17 @@ impl Db {
     /// are cloned. `offset` and `count` are applied during iteration so the
     /// scan can stop early. Used for WHERE queries on large collections when
     /// no index applies.
-    pub fn get_filtered(
+    pub fn get_filtered<P>(
         &self,
-        collection: &str,
-        predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
-        offset: usize,
-        count: Option<usize>,
-        default_order_asc: bool,
-        has_where: bool,
-    ) -> Vec<(String, Value)> {
-        operations::get_filtered(
-            &self.state,
-            &self.storage,
-            &self.seq_index,
-            collection,
-            predicate,
-            offset,
-            count,
-            default_order_asc,
-            has_where,
-        )
-        .into_iter()
-        .map(|(k, v)| (k, expand_system_fields(v)))
-        .collect()
+        params: operations::GetFilteredParams<'_, P>,
+    ) -> Vec<(String, Value)>
+    where
+        P: Fn(&str, &[u8]) -> bool + Sync + Send,
+    {
+        operations::get_filtered(&self.state, &self.storage, &self.seq_index, params)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
     }
 
     /// Lazily scan a collection and return the top-`cap` documents according
@@ -193,14 +182,15 @@ impl Db {
     /// even for collections of millions of documents. The result is already
     /// sorted best-first (per the comparator); the caller still applies
     /// `offset` and `count` for pagination.
-    pub fn scan_top_n(
+    pub fn scan_top_n<'a, P, C>(
         &self,
-        collection: &str,
-        predicate: impl Fn(&str, &[u8]) -> bool + Sync,
-        cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
-        cap: usize,
-    ) -> Vec<(String, Value)> {
-        operations::scan_top_n(&self.state, &self.storage, collection, predicate, cmp, cap)
+        params: operations::ScanTopNParams<'a, P, C>,
+    ) -> Vec<(String, Value)>
+    where
+        P: Fn(&str, &[u8]) -> bool + Sync,
+        C: Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
+    {
+        operations::scan_top_n(&self.state, &self.storage, params)
             .into_iter()
             .map(|(k, v)| (k, expand_system_fields(v)))
             .collect()
@@ -212,27 +202,17 @@ impl Db {
     /// parallel scan phase — no full deserialization until the final `cap`
     /// winners are known. Falls back gracefully when the field is absent or
     /// non-numeric (those documents are excluded from results).
-    pub fn scan_top_n_raw(
+    pub fn scan_top_n_raw<P>(
         &self,
-        collection: &str,
-        predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
-        sort_field: &str,
-        is_descending: bool,
-        cap: usize,
-    ) -> Vec<(String, Value)> {
-        operations::scan_top_n_raw(
-            &self.state,
-            &self.storage,
-            &self.seq_index,
-            collection,
-            predicate,
-            sort_field,
-            is_descending,
-            cap,
-        )
-        .into_iter()
-        .map(|(k, v)| (k, expand_system_fields(v)))
-        .collect()
+        params: operations::ScanTopNRawParams<'_, P>,
+    ) -> Vec<(String, Value)>
+    where
+        P: Fn(&str, &[u8]) -> bool + Sync + Send,
+    {
+        operations::scan_top_n_raw(&self.state, &self.storage, &self.seq_index, params)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
     }
 
     /// Insert or overwrite multiple documents in one call.

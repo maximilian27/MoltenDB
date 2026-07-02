@@ -34,5 +34,5 @@ pub use get::{get, get_filtered, scan_top_n, scan_top_n_raw};
 #[cfg(not(target_arch = "wasm32"))]
 pub use recover::recover_to;
 pub use set::insert;
-pub use types::{InsertParams, UpdateParams};
+pub use types::{GetFilteredParams, InsertParams, ScanTopNParams, ScanTopNRawParams, UpdateParams};
 pub use update::update;

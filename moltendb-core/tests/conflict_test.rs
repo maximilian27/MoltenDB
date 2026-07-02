@@ -123,7 +123,14 @@ async fn test_delete_filtered() {
 
     // Only admin and editor should remain.
     let remaining: std::collections::HashMap<_, _> = db
-        .get_filtered("items", |_, _| true, 0, None, true, false)
+        .get_filtered(moltendb_core::engine::GetFilteredParams {
+            collection: "items",
+            predicate: |_, _| true,
+            offset: 0,
+            count: None,
+            default_order_asc: true,
+            has_where: false,
+        })
         .into_iter()
         .collect();
     assert_eq!(remaining.len(), 2);
