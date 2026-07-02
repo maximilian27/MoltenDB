@@ -32,8 +32,8 @@ Everything above this layer is an optional adapter.
 
 - **Query evaluator** — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$contains`, `$or`, `$and`
 - **Fine-grained field projection** — include (`fields`) or exclude (`excludedFields`) at any dot-notation depth
-- **Joins, sort, pagination** — cross-collection joins, multi-field sort, `count` / `offset`. (Note: Cursor pagination
-  using the system `_seq` field is recommended over `offset` for optimal performance and memory on deep datasets).
+- **Joins, sort, pagination** — cross-collection joins, multi-field sort, `count` / `offset` / `order` (`"asc"`/
+  `"desc"`).
 - **Input validation** — collection name, key, and field name rules enforced before any operation reaches the engine
 
 ### Layer 2: Storage & Runtime Adapters
@@ -71,7 +71,7 @@ when the crate is used as a dependency of `moltendb-wasm`.
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc10"
+moltendb-core = "1.0.0-rc12"
 ```
 
 ### Minimal example
@@ -124,12 +124,8 @@ println!("{} — {}", status_code, result);
 ```
 
 > **Pagination defaults:** `count` defaults to `100` if not supplied. Values above `1000` are rejected with a
-`400 Bad Request` error. This applies to both `/get` and bulk `/delete` (with `where`).
->
-> 💡 **Recommended Pagination Pattern:** Although `offset` is fully supported, it is **highly recommended** to use *
-*Cursor Pagination** for large or deep datasets. You can query and track the system-managed `_seq` property (
-> monotonically increasing document sequence number) as a cursor (e.g. `where: { "_seq": { "$gt": last_seen_seq } }`) to
-> achieve $O(1)$ query times and zero memory overhead under deep pagination.
+`400 Bad Request` error. This applies to both `/get` and bulk `/delete` (with `where`). Unsorted queries default to *
+*newest-first** — pass `"order": "asc"` to iterate oldest-first. `order` is mutually exclusive with `sort`.
 
 ---
 

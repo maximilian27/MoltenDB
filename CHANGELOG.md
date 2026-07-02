@@ -13,6 +13,13 @@
   reverse (`map.iter().rev()`) so queries without an explicit sort return the most recently inserted documents first.
   Fallback full-scan paths also sort descending (`Reverse(*seq)`). Sorted queries (`scan_top_n_raw`) are unaffected.
 
+* **Fixed ordering and offset for no-WHERE, no-sort queries** — the fallback `get_all` path ignored `order` and
+  applied offset incorrectly. The no-WHERE, no-sort case now routes through `get_filtered` with an always-true
+  predicate, using the BTreeMap seq-index for correct newest-first (or oldest-first) ordering and proper
+  `offset`/`limit` pagination. Fixed a double-offset bug where `get_filtered` and `shape_and_return` both applied
+  `offset` independently; all `get_filtered` call sites now pass `offset=0` and `count=offset+limit` so
+  `shape_and_return` handles the final pagination correctly.
+
 * **Rayon atomic early-exit for WHERE + no-sort queries** — `get_filtered` now routes queries that have a `WHERE`
   clause but no `sort` through a Rayon parallel scan with an `AtomicUsize` match counter. Threads check the counter
   before processing each entry and stop contributing results once `offset + limit` matches are collected, giving

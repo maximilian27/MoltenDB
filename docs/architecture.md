@@ -46,7 +46,7 @@ tree.
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "1.0.0-rc10"
+moltendb-core = "1.0.0-rc12"
 ```
 
 ```rust
@@ -137,4 +137,41 @@ loaded into memory at startup from the snapshot + WAL delta. RAM is the hard dat
 One of MoltenDB's core features is **GraphQL like fine-grained field projection**: every query lets you specify exactly
 which fields (including deeply nested ones) you want back. You never receive more data than you asked for — no
 over-fetching, no under-fetching, no separate schema to maintain.
+
+---
+
+### Query Execution Architecture
+
+Every `POST /get` request is routed through one of four execution paths depending on the query shape:
+
+| Query type              | Execution path                          | Mechanism                                                                                                                                                                                                             |
+|:------------------------|:----------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Key lookup (`keys`)     | DashMap direct                          | O(1) hash lookup — no scan                                                                                                                                                                                            |
+| No `sort`, no `where`   | BTreeMap seq-index early-exit           | Iterates a per-collection `BTreeMap<u64, String>` (seq → key) in insertion order; breaks the moment `offset + limit` matches are collected                                                                            |
+| No `sort`, with `where` | Rayon parallel scan + atomic early-exit | All CPU cores scan DashMap shards concurrently; an `AtomicUsize` counter stops threads once `offset + limit` matches are found; results sorted by `_seq` before pagination                                            |
+| `sort` present          | Rayon bounded top-N (`scan_top_n_raw`)  | All cores scan in parallel; each thread maintains a bounded min-heap of size `limit`; raw byte extraction via `find_msgpack_value` — no full deserialization during scan; only the final `limit` winners are hydrated |
+
+#### BTreeMap Seq-Index
+
+A secondary `BTreeMap<u64, String>` (insertion sequence → document key) is maintained per collection alongside the
+primary `DashMap`. It enables true O(k) ordered pagination for pure pagination queries (no `where`, no `sort`) — the
+engine iterates in insertion order and breaks as soon as enough matches are found, without scanning the full collection.
+
+```
+state:     DashMap<Arc<str>, DashMap<String, Box<[u8]>>>   ← primary store (O(1) key lookup)
+seq_index: DashMap<Arc<str>, RwLock<BTreeMap<u64, String>>> ← secondary index (ordered iteration)
+```
+
+- **Write cost:** O(log n) BTreeMap insert per document write (plus `RwLock` acquisition).
+- **Read cost (no-where, no-sort):** O(k) where k = documents scanned to satisfy `offset + limit`.
+- **Startup:** index is rebuilt from the replayed WAL state in O(n log n) — no changes to the WAL format.
+- **Default order:** newest-first (`map.iter().rev()`). Pass `"order": "asc"` in the request payload to iterate
+  oldest-first.
+
+#### Deferred Hydration in `scan_top_n_raw`
+
+Sorted queries use lazy byte extraction (`find_msgpack_value` + `read_msgpack_number`) to read only the sort field from
+raw MsgPack bytes during the parallel scan phase — no `serde_json::Value` is allocated per document. Full
+deserialization (`msgpack_to_value`) is deferred to the final `limit` winners only, eliminating millions of heap
+allocations for large collections.
 

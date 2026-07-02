@@ -30,7 +30,8 @@ Authorization: Bearer {{token}}
 {
   "collection": "stress",
   "count": 100,
-  "order": "desc"
+  "order": "desc",
+  "offset": 900000
 }
 
 ### §1b. Fetch a mid-range document
@@ -265,7 +266,6 @@ Authorization: Bearer {{token}}
   }
 }
 
-### todo this is slow
 ### §3h. Items with model name containing "Model-0001" ($contains on string)
 POST http://localhost:1538/get
 Content-Type: application/json
@@ -276,11 +276,13 @@ Authorization: Bearer {{token}}
   "fields": [
     "brand",
     "model",
-    "price"
+    "price",
+    "_seq"
   ],
   "where": {
-    "model": {
-      "$ct": "Model-000"
+    "_seq": {
+      "$gt": 200000,
+      "$lt": 201000
     }
   }
 }

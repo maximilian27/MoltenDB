@@ -123,19 +123,30 @@ pub fn fetch_documents(
                 return db.get_filtered(
                     params.col_name,
                     move |key, _| pfxs.iter().any(|p| key.starts_with(p)),
-                    params.offset,
+                    0,
                     // When a sort is present all matches are needed before sorting.
                     if params.has_sort {
                         None
                     } else {
-                        Some(params.count_limit)
+                        Some(params.offset + params.count_limit)
                     },
                     params.default_order_asc,
                     params.has_where,
                 );
             }
 
-            db.get_all(params.col_name, params.offset, Some(params.count_limit))
+            db.get_filtered(
+                params.col_name,
+                |_, _| true,
+                0,
+                if params.has_sort {
+                    None
+                } else {
+                    Some(params.offset + params.count_limit)
+                },
+                params.default_order_asc,
+                false,
+            )
         }
     }
 }
