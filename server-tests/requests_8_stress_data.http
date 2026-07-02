@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4Mjk3ODQ1MCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImZkNzZjMmY5LTQ4MzUtNGYxOC1hNzk3LTRkZGRhMDM3MWVjMCJ9.Rd_H5Y6msMQe7lxyRot-S-QfPP-PtsFNtXlA6KSQEHQ
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MzA3NDg3OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjRiMDI4ZGQ5LTVlYzMtNDMzZi05OGQwLThjNzBiMGNiOTZlMyJ9.i_MQBec6BybAVvR0GI0tD7UQ5hCejPkLnSUYKIDyiAU
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document
@@ -29,9 +29,7 @@ Authorization: Bearer {{token}}
 
 {
   "collection": "stress",
-  "count": 100,
-  "order": "desc",
-  "offset": 900000
+  "keys": "stress_000001"
 }
 
 ### §1b. Fetch a mid-range document
@@ -276,13 +274,11 @@ Authorization: Bearer {{token}}
   "fields": [
     "brand",
     "model",
-    "price",
-    "_seq"
+    "price"
   ],
   "where": {
-    "_seq": {
-      "$gt": 300000,
-      "$lt": 300100
+    "model": {
+      "$ct": "Model-0001"
     }
   }
 }
@@ -610,7 +606,7 @@ Authorization: Bearer {{token}}
       "order": "asc"
     }
   ],
-  "offset": 100000,
+  "offset": 10,
   "count": 10
 }
 

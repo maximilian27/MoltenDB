@@ -264,6 +264,7 @@ pub fn get_filtered(
     }
     #[cfg(target_arch = "wasm32")]
     {
+        let _ = has_where; // not used on wasm32 (no Rayon)
         let col = match state.get(collection) {
             Some(c) => c,
             None => return Vec::new(),
@@ -675,6 +676,7 @@ pub fn scan_top_n_raw(
 
     #[cfg(target_arch = "wasm32")]
     {
+        let _ = seq_index; // not used on wasm32 (no BTreeMap pre-collection)
         use std::collections::BinaryHeap;
 
         let mut heap: BinaryHeap<KeyedCompactItem> = BinaryHeap::with_capacity(cap + 1);
