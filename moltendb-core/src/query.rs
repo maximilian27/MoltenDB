@@ -284,6 +284,22 @@ pub fn evaluate_predicate_msgpack(
     operator: &str,
     op_value: &Value,
 ) -> Option<bool> {
+    // System fields are stored under single-byte token keys, not string keys.
+    // find_msgpack_value skips token keys, so handle them separately here.
+    if let Some(sys_val) =
+        crate::common::system_field_tokens::read_msgpack_system_field_u64(msgpack_bytes, field_path)
+    {
+        let threshold = op_value.as_f64()? as u64;
+        return match WhereOperator::from_str(operator)? {
+            WhereOperator::Gt => Some(sys_val > threshold),
+            WhereOperator::Gte => Some(sys_val >= threshold),
+            WhereOperator::Lt => Some(sys_val < threshold),
+            WhereOperator::Lte => Some(sys_val <= threshold),
+            WhereOperator::Eq => Some(sys_val == threshold),
+            WhereOperator::NotEq => Some(sys_val != threshold),
+            _ => None,
+        };
+    }
     let parts: Vec<&str> = field_path.split('.').collect();
     let value_slice = find_msgpack_value(msgpack_bytes, &parts)?;
 

@@ -281,8 +281,8 @@ Authorization: Bearer {{token}}
   ],
   "where": {
     "_seq": {
-      "$gt": 200000,
-      "$lt": 201000
+      "$gt": 300000,
+      "$lt": 300100
     }
   }
 }
@@ -610,7 +610,7 @@ Authorization: Bearer {{token}}
       "order": "asc"
     }
   ],
-  "offset": 10,
+  "offset": 100000,
   "count": 10
 }
 

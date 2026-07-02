@@ -6,15 +6,25 @@ All endpoints except `POST /login` require an `Authorization: Bearer <token>` he
 All endpoints return a consistent JSON envelope with a `statusCode` field:
 
 ```json
-{ "statusCode": 200, "count": 5, "status": "ok" }
+{
+  "statusCode": 200,
+  "count": 5,
+  "status": "ok"
+}
 ```
 
 ```json
-{ "statusCode": 400, "error": "Unknown property: 'foo'. Check the API docs..." }
+{
+  "statusCode": 400,
+  "error": "Unknown property: 'foo'. Check the API docs..."
+}
 ```
 
 ```json
-{ "statusCode": 404, "error": "No documents found" }
+{
+  "statusCode": 404,
+  "error": "No documents found"
+}
 ```
 
 ### Authentication
@@ -75,7 +85,16 @@ Authorization: Bearer <token>
 Pass `data` as an **array** to auto-generate UUIDv7 keys:
 
 ```json
-{ "collection": "laptops", "data": [{ "brand": "HP", "model": "Spectre x360", "price": 1599 }] }
+{
+  "collection": "laptops",
+  "data": [
+    {
+      "brand": "HP",
+      "model": "Spectre x360",
+      "price": 1599
+    }
+  ]
+}
 ```
 
 Returns `{ "statusCode": 200, "status": "ok", "count": 1 }`.
@@ -102,7 +121,15 @@ Attempting to insert or update a document that contains any field starting with 
 in a `fields` projection:
 
 ```json
-{ "collection": "laptops", "fields": ["brand", "price", "_createdAt", "_modifiedAt"] }
+{
+  "collection": "laptops",
+  "fields": [
+    "brand",
+    "price",
+    "_createdAt",
+    "_modifiedAt"
+  ]
+}
 ```
 
 ### TTL (Time-to-Live)
@@ -112,12 +139,23 @@ configurable idle period. TTL is set via `/schema` (no JSON schema required) or 
 
 ```json
 POST /schema
-{ "collection": "cache", "ttl": 300 }
+{
+  "collection": "cache",
+  "ttl": 300
+}
 ```
 
 ```json
 POST /set
-{ "collection": "cache", "data": { "k": { "value": 1 } }, "ttl": 300 }
+{
+  "collection": "cache",
+  "data": {
+    "k": {
+      "value": 1
+    }
+  },
+  "ttl": 300
+}
 ```
 
 **How it works:**
@@ -132,10 +170,12 @@ POST /set
 - `/update` calls do **not** reset the expiry clock — only `/set` (insert) does.
 
 > **Design decision — sliding-window expiry:** The TTL clock resets on every insert, not on every access. This means a
-> collection that receives a steady stream of writes will never expire — it only drops after `ttl_secs` of complete write
-> inactivity. This makes MoltenDB TTL ideal for **ephemeral caches, analytics buffers, and temporary working sets** where
+> collection that receives a steady stream of writes will never expire — it only drops after `ttl_secs` of complete
+> write
+> inactivity. This makes MoltenDB TTL ideal for **ephemeral caches, analytics buffers, and temporary working sets**where
 > the collection as a whole should outlive active use. It is **not** designed for per-document expiry use cases such as
-> OTPs, password-reset tokens, or session invalidation — for those, store your own `expires_at` field in the document and
+> OTPs, password-reset tokens, or session invalidation — for those, store your own `expires_at` field in the document
+> and
 > use `POST /delete` with a `where` clause to clean up expired entries.
 
 **Eviction strategy:**
@@ -150,7 +190,10 @@ POST /set
 
 ```json
 POST /schema
-{ "collection": "hot_cache", "ttl": 300 }
+{
+  "collection": "hot_cache",
+  "ttl": 300
+}
 ```
 
 ```json
@@ -158,8 +201,12 @@ POST /set
 {
   "collection": "hot_cache",
   "data": {
-    "item_1": { "value": 42 },
-    "item_2": { "value": 99 }
+    "item_1": {
+      "value": 42
+    },
+    "item_2": {
+      "value": 99
+    }
   }
 }
 ```
@@ -168,8 +215,20 @@ Response includes `_expiresAt` on every document:
 
 ```json
 [
-  { "_key": "item_1", "value": 42, "_expiresAt": "2026-05-15T08:00:00Z", "_v": 1, ... },
-  { "_key": "item_2", "value": 99, "_expiresAt": "2026-05-15T08:00:00Z", "_v": 1, ... }
+  {
+    "_key": "item_1",
+    "value": 42,
+    "_expiresAt": "2026-05-15T08:00:00Z",
+    "_v": 1,
+    ...
+  },
+  {
+    "_key": "item_2",
+    "value": 99,
+    "_expiresAt": "2026-05-15T08:00:00Z",
+    "_v": 1,
+    ...
+  }
 ]
 ```
 
@@ -182,12 +241,23 @@ Set via `/schema` (no JSON schema required) or inline on `/set`:
 
 ```json
 POST /schema
-{ "collection": "recent_events", "maxSize": 100 }
+{
+  "collection": "recent_events",
+  "maxSize": 100
+}
 ```
 
 ```json
 POST /set
-{ "collection": "top5_scores", "maxSize": 5, "data": { "s1": { "score": 9800 } } }
+{
+  "collection": "top5_scores",
+  "maxSize": 5,
+  "data": {
+    "s1": {
+      "score": 9800
+    }
+  }
+}
 ```
 
 - Eviction is **FIFO** — the document with the lowest `_seq` is always evicted first.
@@ -202,7 +272,11 @@ POST /set
 {
   "collection": "password_resets",
   "data": {
-    "token_abc": { "userId": "u1", "email": "a@b.com", "expires_at": 1747240200000 }
+    "token_abc": {
+      "userId": "u1",
+      "email": "a@b.com",
+      "expires_at": 1747240200000
+    }
   }
 }
 ```
@@ -211,7 +285,11 @@ POST /set
 POST /delete
 {
   "collection": "password_resets",
-  "where": { "expires_at": { "$lt": 1747240200000 } }
+  "where": {
+    "expires_at": {
+      "$lt": 1747240200000
+    }
+  }
 }
 ```
 
@@ -244,7 +322,7 @@ Authorization: Bearer <token>
 | `sort`           | object[]            | Sort results. Each spec is `{ "field": "<name>", "order": "asc" \| "desc" }`. Multiple specs applied in priority order. **Mutually exclusive with `order`.**                                                                                                   |
 | `order`          | `"asc"` \| `"desc"` | Default iteration direction for **unsorted** queries (no `sort`). `"desc"` (default) returns newest documents first; `"asc"` returns oldest first. **Mutually exclusive with `sort`.** Only `"asc"` and `"desc"` are accepted — any other value returns `400`. |
 | `count`          | number              | Maximum number of results to return (applied after filtering and sorting). **Defaults to `100` if not supplied. Values above `1000` return a `400` error.**                                                                                                    |
-| `offset`         | number              | Number of results to skip (for stable pagination, applied after sorting).                                                                                                                                                                                      |
+| `offset`         | number              | Number of results to skip (for stable pagination, applied after sorting). See [Pagination Limitations](#pagination-limitations) for performance notes on deep offsets.                                                                                         |
 
 > **Response shape:** All multi-document queries return a **JSON array** where each element includes a `_key` field with
 > the document ID. The only exception is a single-key lookup (`"keys": "lp2"`) which returns the document directly.
@@ -270,73 +348,257 @@ Authorization: Bearer <token>
 // WHERE with multiple conditions (all must match — implicit AND)
 
 ```json
-{ "collection": "laptops", "where": { "brand": "Apple", "in_stock": true } }
+{
+  "collection": "laptops",
+  "where": {
+    "brand": "Apple",
+    "in_stock": true
+  }
+}
 ```
 
 // Fine-grained field projection
 
 ```json
-{ "collection": "laptops", "fields": ["brand", "model", "price"] }
+{
+  "collection": "laptops",
+  "fields": [
+    "brand",
+    "model",
+    "price"
+  ]
+}
 ```
 
 // Deep nested field selection
 
 ```json
-{ "collection": "laptops", "fields": ["brand", "specs.cpu.ghz", "specs.weight_kg"] }
+{
+  "collection": "laptops",
+  "fields": [
+    "brand",
+    "specs.cpu.ghz",
+    "specs.weight_kg"
+  ]
+}
 ```
 
 // Field exclusion
 
 ```json
-{ "collection": "laptops", "excludedFields": ["memory_id", "display_id"] }
+{
+  "collection": "laptops",
+  "excludedFields": [
+    "memory_id",
+    "display_id"
+  ]
+}
 ```
 
 // Sort by price descending, then brand ascending
 
 ```json
-{ "collection": "laptops", "sort": [{ "field": "price", "order": "desc" }, { "field": "brand", "order": "asc" }] }
+{
+  "collection": "laptops",
+  "sort": [
+    {
+      "field": "price",
+      "order": "desc"
+    },
+    {
+      "field": "brand",
+      "order": "asc"
+    }
+  ]
+}
 ```
 
 // Default order — newest documents first (desc is the default, so this is equivalent to omitting order)
 
 ```json
-{ "collection": "laptops", "count": 10 }
+{
+  "collection": "laptops",
+  "count": 10
+}
 ```
 
 // Oldest documents first
 
 ```json
-{ "collection": "laptops", "order": "asc", "count": 10 }
+{
+  "collection": "laptops",
+  "order": "asc",
+  "count": 10
+}
 ```
 
 // Pagination — second page of 3
 
 ```json
-{ "collection": "laptops", "sort": [{ "field": "price", "order": "asc" }], "offset": 3, "count": 3 }
+{
+  "collection": "laptops",
+  "sort": [
+    {
+      "field": "price",
+      "order": "asc"
+    }
+  ],
+  "offset": 3,
+  "count": 3
+}
 ```
+
+---
+
+### Pagination Limitations
+
+MoltenDB routes every `POST /get` through one of four execution paths. Each path has different pagination performance
+characteristics:
+
+| Query type              | Execution path                          | `offset` cost                    | Notes                                                                                                                                                    |
+|:------------------------|:----------------------------------------|:---------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| No `sort`, no `where`   | BTreeMap seq-index early-exit           | O(offset + limit)                | Iterates in insertion order; only `offset + limit` documents are decoded. Fast for shallow offsets.                                                      |
+| No `sort`, with `where` | Rayon parallel scan + atomic early-exit | O(N) worst case                  | All CPU cores scan in parallel; threads stop once `offset + limit` matches are found. Worst case: matching documents are near the end of the collection. |
+| `sort` present          | Rayon bounded top-N                     | O(N), heap size = offset + limit | Must find the true top `offset + limit` results before discarding the first `offset`. Heap grows with offset — deep sorted pagination is expensive.      |
+| Key lookup (`keys`)     | DashMap direct                          | O(1)                             | No scan; offset does not apply.                                                                                                                          |
+
+#### Deep offset on sorted queries
+
+A query like `sort: [{ "field": "price", "order": "asc" }], offset: 100000, count: 10` requires finding the true top
+100,010 cheapest documents before discarding the first 100,000. The per-thread heap holds 100,010 items instead of 10,
+making this significantly slower than `offset: 0`.
+
+**Recommended pattern for deep sorted pagination — keyset / value-based pagination:**
+
+Instead of incrementing `offset`, track the last value seen from the previous page and use it as a `where` filter:
+
+```json
+// Page 1 — cheapest 10 items
+{ "collection": "laptops", "sort": [{ "field": "price", "order": "asc" }], "count": 10 }
+```
+
+```json
+// Page 2 — next 10 items (last page ended at price 499.99)
+{
+  "collection": "laptops",
+  "where": { "price": { "$gt": 499.99 } },
+  "sort": [{ "field": "price", "order": "asc" }],
+  "count": 10
+}
+```
+
+This keeps the heap size at `count` (e.g. 10) regardless of how deep you paginate — the same speed as page 1.
+
+> **Note:** If multiple documents share the same boundary value (e.g. two items at exactly 499.99), add a secondary
+> tie-breaker field to the `where` clause to avoid duplicates or gaps at page boundaries.
+
+For **unsorted `where` queries**, use the system `_seq` field as a cursor instead of `offset`. Because `_seq` is a
+monotonically increasing integer stamped on every document at insert time, filtering by it gives a stable, ordered page
+boundary with no duplicates:
+
+```json
+// Page 1 — newest 100 Apple laptops
+{ "collection": "laptops", "where": { "brand": { "$eq": "Apple" } }, "count": 100 }
+```
+
+```json
+// Page 2 — next 100 Apple laptops (last page ended at _seq 4823)
+{
+  "collection": "laptops",
+  "where": { "brand": { "$eq": "Apple" }, "_seq": { "$lt": 4823 } },
+  "count": 100
+}
+```
+
+You can also use `_seq` to fetch a precise insertion-order window (e.g. documents inserted between two known sequence
+numbers):
+
+```json
+{
+  "collection": "stress",
+  "fields": ["brand", "model", "price", "_seq"],
+  "where": { "_seq": { "$gt": 300000, "$lt": 300100 } }
+}
+```
+
+This routes through the Rayon atomic early-exit path and stops as soon as the matching documents are found — no need to
+collect and discard thousands of results first.
+
+#### `$contains` / substring queries
+
+Queries using `$ct` / `$contains` on string fields (e.g. `"model": { "$ct": "Pro" }`) always require a full
+collection scan — there is no index that can skip non-matching documents for arbitrary substring matches. Performance
+depends on data distribution: if matching documents are near the newest end of the collection the early-exit fires
+quickly; if they are spread throughout or clustered at the oldest end, the scan approaches O(N).
 
 // $in — brand is one of a list
 
 ```json
-{ "collection": "laptops", "where": { "brand": { "$in": ["Apple", "Dell", "Razer"] } } }
+{
+  "collection": "laptops",
+  "where": {
+    "brand": {
+      "$in": [
+        "Apple",
+        "Dell",
+        "Razer"
+      ]
+    }
+  }
+}
 ```
 
 // $contains on an array field
 
 ```json
-{ "collection": "laptops", "where": { "tags": { "$contains": "gaming" } } }
+{
+  "collection": "laptops",
+  "where": {
+    "tags": {
+      "$contains": "gaming"
+    }
+  }
+}
 ```
 
 // $or — match documents where brand is Apple OR price is below 1000
 
 ```json
-{ "collection": "laptops", "where": { "$or": [{ "brand": "Apple" }, { "price": { "$lt": 1000 } }] } }
+{
+  "collection": "laptops",
+  "where": {
+    "$or": [
+      {
+        "brand": "Apple"
+      },
+      {
+        "price": {
+          "$lt": 1000
+        }
+      }
+    ]
+  }
+}
 ```
 
 // $and — match documents where brand is Apple AND price is below 2000
 
 ```json
-{ "collection": "laptops", "where": { "$and": [{ "brand": "Apple" }, { "price": { "$lt": 2000 } }] } }
+{
+  "collection": "laptops",
+  "where": {
+    "$and": [
+      {
+        "brand": "Apple"
+      },
+      {
+        "price": {
+          "$lt": 2000
+        }
+      }
+    ]
+  }
+}
 ```
 
 ### Cross-collection join
@@ -447,7 +709,10 @@ The `where` clause supports every filter operator available in `/get` — `$eq`,
 *default `100`**, max `1000`). The response includes the count of deleted documents:
 
 ```json
-{ "status": "ok", "deleted": 42 }
+{
+  "status": "ok",
+  "deleted": 42
+}
 ```
 
 ### Paginated collection fetch
@@ -471,7 +736,7 @@ npm install @moltendb-web/query
 ```
 
 ```typescript
-import { MoltenDBClient, WorkerTransport, HttpTransport } from '@moltendb-web/query';
+import {MoltenDBClient, WorkerTransport, HttpTransport} from '@moltendb-web/query';
 
 // WASM (browser)
 const client = new MoltenDBClient(new WorkerTransport(worker));
@@ -481,27 +746,27 @@ const client = new MoltenDBClient(new HttpTransport('https://localhost:1538', to
 
 // GET — chainable query
 const results = await client.collection('laptops')
-  .get()
-  .where({ brand: 'Apple', in_stock: true })
-  .fields(['brand', 'model', 'price'])
-  .joins([{ 
-    screen: { 
-      from: 'display', on: 'display_id', fields: ['panel', 'refresh_hz'] 
-    }
-  }])
-  .sort([{ field: 'price', order: 'asc' }])
-  .count(5)
-  .exec();
+    .get()
+    .where({brand: 'Apple', in_stock: true})
+    .fields(['brand', 'model', 'price'])
+    .joins([{
+      screen: {
+        from: 'display', on: 'display_id', fields: ['panel', 'refresh_hz']
+      }
+    }])
+    .sort([{field: 'price', order: 'asc'}])
+    .count(5)
+    .exec();
 
 // SET — insert / upsert
 await client.collection('laptops')
-  .set({ lp1: { brand: 'Lenovo', model: 'ThinkPad X1', price: 1499 } })
-  .exec();
+    .set({lp1: {brand: 'Lenovo', model: 'ThinkPad X1', price: 1499}})
+    .exec();
 
 // UPDATE — partial patch
 await client.collection('laptops')
-  .update({ lp4: { price: 1749, in_stock: true } })
-  .exec();
+    .update({lp4: {price: 1749, in_stock: true}})
+    .exec();
 
 // DELETE
 await client.collection('laptops').delete().keys('lp6').exec();
@@ -528,7 +793,7 @@ wss://localhost:1538/ws
    authentication fails, with one of the following structured error codes:
 
    | `error` code | Cause |
-      |---|---|
+            |---|---|
    | `invalid_message` | First frame was not valid JSON or not a text frame |
    | `invalid_action` | First message was not an `AUTH` action |
    | `missing_token` | `AUTH` frame had no `token` field |
@@ -547,8 +812,10 @@ wss://localhost:1538/ws
    ```json
    { "event": "change", "collection": "laptops", "key": "*",   "new_v": null }
    ```
-  - `new_v` is the document's `_v` after the write, or `null` for deletes/drops
-  - `key: "*"` means the entire collection was dropped
+
+- `new_v` is the document's `_v` after the write, or `null` for deletes/drops
+- `key: "*"` means the entire collection was dropped
+
 3. Clients fetch fresh data via HTTP after receiving a notification.
 
 **Revocation on open connections:** If a token is revoked while a WebSocket connection is already open, the server will
@@ -581,9 +848,18 @@ Authorization: Bearer <token>
 ```json
 {
   "collections": {
-    "laptops": { "count": 42381 },
-    "sessions": { "count": 1200, "expiresAt": "2026-05-15T15:00:00Z" },
-    "expired_cache": { "count": 0, "expired": true, "expiresAt": "2026-05-15T07:00:00Z" }
+    "laptops": {
+      "count": 42381
+    },
+    "sessions": {
+      "count": 1200,
+      "expiresAt": "2026-05-15T15:00:00Z"
+    },
+    "expired_cache": {
+      "count": 0,
+      "expired": true,
+      "expiresAt": "2026-05-15T07:00:00Z"
+    }
   },
   "total": 43581
 }
@@ -592,7 +868,10 @@ Authorization: Bearer <token>
 **Single collection response:**
 
 ```json
-{ "collection": "laptops", "count": 42381 }
+{
+  "collection": "laptops",
+  "count": 42381
+}
 ```
 
 > **Note:** Counts are O(1) atomic reads from the in-memory DashMap — no document scanning. On TTL collections the count
@@ -611,7 +890,10 @@ GET /system/health
 Response:
 
 ```json
-{ "status": "ok", "message": "MoltenDB is running" }
+{
+  "status": "ok",
+  "message": "MoltenDB is running"
+}
 ```
 
 ### Metrics
@@ -825,21 +1107,48 @@ delta (log lines written after the last snapshot) needs to be replayed.
 MoltenDB uses an append-only log format — every insert, update, and delete is a new JSON line:
 
 ```json
-{"cmd":"INSERT","collection":"laptops","key":"lp1","value":{"brand":"Lenovo","model":"ThinkPad X1 Carbon","price":1499,"_v":1,"createdAt":"2026-03-09T13:51:05Z","modifiedAt":"2026-03-09T13:51:05Z"}}
+{
+  "cmd": "INSERT",
+  "collection": "laptops",
+  "key": "lp1",
+  "value": {
+    "brand": "Lenovo",
+    "model": "ThinkPad X1 Carbon",
+    "price": 1499,
+    "_v": 1,
+    "createdAt": "2026-03-09T13:51:05Z",
+    "modifiedAt": "2026-03-09T13:51:05Z"
+  }
+}
 ```
 
 ```json
-{"cmd":"DELETE","collection":"laptops","key":"lp6","value":null}
+{
+  "cmd": "DELETE",
+  "collection": "laptops",
+  "key": "lp6",
+  "value": null
+}
 ```
 
 ```json
-{"cmd":"DROP","collection":"laptops","key":"_","value":null}
+{
+  "cmd": "DROP",
+  "collection": "laptops",
+  "key": "_",
+  "value": null
+}
 ```
 
 With encryption enabled (the default), each line is an opaque `ENC` entry:
 
 ```json
-{"cmd":"ENC","collection":"_","key":"_","value":"base64encodedciphertext..."}
+{
+  "cmd": "ENC",
+  "collection": "_",
+  "key": "_",
+  "value": "base64encodedciphertext..."
+}
 ```
 
 On startup, the log is replayed top-to-bottom to rebuild the in-memory state. After compaction, only the current state

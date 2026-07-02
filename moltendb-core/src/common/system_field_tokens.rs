@@ -507,6 +507,23 @@ pub fn read_msgpack_seq_token(bytes: &[u8]) -> u64 {
     read_token_u64(bytes, TOK_SEQ).unwrap_or(u64::MAX)
 }
 
+// Extract any system-field token value from raw MsgPack bytes by public API
+/// field name. Returns `None` if the field name is not a token field or the
+/// value is not an integer.
+///
+/// Supported names: `"_seq"`, `"_createdAt"`, `"_modifiedAt"`, `"_expiresAt"`, `"_v"`.
+pub fn read_msgpack_system_field_u64(bytes: &[u8], field: &str) -> Option<u64> {
+    let token = match field {
+        f if f == SystemFields::SEQ => TOK_SEQ,
+        f if f == SystemFields::CREATED_AT => TOK_CREATED_AT,
+        f if f == SystemFields::MODIFIED_AT => TOK_MODIFIED_AT,
+        f if f == SystemFields::EXPIRES_AT => TOK_EXPIRES_AT,
+        f if f == SystemFields::VERSION => TOK_VERSION,
+        _ => return None,
+    };
+    read_token_u64(bytes, token)
+}
+
 /// Scan a MsgPack map for a single-byte negative FixInt key and return its
 /// value as u64. Returns None if the key is not found or the value is not an
 /// integer.

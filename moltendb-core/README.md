@@ -124,8 +124,23 @@ println!("{} — {}", status_code, result);
 ```
 
 > **Pagination defaults:** `count` defaults to `100` if not supplied. Values above `1000` are rejected with a
-`400 Bad Request` error. This applies to both `/get` and bulk `/delete` (with `where`). Unsorted queries default to *
-*newest-first** — pass `"order": "asc"` to iterate oldest-first. `order` is mutually exclusive with `sort`.
+> `400 Bad Request` error. This applies to both `/get` and bulk `/delete` (with `where`). Unsorted queries default to
+> **newest-first** — pass `"order": "asc"` to iterate oldest-first. `order` is mutually exclusive with `sort`.
+>
+> **Pagination performance notes:**
+> - **No `sort`, no `where`:** O(offset + limit) — BTreeMap seq-index iterates in insertion order and breaks early. Fast
+    for shallow offsets.
+> - **No `sort`, with `where`:** O(N) worst case — Rayon parallel scan with atomic early-exit; worst case when matching
+    documents are clustered at the oldest end. **Prefer `_seq`-based cursor pagination** for deep pages: add
+    `"_seq": { "$lt": last_seen_seq }` to the `where` clause so each page starts exactly where the last one ended
+    (e.g. `where: { "brand": { "$eq": "Apple" }, "_seq": { "$lt": 4823 } }`). You can also query a precise
+    insertion-order window directly: `where: { "_seq": { "$gt": 300000, "$lt": 300100 } }`.
+> - **`sort` present:** O(N), heap size = `offset + limit` — deep offsets are expensive because the engine must find the
+    true top `offset + limit` results before discarding the first `offset`. **Prefer keyset pagination** for deep pages:
+    filter by the last field value seen (`where: { "price": { "$gt": last_price } }`) to keep the heap size equal to
+    `count` regardless of depth.
+> - **`$contains` / `$ct`:** always a full collection scan — no index can skip non-matching documents for substring
+    matches.
 
 ---
 

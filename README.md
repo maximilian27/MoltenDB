@@ -56,8 +56,13 @@ an optional adapter layer built around the same core engine.
   `$oneOf`, `$nin` / `$notIn` — all string comparisons are **case-insensitive**
 - Field projection (`fields`) and field exclusion (`excludedFields`) — mutually exclusive, validated before any data is
   read
-- Pagination: `count` (limit), `offset`, and `order` (`"asc"` / `"desc"`). Unsorted queries default to **newest-first
-  ** (`"desc"`) — pass `"order": "asc"` to iterate oldest-first. `order` is mutually exclusive with `sort`.
+- Pagination: `count` (limit), `offset`, and `order` (`"asc"` / `"desc"`). Unsorted queries default to **newest-first**
+  (`"desc"`) — pass `"order": "asc"` to iterate oldest-first. `order` is mutually exclusive with `sort`. **Note:** deep
+  `offset` on sorted queries is expensive (heap size grows with offset depth); prefer keyset pagination (filter by the
+  last seen field value) for deep pages. For unsorted `where` queries, use `"_seq": { "$lt": last_seen_seq }` as a
+  cursor for O(1) page boundaries, or query a precise insertion-order window with
+  `"_seq": { "$gt": 300000, "$lt": 300100 }`.
+  See [Pagination Limitations](docs/api-reference.md#pagination-limitations).
 - Cross-collection joins with dot-notation foreign keys
 - **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
 - **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.

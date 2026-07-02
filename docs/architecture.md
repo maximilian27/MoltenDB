@@ -53,13 +53,13 @@ moltendb-core = "1.0.0-rc12"
 use moltendb_core::engine::{Db, DbConfig};
 
 let config = DbConfig {
-    path: "./my_app.log".to_string(),
-    sync_mode: true,
-    ..Default::default()
+path: "./my_app.log".to_string(),
+sync_mode: true,
+..Default::default ()
 };
 
 let db = Db::open(config).await?;
-db.insert_batch("users", vec![("u1".to_string(), serde_json::json!({ "name": "Alice" }))])?;
+db.insert_batch("users", vec![("u1".to_string(), serde_json::json!({ "name": "Alice" }))]) ?;
 let user = db.get("users", "u1");
 ```
 
@@ -174,4 +174,42 @@ Sorted queries use lazy byte extraction (`find_msgpack_value` + `read_msgpack_nu
 raw MsgPack bytes during the parallel scan phase — no `serde_json::Value` is allocated per document. Full
 deserialization (`msgpack_to_value`) is deferred to the final `limit` winners only, eliminating millions of heap
 allocations for large collections.
+
+---
+
+### Pagination Limitations
+
+Each execution path has different performance characteristics for `offset`-based pagination:
+
+| Query type              | `offset` cost                    | Explanation                                                                                                                                     |
+|:------------------------|:---------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------|
+| No `sort`, no `where`   | O(offset + limit)                | BTreeMap iterates in insertion order; only `offset + limit` documents are decoded before breaking.                                              |
+| No `sort`, with `where` | O(N) worst case                  | Rayon atomic early-exit collects `offset + limit` matches across all cores; worst case when matching documents are clustered at the oldest end. |
+| `sort` present          | O(N), heap size = offset + limit | Must find the true top `offset + limit` results globally before discarding the first `offset`. Heap grows linearly with offset depth.           |
+
+#### Deep sorted pagination
+
+A query with `sort` and a large `offset` (e.g. `offset: 100000, count: 10`) forces `scan_top_n_raw` to maintain a
+bounded heap of 100,010 items per Rayon thread instead of 10. This increases memory pressure, heap comparison cost, and
+merge overhead proportionally. The recommended alternative is **keyset pagination**: track the last field value seen
+from the previous page and use it as a `where` filter, keeping the heap size equal to `count` regardless of depth.
+
+#### `_seq`-based cursor pagination for `where` queries
+
+For unsorted `where` queries, use the system `_seq` field as a cursor instead of `offset`. `_seq` is a monotonically
+increasing `u64` stamped on every document at insert time and stored under a single-byte token key for zero-cost
+extraction. Adding `"_seq": { "$lt": last_seen_seq }` to the `where` clause makes each page start exactly where the
+last one ended — the Rayon atomic early-exit stops as soon as `count` matches are found, with no results to discard.
+You can also query a precise insertion-order window directly:
+
+```json
+{ "where": { "_seq": { "$gt": 300000, "$lt": 300100 } } }
+```
+
+#### `$contains` / substring queries
+
+`$ct` / `$contains` predicates on string fields always require a full collection scan — no index can skip non-matching
+documents for arbitrary substring matches. The BTreeMap early-exit still fires once `offset + limit` matches are found,
+so performance is best when matching documents are near the newest end of the collection and degrades toward O(N) when
+they are spread throughout or clustered at the oldest end.
 
