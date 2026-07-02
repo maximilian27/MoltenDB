@@ -20,3 +20,4 @@
 /server-tests/stress_keys.json
 /moltendb-analytics/
 
+/moltendb-core/target/
