@@ -30,7 +30,7 @@ mod update;
 
 pub use compact::compact;
 pub use delete::{delete, delete_collection, delete_filtered, evict_oldest};
-pub use get::{get, get_all, get_filtered, scan_top_n, scan_top_n_raw};
+pub use get::{get, get_filtered, scan_top_n, scan_top_n_raw};
 #[cfg(not(target_arch = "wasm32"))]
 pub use recover::recover_to;
 pub use set::insert;

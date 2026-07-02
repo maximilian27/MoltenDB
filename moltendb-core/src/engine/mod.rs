@@ -153,22 +153,9 @@ impl Db {
             .collect()
     }
 
-    /// Retrieve all documents in a collection.
-    pub fn get_all(
-        &self,
-        collection: &str,
-        offset: usize,
-        count: Option<usize>,
-    ) -> Vec<(String, Value)> {
-        operations::get_all(&self.state, &self.storage, collection, offset, count)
-            .into_iter()
-            .map(|(k, v)| (k, expand_system_fields(v)))
-            .collect()
-    }
-
     /// Lazily scan a collection, returning only documents that match `predicate`.
     ///
-    /// Avoids the full O(n) clone that `get_all` does — only matching documents
+    /// Avoids a full O(n) clone — only matching documents
     /// are cloned. `offset` and `count` are applied during iteration so the
     /// scan can stop early. Used for WHERE queries on large collections when
     /// no index applies.
