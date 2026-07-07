@@ -13,14 +13,14 @@ Same query engine. Same storage semantics. Different execution backends.
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20Elastic--2.0-blue?style=flat-square)](LICENSE.md)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen?style=flat-square)](./docs/api-reference.md#testing)
-[![Status](https://img.shields.io/badge/status-1.0.0--rc-blue?style=flat-square)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-1.0.0--rc12-blue?style=flat-square)](CHANGELOG.md)
 
 > [!WARNING]
 > **After careful consideration, a breaking change was introduced in v1.0.0-rc10. Versions starting with `v1.0.0-rc10`
 are not backwards compatible with previous versions.**
 > Review the [changelog](../CHANGELOG.md) before upgrading.
 
-**🚀 Release Candidate (v1.0.0-rc)** — The API is stable. Suitable for early production use. No other breaking changes
+**🚀 Release Candidate (v1.0.0-rc12)** — The API is stable. Suitable for early production use. No other breaking changes
 are expected to occur before the final 1.0.0 release.
 
 > 🌐 **Building for the browser?** The WebAssembly engine, TypeScript client, and React/Angular adapters live in
@@ -56,8 +56,13 @@ an optional adapter layer built around the same core engine.
   `$oneOf`, `$nin` / `$notIn` — all string comparisons are **case-insensitive**
 - Field projection (`fields`) and field exclusion (`excludedFields`) — mutually exclusive, validated before any data is
   read
-- Pagination: `count` (limit) and `offset`. Note: While `offset` is fully supported, **Cursor Pagination** using the
-  system `_seq` field is the recommended pagination pattern for large datasets to avoid memory/performance overhead.
+- Pagination: `count` (limit), `offset`, and `order` (`"asc"` / `"desc"`). Unsorted queries default to **newest-first**
+  (`"desc"`) — pass `"order": "asc"` to iterate oldest-first. `order` is mutually exclusive with `sort`. **Note:** deep
+  `offset` on sorted queries is expensive (heap size grows with offset depth); prefer keyset pagination (filter by the
+  last seen field value) for deep pages. For unsorted `where` queries, use `"_seq": { "$lt": last_seen_seq }` as a
+  cursor for O(1) page boundaries, or query a precise insertion-order window with
+  `"_seq": { "$gt": 300000, "$lt": 300100 }`.
+  See [Pagination Limitations](docs/api-reference.md#pagination-limitations).
 - Cross-collection joins with dot-notation foreign keys
 - **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
 - **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.
@@ -184,7 +189,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc10"
+moltendb-core = "1.0.0-rc12"
 ```
 
 ### Download Pre-built Binaries

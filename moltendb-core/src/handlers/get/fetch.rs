@@ -1,4 +1,6 @@
 ﻿use crate::common::payload_fields::PayloadField;
+use crate::common::where_operators::WhereOperator;
+use crate::engine::GetFilteredParams;
 use crate::handlers::get::types::FetchParams;
 use crate::{engine, query};
 use serde_json::Value;
@@ -7,43 +9,87 @@ use serde_json::Value;
 /// (i.e. can be evaluated directly on raw MsgPack bytes without full deserialization).
 fn is_fast_path_op(op: &str) -> bool {
     matches!(
-        op,
-        "$eq"
-            | "$equals"
-            | "$ne"
-            | "$notEquals"
-            | "$in"
-            | "$oneOf"
-            | "$nin"
-            | "$notIn"
-            | "$gt"
-            | "$greaterThan"
-            | "$gte"
-            | "$greaterThanOrEqual"
-            | "$lt"
-            | "$lessThan"
-            | "$lte"
-            | "$lessThanOrEqual"
-            | "$ct"
-            | "$contains"
+        WhereOperator::from_str(op),
+        Some(
+            WhereOperator::Eq
+                | WhereOperator::NotEq
+                | WhereOperator::In
+                | WhereOperator::NotIn
+                | WhereOperator::Gt
+                | WhereOperator::Gte
+                | WhereOperator::Lt
+                | WhereOperator::Lte
+                | WhereOperator::Contains
+        )
     )
 }
 
+/// Which scan strategy `fetch_documents` should use for a full-collection scan
+/// (i.e. when no explicit keys were supplied in the request).
+///
+/// The strategy is chosen once by `choose_scan_strategy` and then dispatched
+/// via a `match`, keeping each execution path self-contained and easy to reason
+/// about independently.
+///
+/// Variants (in rough order of selectivity / performance):
+///
+/// - `WhereOnly`       — WHERE clause present, no joins, no prefix filter.
+///                       Uses a parallel scan with atomic early-exit once
+///                       `offset + count` matches are found.
+///
+/// - `PrefixOnly`      — No WHERE clause (or joins present), but a prefix
+///                       filter is active. Iterates via `get_filtered` with a
+///                       key-prefix predicate; BTreeMap insertion-order is
+///                       preserved for correct pagination.
+///
+/// - `WhereAndPrefix`  — Both a WHERE clause (no joins) and a prefix filter.
+///                       Combines both checks in a single `get_filtered` pass
+///                       so the collection is only scanned once.
+///
+/// - `FullScan`        — No WHERE, no prefix, no joins. Passes a trivially-true
+///                       predicate to `get_filtered`; the BTreeMap seq_index
+///                       gives insertion-order results with early-exit.
+enum ScanStrategy {
+    /// WHERE only (no joins, no prefix): parallel scan with early-exit.
+    WhereOnly,
+    /// Prefix filter only (no WHERE or joins present): key-prefix scan.
+    PrefixOnly,
+    /// WHERE + prefix filter (no joins): single pass combining both checks.
+    WhereAndPrefix,
+    /// No WHERE, no prefix, no joins: trivial full scan in insertion order.
+    FullScan,
+}
+
+/// Inspect `params` and decide which `ScanStrategy` to use.
+fn choose_scan_strategy(params: &FetchParams<'_>) -> ScanStrategy {
+    let has_where = params.where_clause.is_some() && !params.has_joins;
+    let has_prefix = params
+        .allowed_prefixes
+        .map(|p| !p.is_empty())
+        .unwrap_or(false);
+
+    match (has_where, has_prefix) {
+        (true, false) => ScanStrategy::WhereOnly,
+        (false, true) => ScanStrategy::PrefixOnly,
+        (true, true) => ScanStrategy::WhereAndPrefix,
+        (false, false) => ScanStrategy::FullScan,
+    }
+}
+
 /// Fetch raw documents from the engine based on the request payload.
-/// - Single key: returns one document.
-/// - Key array: returns a batch.
-/// - No keys + where clause (no joins): uses get_filtered for early pruning.
-/// - No keys, no where / has joins: full collection scan via get_all.
-/// Fetch raw documents from the engine based on the fetch parameters struct.
-pub fn fetch_documents(
-    db: &engine::Db,
-    params: &FetchParams<'_>, // <-- Expecting the new struct reference here
-) -> Vec<(String, Value)> {
-    // Helper to map allowed_prefixes from Option<&Vec<Value>> to Option<Vec<String>>
+///
+/// Dispatch table:
+/// - Single key string  → `db.get` (point lookup)
+/// - Key array          → `db.get` (batch lookup)
+/// - No keys            → full-collection scan; the exact scan method is chosen
+///                        by `choose_scan_strategy` based on whether a WHERE
+///                        clause, a prefix filter, or neither is present.
+pub fn fetch_documents(db: &engine::Db, params: &FetchParams<'_>) -> Vec<(String, Value)> {
     let allowed_prefixes_strings: Option<Vec<&str>> = params
         .allowed_prefixes
         .map(|pfx_vec| pfx_vec.iter().filter_map(|v| v.as_str()).collect());
 
+    // ── Key-based lookups ────────────────────────────────────────────────────
     match params.payload.get(PayloadField::Keys.as_str()) {
         Some(Value::String(k)) => {
             if let Some(ref prefixes) = allowed_prefixes_strings {
@@ -51,9 +97,10 @@ pub fn fetch_documents(
                     return Vec::new();
                 }
             }
-            db.get(params.col_name, vec![k.clone()])
+            return db
+                .get(params.col_name, vec![k.clone()])
                 .into_iter()
-                .collect()
+                .collect();
         }
         Some(Value::Array(arr)) => {
             let ks = arr
@@ -68,60 +115,115 @@ pub fn fetch_documents(
                     Some(s.to_string())
                 })
                 .collect();
-            db.get(params.col_name, ks).into_iter().collect()
+            return db.get(params.col_name, ks).into_iter().collect();
         }
-        _ => {
-            // Full scan -- apply WHERE early when there are no joins
-            if let Some(clause) = params.where_clause {
-                if !params.has_joins {
-                    // Extract all AND-conditions that can be evaluated directly on
-                    // raw MsgPack bytes. Returns a non-empty Vec when ALL conditions
-                    // in the WHERE clause are fast-path compatible; empty Vec means
-                    // at least one condition requires full deserialization (e.g. $or,
-                    // $and, or unknown/unsupported operators).
-                    let fast_preds = extract_fast_predicates(clause);
-                    let clause = clause.clone();
-                    let prefixes = allowed_prefixes_strings.clone();
+        _ => {}
+    }
 
-                    return db.get_filtered(
-                        params.col_name,
-                        move |key, doc_bytes| {
-                            if let Some(ref pfxs) = prefixes {
-                                if !pfxs.iter().any(|p| key.starts_with(p)) {
-                                    return false;
-                                }
-                            }
-                            // Fast path: evaluate all conditions directly on MsgPack bytes.
-                            // This covers single-op, multi-op on same field
-                            // (e.g. $gte + $lte), and multi-field predicates �
-                            // all without full rmp_serde deserialization.
-                            if !fast_preds.is_empty() {
-                                return fast_preds.iter().all(|(field, op, val)| {
-                                    query::evaluate_predicate_msgpack(doc_bytes, field, op, val)
-                                        .unwrap_or(false)
-                                });
-                            }
-                            // Full where clause (e.g. $or/$and) — still evaluated on raw bytes.
-                            query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
-                        },
-                        0,
-                        Some(params.offset + params.count_limit),
-                    );
-                }
-            }
+    // ── Full-collection scan — strategy selected once, then dispatched ───────
+    //
+    // count passed to get_filtered:
+    //   Some(offset + limit) → BTreeMap / parallel scan can stop early.
+    //   None                 → sort present; caller needs all matches first.
+    let early_exit_count = if params.has_sort {
+        None
+    } else {
+        Some(params.offset + params.count_limit)
+    };
 
-            if let Some(ref prefixes) = allowed_prefixes_strings {
-                let pfxs = prefixes.clone();
-                return db.get_filtered(
-                    params.col_name,
-                    move |key, _| pfxs.iter().any(|p| key.starts_with(p)),
-                    params.offset,
-                    Some(params.count_limit),
-                );
-            }
+    match choose_scan_strategy(params) {
+        // WHERE only: parallel scan with atomic early-exit.
+        // The BTreeMap path would degrade to O(N) for sparse matches; Rayon
+        // uses all cores and stops softly once `offset + count` matches are
+        // collected.
+        ScanStrategy::WhereOnly => {
+            let clause = params.where_clause.unwrap().clone();
+            let fast_preds = extract_fast_predicates(&clause);
 
-            db.get_all(params.col_name, params.offset, Some(params.count_limit))
+            db.get_filtered(GetFilteredParams {
+                collection: params.col_name,
+                predicate: move |_key, doc_bytes| {
+                    if !fast_preds.is_empty() {
+                        // Fast path: evaluate all conditions directly on MsgPack
+                        // bytes — no full rmp_serde deserialization needed.
+                        fast_preds.iter().all(|(field, op, val)| {
+                            query::evaluate_predicate_msgpack(doc_bytes, field, op, val)
+                                .unwrap_or(false)
+                        })
+                    } else {
+                        // Full WHERE clause (e.g. $or/$and) — still on raw bytes.
+                        query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
+                    }
+                },
+                offset: 0,
+                count: early_exit_count,
+                default_order_asc: params.default_order_asc,
+                has_where: params.has_where,
+            })
         }
+
+        // Prefix only: BTreeMap insertion-order scan filtered by key prefix.
+        ScanStrategy::PrefixOnly => {
+            let pfxs: Vec<String> = allowed_prefixes_strings
+                .unwrap_or_default()
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+
+            db.get_filtered(GetFilteredParams {
+                collection: params.col_name,
+                predicate: move |key: &str, _: &[u8]| {
+                    pfxs.iter().any(|p| key.starts_with(p.as_str()))
+                },
+                offset: 0,
+                count: early_exit_count,
+                default_order_asc: params.default_order_asc,
+                has_where: params.has_where,
+            })
+        }
+
+        // WHERE + prefix: single pass combining both checks.
+        ScanStrategy::WhereAndPrefix => {
+            let clause = params.where_clause.unwrap().clone();
+            let fast_preds = extract_fast_predicates(&clause);
+            let pfxs: Vec<String> = allowed_prefixes_strings
+                .unwrap_or_default()
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+
+            db.get_filtered(GetFilteredParams {
+                collection: params.col_name,
+                predicate: move |key: &str, doc_bytes: &[u8]| {
+                    if !pfxs.iter().any(|p| key.starts_with(p.as_str())) {
+                        return false;
+                    }
+                    if !fast_preds.is_empty() {
+                        fast_preds.iter().all(|(field, op, val)| {
+                            query::evaluate_predicate_msgpack(doc_bytes, field, op, val)
+                                .unwrap_or(false)
+                        })
+                    } else {
+                        query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
+                    }
+                },
+                offset: 0,
+                count: early_exit_count,
+                default_order_asc: params.default_order_asc,
+                has_where: params.has_where,
+            })
+        }
+
+        // Full scan: trivially-true predicate; BTreeMap seq_index gives
+        // insertion-order results with early-exit.
+        ScanStrategy::FullScan => db.get_filtered(GetFilteredParams {
+            collection: params.col_name,
+            predicate: |_, _| true,
+            offset: 0,
+            count: early_exit_count,
+            default_order_asc: params.default_order_asc,
+            has_where: false,
+        }),
     }
 }
 
@@ -178,7 +280,11 @@ fn extract_fast_predicates(clause: &Value) -> Vec<(String, String, Value)> {
         match condition {
             // Implicit equality: { "field": scalar }
             Value::String(_) | Value::Number(_) | Value::Bool(_) => {
-                result.push((field.clone(), "$eq".to_string(), condition.clone()));
+                result.push((
+                    field.clone(),
+                    WhereOperator::Eq.as_str().to_string(),
+                    condition.clone(),
+                ));
             }
             // Explicit operator(s): { "field": { "$op": value, � } }
             Value::Object(op_obj) => {

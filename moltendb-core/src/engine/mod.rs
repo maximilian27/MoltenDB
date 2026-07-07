@@ -24,6 +24,7 @@
 // Declare the sub-modules of the engine.
 mod config; // DbConfig struct
 mod operations;
+pub use operations::{GetFilteredParams, ScanTopNParams, ScanTopNRawParams};
 #[cfg(feature = "schema")]
 mod schema; // JSON Schema validation
 mod storage; // StorageBackend trait + concrete implementations
@@ -46,9 +47,9 @@ use crate::common::system_field_tokens::expand_system_fields;
 use dashmap::DashMap;
 use serde_json::Value;
 #[allow(unused_imports)]
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 
 /// The central database handle. Cheap to clone — all clones share the same state.
@@ -107,6 +108,11 @@ pub struct Db {
     /// `_seq` value. Used for FIFO eviction when `maxSize` is set.
     pub seq_counters: Arc<DashMap<String, AtomicU64>>,
 
+    /// Per-collection BTreeMap index: seq → document key.
+    /// Maintained on every insert and delete so `get_filtered` can iterate
+    /// documents in insertion order without a full sort pass.
+    pub seq_index: Arc<DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>>,
+
     /// Per-collection maximum document count.
     /// When a collection exceeds this limit after an insert batch, the oldest
     /// documents (lowest `_seq`) are evicted to bring it back to `maxSize`.
@@ -148,43 +154,23 @@ impl Db {
             .collect()
     }
 
-    /// Retrieve all documents in a collection.
-    pub fn get_all(
-        &self,
-        collection: &str,
-        offset: usize,
-        count: Option<usize>,
-    ) -> Vec<(String, Value)> {
-        operations::get_all(&self.state, &self.storage, collection, offset, count)
-            .into_iter()
-            .map(|(k, v)| (k, expand_system_fields(v)))
-            .collect()
-    }
-
     /// Lazily scan a collection, returning only documents that match `predicate`.
     ///
-    /// Avoids the full O(n) clone that `get_all` does — only matching documents
+    /// Avoids a full O(n) clone — only matching documents
     /// are cloned. `offset` and `count` are applied during iteration so the
     /// scan can stop early. Used for WHERE queries on large collections when
     /// no index applies.
-    pub fn get_filtered(
+    pub fn get_filtered<P>(
         &self,
-        collection: &str,
-        predicate: impl Fn(&str, &[u8]) -> bool + Sync + Send,
-        offset: usize,
-        count: Option<usize>,
-    ) -> Vec<(String, Value)> {
-        operations::get_filtered(
-            &self.state,
-            &self.storage,
-            collection,
-            predicate,
-            offset,
-            count,
-        )
-        .into_iter()
-        .map(|(k, v)| (k, expand_system_fields(v)))
-        .collect()
+        params: operations::GetFilteredParams<'_, P>,
+    ) -> Vec<(String, Value)>
+    where
+        P: Fn(&str, &[u8]) -> bool + Sync + Send,
+    {
+        operations::get_filtered(&self.state, &self.storage, &self.seq_index, params)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
     }
 
     /// Lazily scan a collection and return the top-`cap` documents according
@@ -196,14 +182,34 @@ impl Db {
     /// even for collections of millions of documents. The result is already
     /// sorted best-first (per the comparator); the caller still applies
     /// `offset` and `count` for pagination.
-    pub fn scan_top_n(
+    pub fn scan_top_n<'a, P, C>(
         &self,
-        collection: &str,
-        predicate: impl Fn(&str, &[u8]) -> bool + Sync,
-        cmp: impl Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
-        cap: usize,
-    ) -> Vec<(String, Value)> {
-        operations::scan_top_n(&self.state, &self.storage, collection, predicate, cmp, cap)
+        params: operations::ScanTopNParams<'a, P, C>,
+    ) -> Vec<(String, Value)>
+    where
+        P: Fn(&str, &[u8]) -> bool + Sync,
+        C: Fn(&Value, &Value) -> std::cmp::Ordering + Send + Sync,
+    {
+        operations::scan_top_n(&self.state, &self.storage, params)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
+    }
+
+    /// High-performance top-N scan using lazy byte extraction.
+    ///
+    /// Extracts only the numeric sort field from raw MsgPack bytes during the
+    /// parallel scan phase — no full deserialization until the final `cap`
+    /// winners are known. Falls back gracefully when the field is absent or
+    /// non-numeric (those documents are excluded from results).
+    pub fn scan_top_n_raw<P>(
+        &self,
+        params: operations::ScanTopNRawParams<'_, P>,
+    ) -> Vec<(String, Value)>
+    where
+        P: Fn(&str, &[u8]) -> bool + Sync + Send,
+    {
+        operations::scan_top_n_raw(&self.state, &self.storage, &self.seq_index, params)
             .into_iter()
             .map(|(k, v)| (k, expand_system_fields(v)))
             .collect()
@@ -227,8 +233,13 @@ impl Db {
         // restore the stale documents, causing the same _v counter bug after reload.
         if let Some(exp) = self.ttl_expiry.get(collection).map(|v| *v) {
             if operations::ttl::collection_is_expired(exp, operations::ttl::now_ms()) {
-                let _ =
-                    operations::delete_collection(&self.state, &self.storage, &self.tx, collection);
+                let _ = operations::delete_collection(
+                    &self.state,
+                    &self.storage,
+                    &self.tx,
+                    &self.seq_index,
+                    collection,
+                );
                 self.ttl_expiry.remove(collection);
             }
         }
@@ -239,6 +250,7 @@ impl Db {
             #[cfg(feature = "schema")]
             schemas: &self.schemas,
             seq_counters: &self.seq_counters,
+            seq_index: &self.seq_index,
             collection,
             items,
         })?;
@@ -251,6 +263,7 @@ impl Db {
                     &self.state,
                     &self.storage,
                     &self.tx,
+                    &self.seq_index,
                     collection,
                     overflow,
                 );
@@ -321,6 +334,7 @@ impl Db {
             &self.state,
             &self.storage,
             &self.tx,
+            &self.seq_index,
             collection,
             predicate,
             count_limit,
@@ -334,12 +348,25 @@ impl Db {
                 "Background disk I/O failed. System is in read-only mode.".into(),
             ));
         }
-        operations::delete(&self.state, &self.storage, &self.tx, collection, keys)
+        operations::delete(
+            &self.state,
+            &self.storage,
+            &self.tx,
+            &self.seq_index,
+            collection,
+            keys,
+        )
     }
 
     /// Drop an entire collection — removes all documents.
     pub fn delete_collection(&self, collection: &str) -> Result<(), DbError> {
-        operations::delete_collection(&self.state, &self.storage, &self.tx, collection)
+        operations::delete_collection(
+            &self.state,
+            &self.storage,
+            &self.tx,
+            &self.seq_index,
+            collection,
+        )
     }
 
     /// Returns the next sequence number for a collection (atomic fetch-and-add).
