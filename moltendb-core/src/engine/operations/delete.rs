@@ -7,7 +7,8 @@ use super::super::StorageBackend;
 use crate::common::system_fields::SystemFields;
 use dashmap::DashMap;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 
 /// Delete one or more documents from a collection in a single call.
 ///
@@ -18,6 +19,7 @@ pub fn delete(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
+    seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
     collection: &str,
     keys: Vec<String>,
 ) -> Result<(), DbError> {
@@ -32,6 +34,15 @@ pub fn delete(
 
     if let Some(col) = state.get(collection) {
         for key in keys {
+            // Remove from seq_index before removing from col (need the seq).
+            if let Some(entry) = col.get(&key) {
+                let seq = crate::common::system_field_tokens::read_msgpack_seq_token(&entry);
+                if let Some(idx) = seq_index.get(collection) {
+                    if let Ok(mut map) = idx.write() {
+                        map.remove(&seq);
+                    }
+                }
+            }
             // Remove the document from the in-memory collection.
             col.remove(&key);
 
@@ -77,6 +88,7 @@ pub fn delete_filtered(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
+    seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
     collection: &str,
     predicate: impl Fn(&Value) -> bool + Sync,
     count_limit: Option<usize>,
@@ -133,7 +145,7 @@ pub fn delete_filtered(
     if count == 0 {
         return Ok(0);
     }
-    delete(state, storage, tx, collection, keys)?;
+    delete(state, storage, tx, seq_index, collection, keys)?;
     Ok(count)
 }
 
@@ -147,6 +159,7 @@ pub fn evict_oldest(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
+    seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
     collection: &str,
     n: usize,
 ) {
@@ -181,7 +194,7 @@ pub fn evict_oldest(
         return;
     }
     drop(col); // release the read guard before calling delete
-    let _ = delete(state, storage, tx, collection, keys);
+    let _ = delete(state, storage, tx, seq_index, collection, keys);
 }
 
 /// Drop an entire collection — removes all documents and its indexes.
@@ -197,6 +210,7 @@ pub fn delete_collection(
     state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
     storage: &Arc<dyn StorageBackend>,
     tx: &tokio::sync::broadcast::Sender<String>,
+    seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
     collection: &str,
 ) -> Result<(), DbError> {
     // TX_BEGIN: Start a transaction for the drop.
@@ -208,8 +222,9 @@ pub fn delete_collection(
         Value::Null,
     ))?;
 
-    // Step 1: Remove from memory.
+    // Step 1: Remove from memory and seq_index.
     state.remove(collection);
+    seq_index.remove(collection);
     // Step 2: Persist the DROP command.
     let entry = LogEntry::new(
         crate::common::log_commands::LogCommand::IKEY_DROP.to_string(),

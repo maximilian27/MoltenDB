@@ -5,6 +5,7 @@ use super::get::types::{FetchParams, GetParams};
 use super::get::{apply_joins, fetch_documents, make_comparator, shape_doc};
 use crate::common::payload_fields::PayloadField;
 use crate::engine::ttl;
+use crate::engine::{ScanTopNParams, ScanTopNRawParams};
 use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::validation;
 use crate::{engine, query};
@@ -57,11 +58,20 @@ pub fn process_get(
     // Fetch, filter, join.
     let has_joins = params.joins_req.map(|j| !j.is_empty()).unwrap_or(false);
 
+    let default_order_asc = payload
+        .get(PayloadField::Order.as_str())
+        .and_then(|v| v.as_str())
+        .map(|s| s == "asc")
+        .unwrap_or(false);
+
     let fetch_params = FetchParams {
         col_name: params.col_name,
         payload,
         where_clause: params.where_clause,
         has_joins,
+        has_sort: params.sort_specs.is_some(),
+        has_where: params.where_clause.is_some(),
+        default_order_asc,
         offset: params.offset,
         count_limit: params.count_limit,
         allowed_prefixes: params.allowed_prefixes,
@@ -107,6 +117,20 @@ fn validate_get_request(
             "'fields' and 'excludedFields' cannot be used together".to_string(),
         )
         .into_response());
+    }
+
+    let has_sort = payload.get(PayloadField::Sort.as_str()).is_some();
+    let order_val = payload.get(PayloadField::Order.as_str());
+    if has_sort && order_val.is_some() {
+        return Err(GetError::OrderSortMutuallyExclusive.into_response());
+    }
+    if let Some(ord) = order_val {
+        match ord.as_str() {
+            Some("asc") | Some("desc") => {}
+            _ => {
+                return Err(GetError::InvalidOrderValue.into_response());
+            }
+        }
     }
 
     Ok(())
@@ -200,20 +224,77 @@ fn run_fast_sort_path(
 ) -> Option<(u16, Value)> {
     let specs = params.sort_specs.clone()?;
     let cap = params.offset + params.count_limit;
-    let cmp = make_comparator(specs);
     let where_clause_owned = params.where_clause.cloned();
 
-    let top = db.scan_top_n(
-        params.col_name,
-        move |_key, doc_bytes| {
-            where_clause_owned
-                .as_ref()
-                .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
-                .unwrap_or(true)
-        },
-        cmp,
-        cap,
-    );
+    // Fast path: single numeric sort spec — use lazy byte extraction to avoid
+    // full deserialization during the parallel scan phase.
+    let top = if specs.len() == 1 {
+        let spec = &specs[0];
+        let (field, descending) = if let Some(s) = spec.as_str() {
+            (s.to_string(), false)
+        } else if let Some(obj) = spec.as_object() {
+            let f = obj
+                .get("field")
+                .and_then(|f| f.as_str())
+                .unwrap_or("")
+                .to_string();
+            let d = obj
+                .get("order")
+                .and_then(|o| o.as_str())
+                .map(|o| o.eq_ignore_ascii_case("desc"))
+                .unwrap_or(false);
+            (f, d)
+        } else {
+            (String::new(), false)
+        };
+
+        if !field.is_empty() {
+            let raw = db.scan_top_n_raw(ScanTopNRawParams {
+                collection: params.col_name,
+                predicate: move |_key, doc_bytes| {
+                    where_clause_owned
+                        .as_ref()
+                        .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
+                        .unwrap_or(true)
+                },
+                sort_field: &field,
+                is_descending: descending,
+                cap,
+            });
+            // scan_top_n_raw returns items sorted ascending by sort_value (smallest
+            // first). For descending queries the values were negated, so the order
+            // is already correct — largest original value comes first.
+            raw
+        } else {
+            // Field name could not be parsed; fall back to generic path.
+            let cmp = make_comparator(specs);
+            db.scan_top_n(ScanTopNParams {
+                collection: params.col_name,
+                predicate: move |_key, doc_bytes| {
+                    where_clause_owned
+                        .as_ref()
+                        .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
+                        .unwrap_or(true)
+                },
+                cmp,
+                cap,
+            })
+        }
+    } else {
+        // Multi-field sort: fall back to the generic Value-based comparator.
+        let cmp = make_comparator(specs);
+        db.scan_top_n(ScanTopNParams {
+            collection: params.col_name,
+            predicate: move |_key, doc_bytes| {
+                where_clause_owned
+                    .as_ref()
+                    .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
+                    .unwrap_or(true)
+            },
+            cmp,
+            cap,
+        })
+    };
 
     let array: Vec<Value> = top
         .into_iter()

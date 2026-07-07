@@ -1,8 +1,9 @@
 use crate::engine::StorageBackend;
 use dashmap::DashMap;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// Parameters for the [`insert`] operation.
 ///
@@ -15,6 +16,7 @@ pub struct InsertParams<'a> {
     #[cfg(feature = "schema")]
     pub schemas: &'a DashMap<String, Arc<(Value, jsonschema::Validator)>>,
     pub seq_counters: &'a DashMap<String, AtomicU64>,
+    pub seq_index: &'a DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
     pub collection: &'a str,
     pub items: Vec<(String, Value)>,
 }

@@ -29,12 +29,12 @@ use serde_json::{Map, Value};
 
 // ─── Token byte constants ─────────────────────────────────────────────────────
 
-const TOK_VERSION: u8 = 0xff; // -1
+pub(crate) const TOK_VERSION: u8 = 0xff; // -1
 const TOK_KEY: u8 = 0xfe; // -2  (reserved, not stored in docs)
-const TOK_SEQ: u8 = 0xfd; // -3
-const TOK_CREATED_AT: u8 = 0xfc; // -4
-const TOK_MODIFIED_AT: u8 = 0xfb; // -5
-const TOK_EXPIRES_AT: u8 = 0xfa; // -6
+pub(crate) const TOK_SEQ: u8 = 0xfd; // -3
+pub(crate) const TOK_CREATED_AT: u8 = 0xfc; // -4
+pub(crate) const TOK_MODIFIED_AT: u8 = 0xfb; // -5
+pub(crate) const TOK_EXPIRES_AT: u8 = 0xfa; // -6
 
 // ─── Encode: Value → MsgPack bytes ───────────────────────────────────────────
 
@@ -510,7 +510,7 @@ pub fn read_msgpack_seq_token(bytes: &[u8]) -> u64 {
 /// Scan a MsgPack map for a single-byte negative FixInt key and return its
 /// value as u64. Returns None if the key is not found or the value is not an
 /// integer.
-fn read_token_u64(bytes: &[u8], token: u8) -> Option<u64> {
+pub(crate) fn read_token_u64(bytes: &[u8], token: u8) -> Option<u64> {
     let mut pos = 0usize;
     let byte = *bytes.get(pos)?;
     pos += 1;

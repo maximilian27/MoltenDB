@@ -1,9 +1,9 @@
+use crate::common::system_fields::SystemFields;
 use crate::common::where_operators::WhereOperator;
 use crate::engine::DbError;
 use rmp::decode::read_marker;
 use serde::de::Deserialize;
 use serde_json::{Map, Value};
-
 // ─── MsgPack fast-path helpers ───────────────────────────────────────────────
 // These functions walk raw MsgPack bytes to evaluate predicates without
 // deserializing the whole document into serde_json::Value.
@@ -284,6 +284,20 @@ pub fn evaluate_predicate_msgpack(
     operator: &str,
     op_value: &Value,
 ) -> Option<bool> {
+    // System fields are stored under single-byte token keys, not string keys.
+    // find_msgpack_value skips token keys, so handle them separately here.
+    if let Some(sys_val) = read_msgpack_system_field_u64(msgpack_bytes, field_path) {
+        let threshold = op_value.as_f64()? as u64;
+        return match WhereOperator::from_str(operator)? {
+            WhereOperator::Gt => Some(sys_val > threshold),
+            WhereOperator::Gte => Some(sys_val >= threshold),
+            WhereOperator::Lt => Some(sys_val < threshold),
+            WhereOperator::Lte => Some(sys_val <= threshold),
+            WhereOperator::Eq => Some(sys_val == threshold),
+            WhereOperator::NotEq => Some(sys_val != threshold),
+            _ => None,
+        };
+    }
     let parts: Vec<&str> = field_path.split('.').collect();
     let value_slice = find_msgpack_value(msgpack_bytes, &parts)?;
 
@@ -451,8 +465,22 @@ pub fn read_msgpack_number(bytes: &[u8]) -> Option<f64> {
 /// Extract the `_seq` token (-3) from a MsgPack document as a u64.
 /// Uses the v1 negative FixInt token key (0xfd = -3).
 /// Returns `u64::MAX` as fallback so docs without a seq field sort last.
-pub use crate::common::system_field_tokens::read_msgpack_seq_token as read_msgpack_seq;
-
+// Extract any system-field token value from raw MsgPack bytes by public API
+/// field name. Returns `None` if the field name is not a token field or the
+/// value is not an integer.
+///
+/// Supported names: `"_seq"`, `"_createdAt"`, `"_modifiedAt"`, `"_expiresAt"`, `"_v"`.
+pub fn read_msgpack_system_field_u64(bytes: &[u8], field: &str) -> Option<u64> {
+    let token = match field {
+        f if f == SystemFields::SEQ => crate::common::system_field_tokens::TOK_SEQ,
+        f if f == SystemFields::CREATED_AT => crate::common::system_field_tokens::TOK_CREATED_AT,
+        f if f == SystemFields::MODIFIED_AT => crate::common::system_field_tokens::TOK_MODIFIED_AT,
+        f if f == SystemFields::EXPIRES_AT => crate::common::system_field_tokens::TOK_EXPIRES_AT,
+        f if f == SystemFields::VERSION => crate::common::system_field_tokens::TOK_VERSION,
+        _ => return None,
+    };
+    crate::common::system_field_tokens::read_token_u64(bytes, token)
+}
 
 fn read_msgpack_bool(bytes: &[u8]) -> Option<bool> {
     let mut b = bytes;
@@ -610,7 +638,8 @@ pub fn evaluate_where_msgpack(doc_bytes: &[u8], query: &Value) -> Option<bool> {
         if !condition.is_object() {
             // Implicit equality: { "field": scalar }
             let result =
-                evaluate_predicate_msgpack(doc_bytes, key, "$eq", condition).unwrap_or(false);
+                evaluate_predicate_msgpack(doc_bytes, key, WhereOperator::Eq.as_str(), condition)
+                    .unwrap_or(false);
             if !result {
                 return Some(false);
             }

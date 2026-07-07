@@ -9,8 +9,9 @@ use crate::common::system_field_tokens::{msgpack_to_value, value_to_msgpack};
 use crate::common::system_fields::SystemFields;
 use dashmap::DashMap;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// Insert or overwrite multiple documents in a single batch operation.
 ///
@@ -32,6 +33,7 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
         #[cfg(feature = "schema")]
         schemas,
         seq_counters,
+        seq_index,
         collection,
         items,
     } = params;
@@ -81,20 +83,29 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
                 .unwrap_or(seq);
             let new_v = existing_v + 1;
             if let Some(obj) = value.as_object_mut() {
-                obj.insert(SystemFields::IKEY_VERSION.to_string(), serde_json::json!(new_v));
+                obj.insert(
+                    SystemFields::IKEY_VERSION.to_string(),
+                    serde_json::json!(new_v),
+                );
                 obj.insert(SystemFields::IKEY_CREATED_AT.to_string(), orig_created);
                 obj.insert(
                     SystemFields::IKEY_MODIFIED_AT.to_string(),
                     serde_json::json!(now_ms),
                 );
-                obj.insert(SystemFields::IKEY_SEQ.to_string(), serde_json::json!(orig_seq));
+                obj.insert(
+                    SystemFields::IKEY_SEQ.to_string(),
+                    serde_json::json!(orig_seq),
+                );
             }
 
             // Schema Validation: Check the document BEFORE index update and WAL write.
             #[cfg(feature = "schema")]
             crate::engine::schema::validate_document(schemas, collection, &value)?;
         } else if let Some(obj) = value.as_object_mut() {
-            obj.insert(SystemFields::IKEY_VERSION.to_string(), serde_json::json!(1u64));
+            obj.insert(
+                SystemFields::IKEY_VERSION.to_string(),
+                serde_json::json!(1u64),
+            );
             obj.insert(
                 SystemFields::IKEY_CREATED_AT.to_string(),
                 serde_json::json!(now_ms),
@@ -115,6 +126,22 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             col.insert(key.clone(), bytes.into_boxed_slice());
         }
 
+        // Update the seq index: map this document's _seq → key.
+        // For overwrites the seq is preserved (orig_seq), so we just upsert.
+        {
+            let col_key = Arc::from(collection);
+            let idx = seq_index
+                .entry(col_key)
+                .or_insert_with(|| Arc::new(RwLock::new(BTreeMap::new())));
+            let final_seq = value
+                .get(crate::common::system_fields::SystemFields::IKEY_SEQ)
+                .and_then(|v| v.as_u64())
+                .unwrap_or(seq);
+            if let Ok(mut map) = idx.write() {
+                map.insert(final_seq, key.clone());
+            }
+        }
+
         // Step 2: Persist within the transaction.
         let entry = LogEntry::new(
             crate::common::log_commands::LogCommand::IKEY_INSERT.to_string(),
@@ -129,7 +156,9 @@ pub fn insert(params: InsertParams<'_>) -> Result<(), DbError> {
             .get(SystemFields::IKEY_VERSION)
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        let expires_at_ms = value.get(SystemFields::IKEY_EXPIRES_AT).and_then(|v| v.as_u64());
+        let expires_at_ms = value
+            .get(SystemFields::IKEY_EXPIRES_AT)
+            .and_then(|v| v.as_u64());
         let mut event = json!({
             "event": "change",
             "collection": collection,
