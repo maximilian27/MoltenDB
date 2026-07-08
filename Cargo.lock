@@ -1706,6 +1706,7 @@ dependencies = [
  "console_error_panic_hook",
  "js-sys",
  "moltendb-core",
+ "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "wasm-bindgen",
