@@ -1,4 +1,10 @@
-﻿# [1.0.0-rc12] (Jul 1, 2026)
+﻿# [1.0.0-rc13] (Jul 8, 2026)
+
+### Performance
+
+* **Wasm memory management improvements**
+
+# [1.0.0-rc12] (Jul 1, 2026)
 
 ### Performance
 

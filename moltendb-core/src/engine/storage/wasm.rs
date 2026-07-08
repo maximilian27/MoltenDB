@@ -55,12 +55,8 @@ use wasm_bindgen_futures::JsFuture;
 /// to a file in the browser's private storage. The handle is wrapped in a
 /// Mutex so it can be safely shared across async boundaries.
 pub struct OpfsStorage {
-    /// The synchronous OPFS file handle.
-    /// FileSystemSyncAccessHandle provides read(), write(), flush(), truncate(),
-    /// and getSize() � all synchronous (blocking) operations safe to call from
-    /// a Web Worker.
-    handle: Mutex<web_sys::FileSystemSyncAccessHandle>,
-    /// If true, call flush() after every write.
+    /// Wrap in Option so we can gracefully drop/take ownership of the active handle upon final closure.
+    handle: Mutex<Option<web_sys::FileSystemSyncAccessHandle>>,
     sync_mode: bool,
 }
 
@@ -117,7 +113,7 @@ impl OpfsStorage {
         let sync_handle: web_sys::FileSystemSyncAccessHandle = sync_val.unchecked_into();
 
         Ok(Self {
-            handle: Mutex::new(sync_handle),
+            handle: Mutex::new(Some(sync_handle)),
             sync_mode,
         })
     }
@@ -130,13 +126,10 @@ impl OpfsStorage {
 /// to open a new handle. The Drop impl guarantees cleanup even on panic.
 impl Drop for OpfsStorage {
     fn drop(&mut self) {
-        // Try to acquire the Mutex. If it's poisoned (a panic occurred while
-        // holding it), we still try to close the handle.
-        if let Ok(handle) = self.handle.lock() {
-            // close() releases the exclusive lock on the OPFS file.
-            // We ignore the result � there's nothing useful we can do if it fails
-            // during cleanup.
-            let _ = handle.close();
+        if let Ok(mut guard) = self.handle.lock() {
+            if let Some(handle) = guard.take() {
+                let _ = handle.close();
+            }
         }
     }
 }
@@ -150,98 +143,103 @@ impl OpfsStorage {
     /// `removeEntry()` to delete the OPFS directory, or simply reload the page
     /// so a fresh handle is opened on the now-empty file.
     fn truncate_and_close(&self) -> Result<(), DbError> {
-        let handle = self.handle.lock().expect("db handle mutex poisoned");
-        // Erase all content.
+        let mut guard = self.handle.lock().expect("db handle mutex poisoned");
+        let handle = guard.as_ref().ok_or(DbError::WriteError)?;
+
         handle
             .truncate_with_f64(0.0)
             .map_err(|_| DbError::WriteError)?;
         handle.flush().map_err(|_| DbError::WriteError)?;
-        // Release the exclusive lock so the JS side can removeEntry().
-        handle.close();
+
+        // Take ownership out of the option and close it cleanly
+        if let Some(active_handle) = guard.take() {
+            active_handle.close();
+        }
         Ok(())
     }
 }
 
-/// Implement the StorageBackend trait for OPFS-based storage.
 impl StorageBackend for OpfsStorage {
     fn stream_log_into(
         &self,
         f: &mut dyn FnMut(LogEntry, u32) -> ControlFlow<(), ()>,
     ) -> Result<u64, DbError> {
-        let size = {
-            let handle = self.handle.lock().expect("db handle mutex poisoned");
-            handle.get_size().map_err(|_| DbError::WriteError)? as usize
-        };
+        let guard = self.handle.lock().expect("db handle mutex poisoned");
+        let handle = guard.as_ref().ok_or(DbError::WriteError)?;
+
+        let size = handle.get_size().map_err(|_| DbError::WriteError)? as usize;
         if size == 0 {
             return Ok(0);
         }
 
-        let chunk_size = 64 * 1024; // 64KB
+        let chunk_size = 64 * 1024; // 64KB static window
         let mut offset = 0;
         let mut count = 0u64;
-        let mut remaining = Vec::new();
 
+        // HIGH PERFORMANCE REFACTOR: Allocate arrays ONCE outside the streaming loop
+        let mut chunk_buffer = vec![0u8; chunk_size];
+        let mut linear_log = Vec::with_capacity(size);
+
+        let opts = web_sys::FileSystemReadWriteOptions::new();
+
+        // Sequential read loop optimized to bypass intermediate allocations
         while offset < size {
             let to_read = (size - offset).min(chunk_size);
-            let mut chunk = vec![0u8; to_read];
-            {
-                let handle = self.handle.lock().expect("db handle mutex poisoned");
-                let opts = web_sys::FileSystemReadWriteOptions::new();
-                opts.set_at(offset as f64);
-                handle
-                    .read_with_u8_array_and_options(&mut chunk, &opts)
-                    .map_err(|_| DbError::WriteError)?;
-            }
+            let active_slice = &mut chunk_buffer[0..to_read];
+
+            opts.set_at(offset as f64);
+            handle
+                .read_with_u8_array_and_options(active_slice, &opts)
+                .map_err(|_| DbError::WriteError)?;
+
+            linear_log.extend_from_slice(active_slice);
             offset += to_read;
-            remaining.extend_from_slice(&chunk);
-
-            while remaining.len() >= 4 {
-                let mut len_bytes = [0u8; 4];
-                len_bytes.copy_from_slice(&remaining[0..4]);
-                let msg_len = u32::from_le_bytes(len_bytes) as usize;
-
-                if remaining.len() < 4 + msg_len {
-                    // Need more data for this message
-                    break;
-                }
-
-                let entry_data = &remaining[4..4 + msg_len];
-                if let Some(entry) =
-                    crate::common::system_field_tokens::log_entry_from_msgpack(entry_data)
-                {
-                    if let ControlFlow::Break(_) = f(entry, msg_len as u32) {
-                        return Ok(count); // Break out completely
-                    }
-                    count += 1;
-                }
-
-                // Remove the processed message from the buffer
-                remaining.drain(0..4 + msg_len);
-            }
         }
+
+        // Zero-allocation parser loop using a sliding cursor (Eliminates vector draining)
+        let mut cursor = 0;
+        let total_bytes = linear_log.len();
+
+        while cursor + 4 <= total_bytes {
+            let mut len_bytes = [0u8; 4];
+            len_bytes.copy_from_slice(&linear_log[cursor..cursor + 4]);
+            let msg_len = u32::from_le_bytes(len_bytes) as usize;
+
+            if cursor + 4 + msg_len > total_bytes {
+                break; // Incomplete boundary sequence
+            }
+
+            let entry_start = cursor + 4;
+            let entry_end = entry_start + msg_len;
+            let entry_data = &linear_log[entry_start..entry_end];
+
+            if let Some(entry) =
+                crate::common::system_field_tokens::log_entry_from_msgpack(entry_data)
+            {
+                if let ControlFlow::Break(_) = f(entry, msg_len as u32) {
+                    return Ok(count);
+                }
+                count += 1;
+            }
+
+            cursor = entry_end; // Advance position pointer smoothly over flat memory
+        }
+
         Ok(count)
     }
 
-    /// Append a single log entry to the OPFS file.
-    ///
-    /// The entry is serialized to JSON, a newline is appended, and the bytes
-    /// are written at the current end of the file (append semantics).
-    /// flush() is called after every write to ensure the data is durable.
     fn write_entry(&self, entry: &LogEntry) -> Result<(), DbError> {
-        // Serialize the entry to MessagePack and prefix with length.
         let mut encoded = crate::common::system_field_tokens::log_entry_to_msgpack(entry)
             .map_err(|_| DbError::WriteError)?;
         let mut bytes = (encoded.len() as u32).to_le_bytes().to_vec();
         bytes.append(&mut encoded);
 
-        // Acquire the Mutex to get exclusive access to the file handle.
-        let handle = self.handle.lock().expect("db handle mutex poisoned");
+        // --- UPDATE THIS BLOCK ---
+        let guard = self.handle.lock().expect("db handle mutex poisoned");
+        let handle = guard.as_ref().ok_or(DbError::WriteError)?; // Safely unpack the Option
 
-        // Get the current file size � this is where we'll write (append).
-        // get_size() returns the file size in bytes as a float (JS number).
-        let size = handle.get_size().map_err(|_| DbError::WriteError)? as f64;
+        let size = handle.get_size().map_err(|_| DbError::WriteError)?;
 
-        // Set the write position to the end of the file (append mode).
         let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(size);
 
@@ -249,8 +247,6 @@ impl StorageBackend for OpfsStorage {
             .write_with_u8_array_and_options(&mut bytes, &opts)
             .map_err(|_| DbError::WriteError)?;
 
-        // Flush to ensure the data is persisted to the OPFS file.
-        // Without flush(), the data might only be in an OS buffer.
         if self.sync_mode {
             handle.flush().map_err(|_| DbError::WriteError)?;
         }
@@ -307,9 +303,10 @@ impl OpfsStorage {
         &self,
         state: &dashmap::DashMap<std::sync::Arc<str>, dashmap::DashMap<String, Box<[u8]>>>,
     ) -> Result<(), DbError> {
-        let handle = self.handle.lock().expect("db handle mutex poisoned");
+        let guard = self.handle.lock().expect("db handle mutex poisoned");
+        let handle = guard.as_ref().ok_or(DbError::WriteError)?;
 
-        // Truncate the file to 0 bytes � erases existing content.
+        // Truncate the file to 0 bytes — erases existing content.
         handle
             .truncate_with_f64(0.0)
             .map_err(|_| DbError::WriteError)?;
@@ -374,9 +371,10 @@ impl OpfsStorage {
             &dashmap::DashMap<String, std::sync::Arc<(serde_json::Value, jsonschema::Validator)>>,
         >,
     ) -> Result<(), DbError> {
-        let handle = self.handle.lock().expect("db handle mutex poisoned");
+        let guard = self.handle.lock().expect("db handle mutex poisoned");
+        let handle = guard.as_ref().ok_or(DbError::WriteError)?;
 
-        // Truncate the file to 0 bytes � erases existing content.
+        // Truncate the file to 0 bytes — erases existing content.
         handle
             .truncate_with_f64(0.0)
             .map_err(|_| DbError::WriteError)?;
