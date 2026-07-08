@@ -27,7 +27,6 @@
 //           → routes to handle_set / handle_get / etc.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-
 #![cfg(target_arch = "wasm32")]
 
 // wasm_bindgen::prelude::* imports the core WASM-JS interop tools:
@@ -46,7 +45,8 @@ use moltendb_core::handlers;
 
 // Value = a generic JSON value.
 // json! = macro to create JSON values inline, e.g. json!({"status": "ok"}).
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::{json, Value};
 
 // ─── WorkerDb ─────────────────────────────────────────────────────────────────
 
@@ -112,9 +112,8 @@ impl WorkerDb {
         let body_size = max_body_size.unwrap_or(10 * 1024 * 1024);
         let keys_limit = max_keys_per_request.unwrap_or(1000);
 
-        let master_key = encryption_key.map(|pw| {
-            moltendb_core::engine::EncryptedStorage::derive_key(&pw, db_name)
-        });
+        let master_key = encryption_key
+            .map(|pw| moltendb_core::engine::EncryptedStorage::derive_key(&pw, db_name));
 
         let db_config = moltendb_core::engine::DbConfig {
             path: db_name.to_string(),
@@ -182,27 +181,27 @@ impl WorkerDb {
         let result = match action {
             // Full query pipeline: single key, batch, WHERE, fields, joins, sort, pagination.
             // Equivalent to POST /get on the server.
-            "get"      => self.handle_get(&payload),
+            "get" => self.handle_get(&payload),
             // Insert/upsert batch: { collection, data: { key: doc, ... } }.
             // Equivalent to POST /set on the server.
-            "set"      => self.handle_set(&payload),
+            "set" => self.handle_set(&payload),
             // Patch/merge batch: { collection, data: { key: patch, ... } }.
             // Equivalent to POST /update on the server.
-            "update"   => self.handle_update(&payload),
+            "update" => self.handle_update(&payload),
             // Delete single/batch/drop/where: { collection, keys: ... }, { drop: true },
             // or { where: { field: { $op: value } } } for bulk filter-based delete.
             // Equivalent to POST /delete on the server.
-            "delete"   => self.handle_delete(&payload),
+            "delete" => self.handle_delete(&payload),
             // Compact the OPFS log file (removes superseded entries).
-            "compact"  => self.handle_compact(),
+            "compact" => self.handle_compact(),
             // Wipe all in-memory state (used when a browser tab unloads in inMemory mode).
-            "clear"    => self.handle_clear(),
+            "clear" => self.handle_clear(),
             // Truncate and close the OPFS file so the JS side can removeEntry().
             // Works from any tab — followers route this through the leader automatically.
             "clear_opfs" => self.handle_clear_opfs(),
             // Return document counts per collection (or a specific collection).
             // Equivalent to POST /stats or GET /stats on the server.
-            "stats"    => self.handle_stats(&payload),
+            "stats" => self.handle_stats(&payload),
             // Unknown action — return an error instead of panicking.
             _ => Err(JsValue::from_str(&format!("Unknown action: {}", action))),
         }?;
@@ -210,13 +209,16 @@ impl WorkerDb {
         Ok(result)
     }
 
-
     /// Wipe all in-memory state — documents, indexes, and query heatmap.
     /// Called when any browser tab unloads while running in in-memory mode,
     /// ensuring the shared RAM store is cleared for all remaining tabs.
     fn handle_clear(&self) -> Result<JsValue, JsValue> {
         self.db.clear_all();
-        Ok(serde_wasm_bindgen::to_value(&json!({"status": "cleared"}))?)
+        let body = json!({"status": "cleared"});
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        Ok(body
+            .serialize(&serializer)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?)
     }
 
     /// Truncate the OPFS file to 0 bytes and close the sync handle.
@@ -225,13 +227,18 @@ impl WorkerDb {
     ///   `await navigator.storage.getDirectory().then(r => r.removeEntry(dbName, { recursive: true }))`
     /// without hitting a "file is locked" error, because the handle is now closed.
     fn handle_clear_opfs(&self) -> Result<JsValue, JsValue> {
-        self.db.storage
+        self.db
+            .storage
             .clear_opfs()
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         // Also wipe the in-memory state so the leader tab can't serve stale
         // data after the OPFS file has been truncated.
         self.db.clear_all();
-        Ok(serde_wasm_bindgen::to_value(&json!({"status": "opfs_cleared"}))?)
+        let body = json!({"status": "opfs_cleared"});
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        Ok(body
+            .serialize(&serializer)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?)
     }
 
     /// Compact the OPFS log file.
@@ -246,35 +253,78 @@ impl WorkerDb {
             .compact()
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        Ok(serde_wasm_bindgen::to_value(&json!({"status": "compacted"}))?)
+        let body = json!({"status": "compacted"});
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        Ok(body
+            .serialize(&serializer)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?)
     }
 
     /// Query documents — full pipeline: single key, batch, WHERE, fields, joins, sort, pagination.
     /// Equivalent to POST /get on the server.
     ///   { "collection": "laptops", "where": { "brand": "Apple" }, "fields": ["brand", "model"] }
     fn handle_get(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_get::process_get(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
-        if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
-        if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
-        serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
+        let (code, mut body): (u16, Value) = handlers::process_get::process_get(
+            &self.db,
+            request,
+            self.db.max_body_size,
+            self.db.max_keys_per_request,
+        );
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("statusCode".into(), json!(code));
+        }
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        if code >= 400 {
+            return Err(body
+                .serialize(&serializer)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?);
+        }
+        body.serialize(&serializer)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Insert/upsert documents. Equivalent to POST /set on the server.
     ///   { "collection": "laptops", "data": { "lp1": { ... }, "lp2": { ... } } }
     fn handle_set(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_set::process_set(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
-        if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
-        if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
-        serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
+        let (code, mut body): (u16, Value) = handlers::process_set::process_set(
+            &self.db,
+            request,
+            self.db.max_body_size,
+            self.db.max_keys_per_request,
+        );
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("statusCode".into(), json!(code));
+        }
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        if code >= 400 {
+            return Err(body
+                .serialize(&serializer)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?);
+        }
+        body.serialize(&serializer)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Patch/merge documents. Equivalent to POST /update on the server.
     ///   { "collection": "laptops", "data": { "lp4": { "price": 1749 } } }
     fn handle_update(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_update::process_update(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
-        if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
-        if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
-        serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
+        let (code, mut body): (u16, Value) = handlers::process_update::process_update(
+            &self.db,
+            request,
+            self.db.max_body_size,
+            self.db.max_keys_per_request,
+        );
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("statusCode".into(), json!(code));
+        }
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        if code >= 400 {
+            return Err(body
+                .serialize(&serializer)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?);
+        }
+        body.serialize(&serializer)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Delete documents, drop a collection, or bulk-delete by filter. Equivalent to POST /delete on the server.
@@ -283,10 +333,23 @@ impl WorkerDb {
     ///   { "collection": "laptops", "drop": true }                                     — drop collection
     ///   { "collection": "laptops", "where": { "in_stock": { "$eq": false } } }        — bulk filter delete
     fn handle_delete(&self, request: &Value) -> Result<JsValue, JsValue> {
-        let (code, mut body): (u16, Value) = handlers::process_delete::process_delete(&self.db, request, self.db.max_body_size, self.db.max_keys_per_request);
-        if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
-        if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
-        serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
+        let (code, mut body): (u16, Value) = handlers::process_delete::process_delete(
+            &self.db,
+            request,
+            self.db.max_body_size,
+            self.db.max_keys_per_request,
+        );
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("statusCode".into(), json!(code));
+        }
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        if code >= 400 {
+            return Err(body
+                .serialize(&serializer)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?);
+        }
+        body.serialize(&serializer)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Return document counts per collection. Equivalent to POST /stats or GET /stats on the server.
@@ -294,9 +357,17 @@ impl WorkerDb {
     ///   { "collection": "laptops" }         -- single collection
     fn handle_stats(&self, request: &Value) -> Result<JsValue, JsValue> {
         let (code, mut body): (u16, Value) = handlers::process_stats(&self.db, request);
-        if let Some(obj) = body.as_object_mut() { obj.insert("statusCode".into(), json!(code)); }
-        if code >= 400 { return Err(serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))?); }
-        serde_wasm_bindgen::to_value(&body).map_err(|e| JsValue::from_str(&e.to_string()))
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("statusCode".into(), json!(code));
+        }
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        if code >= 400 {
+            return Err(body
+                .serialize(&serializer)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?);
+        }
+        body.serialize(&serializer)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Subscribe to real-time database changes.
