@@ -71,7 +71,7 @@ when the crate is used as a dependency of `moltendb-wasm`.
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc12"
+moltendb-core = "1.0.0-rc13"
 ```
 
 ### Minimal example
