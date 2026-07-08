@@ -3,6 +3,9 @@
 ### Performance
 
 * **Wasm memory management improvements**
+* **wasm remove mapToObj bottleneck by serializing the data to plain JSON objects**
+
+---
 
 # [1.0.0-rc12] (Jul 1, 2026)
 
