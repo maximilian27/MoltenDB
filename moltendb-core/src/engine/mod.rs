@@ -366,7 +366,13 @@ impl Db {
             &self.tx,
             &self.seq_index,
             collection,
-        )
+        )?;
+        // Also remove TTL metadata so stale expiry records don't linger in memory
+        // after the collection is gone (e.g. after the startup TTL sweep on WASM).
+        self.ttl_expiry.remove(collection);
+        self.ttl_defaults.remove(collection);
+        self.seq_counters.remove(collection);
+        Ok(())
     }
 
     /// Returns the next sequence number for a collection (atomic fetch-and-add).
