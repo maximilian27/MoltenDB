@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MzU4NjM4OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjVjNjU5ZTU4LWUyMDAtNGI3NS1iYWM0LTkxNDkwNmFjMDYzYiJ9.Z6sjYJNVdeMWVmxf1U_GbjDt6pXa8Y4a4l0SGnFSaMo
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NDEwNTQ3NCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImJjNzhiNGVjLTBlMjMtNGNkMi1iNTk3LTNiNmRiNjZiOTk1ZCJ9.Mp72V0S3yBqfA65XzN9fh6Ez9L7kQgzrsGnJtDtzeDs
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document
@@ -32,7 +32,7 @@ Authorization: Bearer {{token}}
   "keys": "stress_000001"
 }
 
-### §1b. Fetch a mid-range document
+### §1b. Fetch all
 POST http://localhost:1538/get
 Content-Type: application/json
 Authorization: Bearer {{token}}
@@ -278,7 +278,7 @@ Authorization: Bearer {{token}}
   ],
   "where": {
     "model": {
-      "$ct": "Model-0001"
+      "$ct": "Model-999"
     }
   }
 }
@@ -815,7 +815,22 @@ Authorization: Bearer {{token}}
   ]
 }
 
-### §8e. Verify deletions — these should return empty results
+### §8e. Bulk delete with count — remove at most 200 gaming laptops
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "where": {
+    "tags": {
+      "$contains": "gaming"
+    }
+  },
+  "count": 200
+}
+
+### §8f. Verify deletions — these should return empty results
 POST http://localhost:1538/get
 Content-Type: application/json
 Authorization: Bearer {{token}}

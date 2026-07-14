@@ -91,7 +91,7 @@ impl Db {
             wrapped
         };
 
-        Ok(Self {
+        let db = Self {
             state,
             storage,
             tx,
@@ -107,6 +107,19 @@ impl Db {
             seq_index,
             max_sizes,
             io_fault: Arc::new(AtomicBool::new(false)),
-        })
+        };
+
+        // Startup TTL sweep: drop any collections that already expired while the
+        // tab was closed. This mirrors the server's ttl_sweep.rs startup logic.
+        // Without this, replayed-from-OPFS expired collections stay in memory
+        // until the next GET request triggers the per-request expiry check.
+        let now = crate::engine::ttl::now_ms();
+        for (col, expires_at) in db.all_ttl_expiries() {
+            if expires_at <= now {
+                let _ = db.delete_collection(&col);
+            }
+        }
+
+        Ok(db)
     }
 }
