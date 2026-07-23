@@ -827,7 +827,7 @@ Authorization: Bearer {{token}}
       "$contains": "gaming"
     }
   },
-  "count": 20
+  "count": 233
 }
 
 ### §8f. Verify deletions — these should return empty results

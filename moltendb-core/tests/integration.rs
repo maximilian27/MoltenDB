@@ -761,6 +761,67 @@ fn test_bulk_delete_with_count() {
     assert_eq!(arr(&remaining).len(), 1);
 }
 
+// Insert four matching docs one at a time so their `_seq` order is deterministic
+// (o1 oldest ... o4 newest), then assert `count` + `order` remove the right ones.
+fn seed_ordered(db: &engine::Db) {
+    for key in ["o1", "o2", "o3", "o4"] {
+        set(
+            db,
+            json!({
+                "collection": "ordered",
+                "data": { key: { "tag": "x" } }
+            }),
+        );
+    }
+}
+
+#[test]
+fn test_bulk_delete_default_order_removes_oldest() {
+    println!("[TEST] test_bulk_delete_default_order_removes_oldest");
+    let db = open_db();
+    seed_ordered(&db);
+    // No `order` given → default is oldest-first (lowest _seq). count=2 removes o1, o2.
+    let r = delete(
+        &db,
+        json!({
+            "collection": "ordered",
+            "where": { "tag": "x" },
+            "count": 2
+        }),
+    );
+    assert_eq!(r["status"], "ok");
+    assert_eq!(r["deleted"], 2);
+    // o1 and o2 (oldest) are gone; o3 and o4 remain.
+    let gone = get(&db, json!({ "collection": "ordered", "keys": ["o1", "o2"] }));
+    assert!(gone.get("error").is_some());
+    let remaining = get(&db, json!({ "collection": "ordered", "keys": ["o3", "o4"] }));
+    assert_eq!(arr(&remaining).len(), 2);
+}
+
+#[test]
+fn test_bulk_delete_desc_order_removes_newest() {
+    println!("[TEST] test_bulk_delete_desc_order_removes_newest");
+    let db = open_db();
+    seed_ordered(&db);
+    // order="desc" → newest-first (highest _seq). count=2 removes o4, o3.
+    let r = delete(
+        &db,
+        json!({
+            "collection": "ordered",
+            "where": { "tag": "x" },
+            "count": 2,
+            "order": "desc"
+        }),
+    );
+    assert_eq!(r["status"], "ok");
+    assert_eq!(r["deleted"], 2);
+    // o3 and o4 (newest) are gone; o1 and o2 remain.
+    let gone = get(&db, json!({ "collection": "ordered", "keys": ["o3", "o4"] }));
+    assert!(gone.get("error").is_some());
+    let remaining = get(&db, json!({ "collection": "ordered", "keys": ["o1", "o2"] }));
+    assert_eq!(arr(&remaining).len(), 2);
+}
+
 // ─── §45-47: Versioning ───────────────────────────────────────────────────────
 
 #[test]
