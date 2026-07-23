@@ -1,4 +1,12 @@
-﻿# [1.0.0-rc13] (Jul 8, 2026)
+﻿# [1.0.0-rc14] (Jul 23, 2026)
+
+### Bug Fixes
+
+* **Wasm persist ttl after tab reload**
+
+---
+
+# [1.0.0-rc13] (Jul 8, 2026)
 
 ### Performance
 

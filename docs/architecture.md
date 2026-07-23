@@ -46,7 +46,7 @@ tree.
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "1.0.0-rc13"
+moltendb-core = "1.0.0-rc14"
 ```
 
 ```rust

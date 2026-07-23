@@ -20,7 +20,7 @@ Same query engine. Same storage semantics. Different execution backends.
 are not backwards compatible with previous versions.**
 > Review the [changelog](../CHANGELOG.md) before upgrading.
 
-**🚀 Release Candidate (v1.0.0-rc13)** — The API is stable. Suitable for early production use. No other breaking changes
+**🚀 Release Candidate (v1.0.0-rc14)** — The API is stable. Suitable for early production use. No other breaking changes
 are expected to occur before the final 1.0.0 release.
 
 > 🌐 **Building for the browser?** The WebAssembly engine, TypeScript client, and React/Angular adapters live in
@@ -189,7 +189,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc13"
+moltendb-core = "1.0.0-rc14"
 ```
 
 ### Download Pre-built Binaries
