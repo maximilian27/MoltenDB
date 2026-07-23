@@ -702,6 +702,7 @@ Authorization: Bearer <token>
 { "collection": "laptops", "keys": ["lp4", "lp5"] }     // batch
 { "collection": "laptops", "drop": true }               // drop entire collection
 { "collection": "laptops", "where": { "in_stock": { "$eq": false } } }  // bulk delete by filter
+{ "collection": "laptops", "count": 20 }                // count-only: delete 20 oldest docs
 ```
 
 The `where` clause supports every filter operator available in `/get` — `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`,
@@ -714,6 +715,56 @@ The `where` clause supports every filter operator available in `/get` — `$eq`,
   "deleted": 42
 }
 ```
+
+**Ordering (`order`).** When `count` limits a bulk delete to fewer documents than actually match the filter, MoltenDB
+decides *which* matches to remove by ordering them on the system `_seq` field (the monotonic insertion sequence). An
+optional `order` property controls the direction:
+
+| `order`         | Deletes first…                       |
+|:----------------|:-------------------------------------|
+| `"asc"` (default) | **oldest** documents (lowest `_seq`) |
+| `"desc"`          | **newest** documents (highest `_seq`) |
+
+```json
+// Remove the 50 oldest out-of-stock laptops (default order)
+{ "collection": "laptops", "where": { "in_stock": { "$eq": false } }, "count": 50 }
+```
+
+```json
+// Remove the 50 newest out-of-stock laptops
+{ "collection": "laptops", "where": { "in_stock": { "$eq": false } }, "count": 50, "order": "desc" }
+```
+
+Because matches are sorted by `_seq` **before** the `count` cap is applied, a count-limited delete is deterministic —
+the same request always removes the same well-defined subset (never an arbitrary slice).
+
+> **Note:** The default delete order is `"asc"` (oldest first), which differs from `/get`, where the default unsorted
+> order is `"desc"` (newest first). Oldest-first is the natural default for pruning/cleanup workloads.
+
+**Performance.** Bulk `where` deletes use the same fast scan path as `/get`: the filter is evaluated directly on the
+raw MsgPack bytes and only the cheap `_seq` token is read for matches — documents are **not** fully deserialized to
+JSON during the scan. This keeps a bulk delete roughly as cheap to scan as an equivalent unsorted `/get`.
+
+**Count-only delete (no `where`).** Omitting `keys`, `where`, and `drop` and providing only a `count` removes the
+oldest (default) or newest `n` documents in the collection by `_seq` — a fast "prune N docs" primitive:
+
+```json
+// Delete the 20 oldest documents (default order)
+{ "collection": "events", "count": 20 }
+```
+
+```json
+// Delete the 20 newest documents
+{ "collection": "events", "count": 20, "order": "desc" }
+```
+
+This mode reuses the same ordered `_seq` index the unsorted `/get` uses, so it takes the first/last `n` keys directly —
+no collection scan and no per-document decode. It honours the same `order` directions as above (default `"asc"` =
+oldest first), and if `count` exceeds the collection size, all documents are removed. `count` is capped at `1000`.
+
+> **Safety:** Unlike the `where` mode, the count-only mode **requires** an explicit `count` — it never falls back to
+> the default `100`. A request with no `keys`/`where`/`drop`/`count` returns `400` (missing fields) rather than
+> deleting anything, so a tiny payload can never silently destroy data.
 
 ### Paginated collection fetch
 

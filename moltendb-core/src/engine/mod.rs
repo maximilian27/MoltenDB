@@ -317,13 +317,17 @@ impl Db {
     }
 
     /// Scan a collection with a predicate and delete all matching documents.
-    /// Mirrors `get_filtered` on the read side. If `count_limit` is `Some(n)`, at most `n`
-    /// documents are deleted. Returns the number of documents deleted.
+    /// Mirrors `get_filtered` on the read side — the predicate runs on raw MsgPack
+    /// bytes and matches are ordered by `_seq` before `count_limit` is applied
+    /// (`default_order_asc == true` → oldest first, `false` → newest first).
+    /// If `count_limit` is `Some(n)`, at most `n` documents are deleted.
+    /// Returns the number of documents deleted.
     pub fn delete_filtered(
         &self,
         collection: &str,
-        predicate: impl Fn(&Value) -> bool + Sync,
+        predicate: impl Fn(&str, &[u8]) -> bool + Sync,
         count_limit: Option<usize>,
+        default_order_asc: bool,
     ) -> Result<usize, DbError> {
         if self.io_fault.load(Ordering::Relaxed) {
             return Err(DbError::StorageFault(
@@ -338,6 +342,35 @@ impl Db {
             collection,
             predicate,
             count_limit,
+            default_order_asc,
+        )
+    }
+
+    /// Delete the `n` oldest or newest documents from a collection by `_seq`.
+    /// Count-only sibling of `delete_filtered` (no predicate) — reuses the ordered
+    /// `seq_index` `BTreeMap` to pick the first/last `n` keys directly, so it never
+    /// scans/decodes per document. `order_asc == true` removes the oldest first
+    /// (lowest `_seq`), `false` the newest first. If the collection has fewer than
+    /// `n` documents, all are removed. Returns the number of documents deleted.
+    pub fn delete_n(
+        &self,
+        collection: &str,
+        n: usize,
+        order_asc: bool,
+    ) -> Result<usize, DbError> {
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
+        operations::delete_n(
+            &self.state,
+            &self.storage,
+            &self.tx,
+            &self.seq_index,
+            collection,
+            n,
+            order_asc,
         )
     }
 
@@ -366,7 +399,13 @@ impl Db {
             &self.tx,
             &self.seq_index,
             collection,
-        )
+        )?;
+        // Also remove TTL metadata so stale expiry records don't linger in memory
+        // after the collection is gone (e.g. after the startup TTL sweep on WASM).
+        self.ttl_expiry.remove(collection);
+        self.ttl_defaults.remove(collection);
+        self.seq_counters.remove(collection);
+        Ok(())
     }
 
     /// Returns the next sequence number for a collection (atomic fetch-and-add).

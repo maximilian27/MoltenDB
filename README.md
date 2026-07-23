@@ -20,7 +20,7 @@ Same query engine. Same storage semantics. Different execution backends.
 are not backwards compatible with previous versions.**
 > Review the [changelog](../CHANGELOG.md) before upgrading.
 
-**🚀 Release Candidate (v1.0.0-rc13)** — The API is stable. Suitable for early production use. No other breaking changes
+**🚀 Release Candidate (v1.0.0-rc14)** — The API is stable. Suitable for early production use. No other breaking changes
 are expected to occur before the final 1.0.0 release.
 
 > 🌐 **Building for the browser?** The WebAssembly engine, TypeScript client, and React/Angular adapters live in
@@ -63,6 +63,16 @@ an optional adapter layer built around the same core engine.
   cursor for O(1) page boundaries, or query a precise insertion-order window with
   `"_seq": { "$gt": 300000, "$lt": 300100 }`.
   See [Pagination Limitations](docs/api-reference.md#pagination-limitations).
+- **Bulk delete by filter** — `POST /delete` accepts a `where` clause (same operators as `/get`) to remove many
+  documents at once. The predicate runs on the raw MsgPack bytes (no full JSON decode per document), so a bulk delete
+  scans about as cheaply as an unsorted `/get`. An optional `count` caps how many are removed (default `100`, max
+  `1000`), and `order` (`"asc"` / `"desc"`) selects which matches go first — sorted by `_seq` **before** the cap, so a
+  limited delete is deterministic. The default is `"asc"` (**oldest first**), ideal for pruning/cleanup.
+- **Count-only delete** — `POST /delete` with just a `count` (no `where`/`keys`/`drop`), e.g.
+  `{ "collection": "events", "count": 20 }`, prunes the oldest (default) or newest `n` documents by `_seq`. It reuses
+  the ordered `_seq` index (like unsorted `/get`) to take the first/last `n` keys directly — no scan, no decode. `order`
+  picks the direction (default `"asc"` = oldest first). For safety, `count` is **required** in this mode — a missing
+  `count` deletes nothing.
 - Cross-collection joins with dot-notation foreign keys
 - **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
 - **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.
@@ -189,7 +199,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc13"
+moltendb-core = "1.0.0-rc14"
 ```
 
 ### Download Pre-built Binaries

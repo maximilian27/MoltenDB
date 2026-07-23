@@ -80,8 +80,13 @@ pub fn delete(
 
 /// Scan a collection with a predicate and delete all matching documents.
 ///
-/// Mirrors `get_filtered` on the read side — uses a parallel scan on native
-/// targets to collect matching keys, then deletes them in a single transaction.
+/// Mirrors `get_filtered` on the read side — the predicate runs on the raw
+/// MsgPack bytes (no full `serde_json::Value` decode per document), so a bulk
+/// delete pays the same cheap scan cost as an unsorted GET. Matches are
+/// collected as `(seq, key)` pairs and ordered by `_seq` before the
+/// `count_limit` is applied, so a limited delete is deterministic:
+///   - `default_order_asc == true`  → oldest documents first (lowest `_seq`),
+///   - `default_order_asc == false` → newest documents first (highest `_seq`).
 /// If `count_limit` is `Some(n)`, at most `n` documents are deleted.
 /// Returns the number of documents deleted.
 pub fn delete_filtered(
@@ -90,15 +95,15 @@ pub fn delete_filtered(
     tx: &tokio::sync::broadcast::Sender<String>,
     seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
     collection: &str,
-    predicate: impl Fn(&Value) -> bool + Sync,
+    predicate: impl Fn(&str, &[u8]) -> bool + Sync,
     count_limit: Option<usize>,
+    default_order_asc: bool,
 ) -> Result<usize, DbError> {
-    #[inline]
-    fn decode(bytes: &[u8]) -> Option<Value> {
-        crate::common::system_field_tokens::msgpack_to_value(bytes)
-    }
+    use crate::common::system_field_tokens::read_msgpack_seq_token;
 
-    let keys: Vec<String> = {
+    // Phase 1: collect (seq, key) pairs for matches only — predicate runs on
+    // raw bytes and we read just the cheap `_seq` token, no full decode.
+    let mut pairs: Vec<(u64, String)> = {
         #[cfg(not(target_arch = "wasm32"))]
         {
             use rayon::prelude::*;
@@ -106,9 +111,8 @@ pub fn delete_filtered(
                 Some(col) => col
                     .par_iter()
                     .filter_map(|entry| {
-                        let v = decode(entry.value())?;
-                        if predicate(&v) {
-                            Some(entry.key().clone())
+                        if predicate(entry.key(), entry.value()) {
+                            Some((read_msgpack_seq_token(entry.value()), entry.key().clone()))
                         } else {
                             None
                         }
@@ -123,9 +127,8 @@ pub fn delete_filtered(
                 Some(col) => col
                     .iter()
                     .filter_map(|entry| {
-                        let v = decode(entry.value())?;
-                        if predicate(&v) {
-                            Some(entry.key().clone())
+                        if predicate(entry.key(), entry.value()) {
+                            Some((read_msgpack_seq_token(entry.value()), entry.key().clone()))
                         } else {
                             None
                         }
@@ -136,7 +139,15 @@ pub fn delete_filtered(
         }
     };
 
-    let mut keys = keys;
+    // Order by _seq so a count-limited delete is deterministic and consistent
+    // with GET: ascending = oldest first (default), descending = newest first.
+    if default_order_asc {
+        pairs.sort_unstable_by_key(|(seq, _)| *seq);
+    } else {
+        pairs.sort_unstable_by_key(|(seq, _)| std::cmp::Reverse(*seq));
+    }
+
+    let mut keys: Vec<String> = pairs.into_iter().map(|(_, k)| k).collect();
     if let Some(limit) = count_limit {
         keys.truncate(limit);
     }
@@ -145,6 +156,74 @@ pub fn delete_filtered(
     if count == 0 {
         return Ok(0);
     }
+    delete(state, storage, tx, seq_index, collection, keys)?;
+    Ok(count)
+}
+
+/// Delete the `n` oldest or newest documents from a collection by `_seq`.
+///
+/// This is the count-only sibling of `delete_filtered` — no predicate is
+/// evaluated. It reuses the ordered `seq_index` `BTreeMap` (the same structure
+/// the unsorted GET path uses) to pick the first/last `n` keys directly, so it
+/// never scans, decodes, or reads the `_seq` token per document (the `_seq` is
+/// the `BTreeMap` key):
+///   - `order_asc == true`  → oldest documents first (lowest `_seq`),
+///   - `order_asc == false` → newest documents first (highest `_seq`).
+/// If the collection has fewer than `n` documents, all of them are removed. If
+/// the `seq_index` has not been built yet, it falls back to a scan + sort by
+/// `_seq` (mirroring `get_filtered`'s fallback). Returns the number deleted.
+pub fn delete_n(
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    storage: &Arc<dyn StorageBackend>,
+    tx: &tokio::sync::broadcast::Sender<String>,
+    seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
+    collection: &str,
+    n: usize,
+    order_asc: bool,
+) -> Result<usize, DbError> {
+    use crate::common::system_field_tokens::read_msgpack_seq_token;
+
+    if n == 0 {
+        return Ok(0);
+    }
+
+    let col = match state.get(collection) {
+        Some(c) => c,
+        None => return Ok(0),
+    };
+
+    // Prefer the ordered `seq_index`: take the first/last `n` keys straight from
+    // the `BTreeMap` — no scan, no decode, no `_seq` token read.
+    let keys: Vec<String> = if let Some(idx) = seq_index.get(collection) {
+        match idx.read() {
+            Ok(map) => {
+                if order_asc {
+                    map.iter().take(n).map(|(_, k)| k.clone()).collect()
+                } else {
+                    map.iter().rev().take(n).map(|(_, k)| k.clone()).collect()
+                }
+            }
+            Err(_) => Vec::new(),
+        }
+    } else {
+        // Fallback: seq_index not yet built — scan and sort by `_seq`.
+        let mut pairs: Vec<(u64, String)> = col
+            .iter()
+            .map(|e| (read_msgpack_seq_token(e.value()), e.key().clone()))
+            .collect();
+        if order_asc {
+            pairs.sort_unstable_by_key(|(seq, _)| *seq);
+        } else {
+            pairs.sort_unstable_by_key(|(seq, _)| std::cmp::Reverse(*seq));
+        }
+        pairs.into_iter().take(n).map(|(_, k)| k).collect()
+    };
+
+    let count = keys.len();
+    if count == 0 {
+        return Ok(0);
+    }
+    drop(col); // release the read guard before calling delete
     delete(state, storage, tx, seq_index, collection, keys)?;
     Ok(count)
 }

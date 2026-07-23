@@ -111,12 +111,17 @@ async fn test_delete_filtered() {
     )
     .unwrap();
 
-    // Delete all guests.
+    // Delete all guests. The predicate now runs on raw MsgPack bytes.
     let deleted = db
         .delete_filtered(
             "items",
-            |doc| doc.get("role").and_then(|v| v.as_str()) == Some("guest"),
+            |_key, bytes| {
+                moltendb_core::common::system_field_tokens::msgpack_to_value(bytes)
+                    .and_then(|v| v.get("role").and_then(|r| r.as_str()).map(|s| s == "guest"))
+                    .unwrap_or(false)
+            },
             None,
+            true,
         )
         .unwrap();
     assert_eq!(deleted, 2);
@@ -140,6 +145,8 @@ async fn test_delete_filtered() {
     assert!(!remaining.contains_key("c"));
 
     // delete_filtered on a non-existent collection returns 0, not an error.
-    let deleted = db.delete_filtered("nonexistent", |_| true, None).unwrap();
+    let deleted = db
+        .delete_filtered("nonexistent", |_, _| true, None, true)
+        .unwrap();
     assert_eq!(deleted, 0);
 }

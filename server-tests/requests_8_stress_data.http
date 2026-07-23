@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MzU4NjM4OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjVjNjU5ZTU4LWUyMDAtNGI3NS1iYWM0LTkxNDkwNmFjMDYzYiJ9.Z6sjYJNVdeMWVmxf1U_GbjDt6pXa8Y4a4l0SGnFSaMo
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NDg2ODA5Miwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImZlMDNkNTViLWFhZmYtNDNmZS1hNDkxLTQ2ZWY1OTFhODQyMCJ9.0My50XFGTn2JP8ZaJ98IB_y-fPOrt5Im6HcKBfmLob8
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document
@@ -32,7 +32,7 @@ Authorization: Bearer {{token}}
   "keys": "stress_000001"
 }
 
-### §1b. Fetch a mid-range document
+### §1b. Fetch all
 POST http://localhost:1538/get
 Content-Type: application/json
 Authorization: Bearer {{token}}
@@ -278,7 +278,7 @@ Authorization: Bearer {{token}}
   ],
   "where": {
     "model": {
-      "$ct": "Model-0001"
+      "$ct": "Model-999"
     }
   }
 }
@@ -815,7 +815,67 @@ Authorization: Bearer {{token}}
   ]
 }
 
-### §8e. Verify deletions — these should return empty results
+### §8e. Bulk delete with count — remove at most 233 gaming laptops (oldest first)
+### `order` decides which matches go first when `count` caps the delete. Matches are
+### sorted by `_seq` before the cap, so the delete is deterministic. Default is "asc"
+### (oldest first, lowest `_seq`); pass "desc" to remove the newest first.
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "where": {
+    "tags": {
+      "$contains": "gaming"
+    }
+  },
+  "count": 233,
+  "order": "asc"
+}
+
+### §8e-2. Bulk delete with count — remove the 233 NEWEST gaming laptops
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "where": {
+    "tags": {
+      "$contains": "gaming"
+    }
+  },
+  "count": 233,
+  "order": "desc"
+}
+
+### §8e-3. Count-only delete — remove the 500 OLDEST documents (no `where`)
+### With no `keys`/`where`/`drop`, only a `count`, MoltenDB removes the oldest (default)
+### or newest `n` documents by `_seq`. It reads the ordered `_seq` index directly (like an
+### unsorted GET) — no scan, no predicate, no decode — so it's the cheapest prune primitive.
+### `count` is REQUIRED here (no default) so a tiny payload can never silently wipe data.
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "count": 500
+}
+
+### §8e-4. Count-only delete — remove the 500 NEWEST documents (order=desc)
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "count": 500,
+  "order": "desc"
+}
+
+### §8f. Verify deletions — these should return empty results
 POST http://localhost:1538/get
 Content-Type: application/json
 Authorization: Bearer {{token}}

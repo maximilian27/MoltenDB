@@ -21,7 +21,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4Mjg0MzUxMSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjIxYjNmNGUwLTFhOGQtNDMwMy04ODM4LTU5Y2ZkN2E3ODI3OCJ9.p4z1X0EJZY34O7A7wQUa-V3ZuEOr_Nql9wVD9DwR49Y
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NDg2ODA5Miwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImZlMDNkNTViLWFhZmYtNDNmZS1hNDkxLTQ2ZWY1OTFhODQyMCJ9.0My50XFGTn2JP8ZaJ98IB_y-fPOrt5Im6HcKBfmLob8
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### §1 and §2 must be run in order. Books reference authors via `author_id`.

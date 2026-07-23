@@ -100,15 +100,27 @@ impl Db {
 
         // Build the seq_index from the replayed state so ordered queries work
         // immediately after startup without waiting for the first insert.
+        // Also seed seq_counters to (max_seq + 1) so new inserts after a restart
+        // don't receive seq values that collide with or precede existing documents.
         for col_ref in state.iter() {
             let col_name = col_ref.key().clone();
             let col_map = col_ref.value();
             let mut btree: BTreeMap<u64, String> = BTreeMap::new();
+            let mut max_seq: u64 = 0;
             for entry in col_map.iter() {
                 let seq = crate::common::system_field_tokens::read_msgpack_seq_token(entry.value());
                 btree.insert(seq, entry.key().clone());
+                if seq > max_seq {
+                    max_seq = seq;
+                }
             }
-            seq_index.insert(col_name, Arc::new(RwLock::new(btree)));
+            seq_index.insert(col_name.clone(), Arc::new(RwLock::new(btree)));
+            // Start the counter just above the highest observed seq so that
+            // the next insert always appends rather than overwriting an old slot.
+            seq_counters.insert(
+                col_name.to_string(),
+                std::sync::atomic::AtomicU64::new(max_seq + 1),
+            );
         }
 
         Ok(Self {

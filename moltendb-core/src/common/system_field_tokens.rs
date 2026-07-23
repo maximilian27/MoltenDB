@@ -723,7 +723,14 @@ pub fn log_entry_from_msgpack(bytes: &[u8]) -> Option<LogEntry> {
         match field_name.as_str() {
             "cmd" => {
                 // cmd may be stored as a negative FixInt token or a plain string.
-                if pos < bytes.len() && (bytes[pos] as i8) < 0 {
+                //
+                // A MsgPack *negative FixInt* occupies the byte range 0xe0..=0xff
+                // (-32..=-1). All command tokens live in that range. We must NOT
+                // use `(byte as i8) < 0` here: a MsgPack *fixstr* header is
+                // 0xa0..=0xbf, which is also negative as an `i8`, so that test
+                // would misread the first byte of a plain-string command (e.g.
+                // "TTL_EXPIRY") as a token and corrupt the rest of the entry.
+                if pos < bytes.len() && bytes[pos] >= 0xe0 {
                     let token = bytes[pos] as i8;
                     pos += 1;
                     cmd = match token {
@@ -743,7 +750,14 @@ pub fn log_entry_from_msgpack(bytes: &[u8]) -> Option<LogEntry> {
                     if let Some(ikey) = LogCommand::from_ikey(&cmd) {
                         cmd = ikey.to_string();
                     } else {
-                        cmd = LogCommand::to_ikey(&cmd).to_string();
+                        // `to_ikey` returns "" for commands it doesn't recognise.
+                        // Only replace `cmd` when it maps to a known IKEY token —
+                        // otherwise preserve the original string so unknown commands
+                        // (e.g. "TTL_EXPIRY") still match their replay handlers.
+                        let ikey = LogCommand::to_ikey(&cmd);
+                        if !ikey.is_empty() {
+                            cmd = ikey.to_string();
+                        }
                     }
                 }
             }
