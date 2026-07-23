@@ -63,6 +63,11 @@ an optional adapter layer built around the same core engine.
   cursor for O(1) page boundaries, or query a precise insertion-order window with
   `"_seq": { "$gt": 300000, "$lt": 300100 }`.
   See [Pagination Limitations](docs/api-reference.md#pagination-limitations).
+- **Bulk delete by filter** — `POST /delete` accepts a `where` clause (same operators as `/get`) to remove many
+  documents at once. The predicate runs on the raw MsgPack bytes (no full JSON decode per document), so a bulk delete
+  scans about as cheaply as an unsorted `/get`. An optional `count` caps how many are removed (default `100`, max
+  `1000`), and `order` (`"asc"` / `"desc"`) selects which matches go first — sorted by `_seq` **before** the cap, so a
+  limited delete is deterministic. The default is `"asc"` (**oldest first**), ideal for pruning/cleanup.
 - Cross-collection joins with dot-notation foreign keys
 - **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
 - **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.

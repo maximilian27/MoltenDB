@@ -175,6 +175,23 @@ raw MsgPack bytes during the parallel scan phase — no `serde_json::Value` is a
 deserialization (`msgpack_to_value`) is deferred to the final `limit` winners only, eliminating millions of heap
 allocations for large collections.
 
+#### Bulk Delete Path (`delete_filtered`)
+
+`POST /delete` with a `where` clause mirrors the **`No sort, with where` read path**. The predicate runs directly on the
+raw MsgPack bytes (`query::evaluate_where_msgpack`) during a Rayon parallel scan — no `serde_json::Value` is decoded per
+document, only the cheap `_seq` token is read for matches. This makes a bulk delete about as cheap to scan as an
+equivalent unsorted `/get`, instead of paying a full `serde_json::Value` allocation for every document in the collection.
+
+Matches are collected as `(seq, key)` pairs and **sorted by `_seq` before the `count` cap is applied**, so a
+count-limited delete removes a deterministic subset rather than an arbitrary `DashMap`-iteration slice. The request's
+`order` property selects the direction:
+
+- `"asc"` (**default**) → oldest documents first (lowest `_seq`),
+- `"desc"` → newest documents first (highest `_seq`).
+
+Note the default here (`"asc"`, oldest-first) is the **opposite** of the unsorted `/get` default (`"desc"`,
+newest-first): oldest-first is the natural default for pruning and retention workloads.
+
 ---
 
 ### Pagination Limitations

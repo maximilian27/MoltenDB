@@ -815,7 +815,10 @@ Authorization: Bearer {{token}}
   ]
 }
 
-### §8e. Bulk delete with count — remove at most 200 gaming laptops
+### §8e. Bulk delete with count — remove at most 233 gaming laptops (oldest first)
+### `order` decides which matches go first when `count` caps the delete. Matches are
+### sorted by `_seq` before the cap, so the delete is deterministic. Default is "asc"
+### (oldest first, lowest `_seq`); pass "desc" to remove the newest first.
 POST http://localhost:1538/delete
 Content-Type: application/json
 Authorization: Bearer {{token}}
@@ -827,7 +830,24 @@ Authorization: Bearer {{token}}
       "$contains": "gaming"
     }
   },
-  "count": 233
+  "count": 233,
+  "order": "asc"
+}
+
+### §8e-2. Bulk delete with count — remove the 233 NEWEST gaming laptops
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "where": {
+    "tags": {
+      "$contains": "gaming"
+    }
+  },
+  "count": 233,
+  "order": "desc"
 }
 
 ### §8f. Verify deletions — these should return empty results

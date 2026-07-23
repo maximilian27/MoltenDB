@@ -285,6 +285,26 @@ let (status, body) = handlers::process_delete::process_delete( & db, & payload, 
 All filter operators are supported. An optional `count` property limits how many documents are deleted (**default `100`
 **, max `1000`).
 
+Like the read path, the predicate is evaluated directly on the **raw MsgPack bytes** — `delete_filtered` never decodes a
+full `serde_json::Value` per document during the scan, only the cheap `_seq` token for matches. A bulk delete therefore
+scans about as cheaply as an unsorted `get_filtered`.
+
+When `count` caps the delete, matches are **sorted by `_seq` before the cap is applied**, so a limited delete removes a
+deterministic subset. An optional `order` property picks the direction — `"asc"` (**default**) removes the oldest
+documents first (lowest `_seq`), `"desc"` the newest first:
+
+```rust
+let payload = json!({
+    "collection": "events",
+    "where": { "level": { "$eq": "debug" } },
+    "count": 500,
+    "order": "asc" // oldest first (default) — ideal for pruning/retention
+});
+```
+
+At the engine level this maps to `Db::delete_filtered(collection, predicate, count_limit, default_order_asc)`, whose
+`predicate` is `Fn(&str, &[u8])` (key + raw bytes) and whose `default_order_asc` flag selects the `_seq` direction.
+
 ---
 
 ## Collection Stats

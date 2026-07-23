@@ -715,6 +715,35 @@ The `where` clause supports every filter operator available in `/get` — `$eq`,
 }
 ```
 
+**Ordering (`order`).** When `count` limits a bulk delete to fewer documents than actually match the filter, MoltenDB
+decides *which* matches to remove by ordering them on the system `_seq` field (the monotonic insertion sequence). An
+optional `order` property controls the direction:
+
+| `order`         | Deletes first…                       |
+|:----------------|:-------------------------------------|
+| `"asc"` (default) | **oldest** documents (lowest `_seq`) |
+| `"desc"`          | **newest** documents (highest `_seq`) |
+
+```json
+// Remove the 50 oldest out-of-stock laptops (default order)
+{ "collection": "laptops", "where": { "in_stock": { "$eq": false } }, "count": 50 }
+```
+
+```json
+// Remove the 50 newest out-of-stock laptops
+{ "collection": "laptops", "where": { "in_stock": { "$eq": false } }, "count": 50, "order": "desc" }
+```
+
+Because matches are sorted by `_seq` **before** the `count` cap is applied, a count-limited delete is deterministic —
+the same request always removes the same well-defined subset (never an arbitrary slice).
+
+> **Note:** The default delete order is `"asc"` (oldest first), which differs from `/get`, where the default unsorted
+> order is `"desc"` (newest first). Oldest-first is the natural default for pruning/cleanup workloads.
+
+**Performance.** Bulk `where` deletes use the same fast scan path as `/get`: the filter is evaluated directly on the
+raw MsgPack bytes and only the cheap `_seq` token is read for matches — documents are **not** fully deserialized to
+JSON during the scan. This keeps a bulk delete roughly as cheap to scan as an equivalent unsorted `/get`.
+
 ### Paginated collection fetch
 
 ```http

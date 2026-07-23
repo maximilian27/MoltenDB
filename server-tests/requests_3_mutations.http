@@ -472,6 +472,11 @@ Authorization: Bearer {{token}}
 ### Delete all documents matching a `where` filter in a single request.
 ### Response: { "status": "ok", "deleted": <count> }
 ### The `count` param (optional) limits how many matching documents are deleted.
+### The `order` param (optional) decides which matches go first when `count` caps
+### the delete. Matches are sorted by `_seq` before the cap, so a limited delete is
+### deterministic. Default "asc" removes the OLDEST first (lowest `_seq`); "desc"
+### removes the NEWEST first. The predicate runs on raw MsgPack bytes, so a bulk
+### delete scans about as cheaply as an unsorted GET.
 
 ### §60. Bulk delete — remove all out-of-stock laptops
 POST http://localhost:1538/delete
@@ -524,7 +529,7 @@ Authorization: Bearer {{token}}
   }
 }
 
-### §63. Bulk delete with count — remove at most 2 gaming laptops
+### §63. Bulk delete with count — remove at most 2 gaming laptops (oldest first)
 ### Useful for batched cleanup jobs that process large collections in chunks.
 POST http://localhost:1538/delete
 Content-Type: application/json
@@ -537,7 +542,24 @@ Authorization: Bearer {{token}}
       "$contains": "gaming"
     }
   },
-  "count": 2
+  "count": 2,
+  "order": "asc"
+}
+
+### §63b. Bulk delete with count + order=desc — remove the 2 NEWEST gaming laptops
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "where": {
+    "tags": {
+      "$contains": "gaming"
+    }
+  },
+  "count": 2,
+  "order": "desc"
 }
 
 ### §64. Bulk delete — drop all documents in a collection via where: {}
