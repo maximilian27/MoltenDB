@@ -192,6 +192,19 @@ count-limited delete removes a deterministic subset rather than an arbitrary `Da
 Note the default here (`"asc"`, oldest-first) is the **opposite** of the unsorted `/get` default (`"desc"`,
 newest-first): oldest-first is the natural default for pruning and retention workloads.
 
+#### Count-only Delete Path (`delete_n`)
+
+`POST /delete` with only a `count` (no `keys`/`where`/`drop`) mirrors the **`No sort, no where` read path**. Instead of
+scanning the collection, it reads the ordered `seq_index` `BTreeMap` directly — `map.iter()` (asc) or `map.iter().rev()`
+(desc), `take(n)` — to pick the first/last `n` keys. Because the `_seq` is the `BTreeMap` key, there is no scan, no
+`serde_json::Value` decode, and not even a `_seq` token read; the removals then go through the shared `delete(...)`
+transaction. A scan-and-sort fallback is used only when the index has not been built yet (mirroring `get_filtered`).
+
+This makes it strictly cheaper than routing an empty `where` through `delete_filtered` (which would `par_iter` the whole
+collection and sort all matches just to keep `n`). It honours the same `order` directions and the same `asc` default as
+the `where` mode; if `n` exceeds the collection size, all documents are removed. As a safety guard, the handler
+**requires** an explicit `count` for this mode — it never falls back to the default `100`.
+
 ---
 
 ### Pagination Limitations

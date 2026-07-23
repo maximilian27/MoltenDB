@@ -822,6 +822,71 @@ fn test_bulk_delete_desc_order_removes_newest() {
     assert_eq!(arr(&remaining).len(), 2);
 }
 
+#[test]
+fn test_count_only_delete_default_removes_oldest() {
+    println!("[TEST] test_count_only_delete_default_removes_oldest");
+    let db = open_db();
+    seed_ordered(&db);
+    // No `where`/`keys`/`drop`, just an explicit `count`. Default order is
+    // oldest-first (lowest _seq), so count=2 removes o1 and o2.
+    let r = delete(&db, json!({ "collection": "ordered", "count": 2 }));
+    assert_eq!(r["status"], "ok");
+    assert_eq!(r["deleted"], 2);
+    let gone = get(&db, json!({ "collection": "ordered", "keys": ["o1", "o2"] }));
+    assert!(gone.get("error").is_some());
+    let remaining = get(&db, json!({ "collection": "ordered", "keys": ["o3", "o4"] }));
+    assert_eq!(arr(&remaining).len(), 2);
+}
+
+#[test]
+fn test_count_only_delete_desc_removes_newest() {
+    println!("[TEST] test_count_only_delete_desc_removes_newest");
+    let db = open_db();
+    seed_ordered(&db);
+    // order="desc" → newest-first (highest _seq). count=2 removes o4 and o3.
+    let r = delete(
+        &db,
+        json!({ "collection": "ordered", "count": 2, "order": "desc" }),
+    );
+    assert_eq!(r["status"], "ok");
+    assert_eq!(r["deleted"], 2);
+    let gone = get(&db, json!({ "collection": "ordered", "keys": ["o3", "o4"] }));
+    assert!(gone.get("error").is_some());
+    let remaining = get(&db, json!({ "collection": "ordered", "keys": ["o1", "o2"] }));
+    assert_eq!(arr(&remaining).len(), 2);
+}
+
+#[test]
+fn test_count_only_delete_more_than_size_removes_all() {
+    println!("[TEST] test_count_only_delete_more_than_size_removes_all");
+    let db = open_db();
+    seed_ordered(&db); // 4 docs
+    // count exceeds collection size → all documents are removed, deleted == 4.
+    let r = delete(&db, json!({ "collection": "ordered", "count": 100 }));
+    assert_eq!(r["status"], "ok");
+    assert_eq!(r["deleted"], 4);
+    let remaining = get(
+        &db,
+        json!({ "collection": "ordered", "keys": ["o1", "o2", "o3", "o4"] }),
+    );
+    assert!(remaining.get("error").is_some());
+}
+
+#[test]
+fn test_count_only_delete_requires_explicit_count() {
+    println!("[TEST] test_count_only_delete_requires_explicit_count");
+    let db = open_db();
+    seed_ordered(&db);
+    // No `keys`/`where`/`drop`/`count` → MissingFields, nothing is deleted.
+    let r = delete(&db, json!({ "collection": "ordered" }));
+    assert!(r.get("error").is_some());
+    let remaining = get(
+        &db,
+        json!({ "collection": "ordered", "keys": ["o1", "o2", "o3", "o4"] }),
+    );
+    assert_eq!(arr(&remaining).len(), 4);
+}
+
 // ─── §45-47: Versioning ───────────────────────────────────────────────────────
 
 #[test]

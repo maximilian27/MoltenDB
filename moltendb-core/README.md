@@ -307,6 +307,29 @@ At the engine level this maps to `Db::delete_filtered(collection, predicate, cou
 
 ---
 
+## Count-only delete (`delete_n`)
+
+Omitting `keys`, `where`, and `drop` and passing only a `count` prunes the oldest (default) or newest `n` documents by
+`_seq`. This is the count-only sibling of `delete_filtered`: it reuses the ordered `seq_index` `BTreeMap` (the same
+structure the unsorted `get_filtered` uses) to take the first/last `n` keys directly — no collection scan, no
+`serde_json::Value` decode, and no `_seq` token read (the `_seq` *is* the `BTreeMap` key). A scan-and-sort fallback runs
+only when the index has not been built yet.
+
+```rust
+let payload = json!({
+    "collection": "events",
+    "count": 20,
+    "order": "asc" // oldest first (default); "desc" removes the newest
+});
+// body → { "status": "ok", "deleted": 20 }
+```
+
+At the engine level this maps to `Db::delete_n(collection, n, order_asc)` / `operations::delete_n`. If `n` exceeds the
+collection size, all documents are removed. **`count` is required** for this mode — unlike the `where` path it never
+falls back to the default `100`, so a request with no `keys`/`where`/`drop`/`count` deletes nothing (returns `400`).
+
+---
+
 ## Collection Stats
 
 `process_stats` returns document counts per collection. TTL-aware: expired collections report `count: 0` and

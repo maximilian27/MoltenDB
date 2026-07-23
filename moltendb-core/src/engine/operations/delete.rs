@@ -160,6 +160,74 @@ pub fn delete_filtered(
     Ok(count)
 }
 
+/// Delete the `n` oldest or newest documents from a collection by `_seq`.
+///
+/// This is the count-only sibling of `delete_filtered` — no predicate is
+/// evaluated. It reuses the ordered `seq_index` `BTreeMap` (the same structure
+/// the unsorted GET path uses) to pick the first/last `n` keys directly, so it
+/// never scans, decodes, or reads the `_seq` token per document (the `_seq` is
+/// the `BTreeMap` key):
+///   - `order_asc == true`  → oldest documents first (lowest `_seq`),
+///   - `order_asc == false` → newest documents first (highest `_seq`).
+/// If the collection has fewer than `n` documents, all of them are removed. If
+/// the `seq_index` has not been built yet, it falls back to a scan + sort by
+/// `_seq` (mirroring `get_filtered`'s fallback). Returns the number deleted.
+pub fn delete_n(
+    state: &DashMap<Arc<str>, DashMap<String, Box<[u8]>>>,
+    storage: &Arc<dyn StorageBackend>,
+    tx: &tokio::sync::broadcast::Sender<String>,
+    seq_index: &DashMap<Arc<str>, Arc<RwLock<BTreeMap<u64, String>>>>,
+    collection: &str,
+    n: usize,
+    order_asc: bool,
+) -> Result<usize, DbError> {
+    use crate::common::system_field_tokens::read_msgpack_seq_token;
+
+    if n == 0 {
+        return Ok(0);
+    }
+
+    let col = match state.get(collection) {
+        Some(c) => c,
+        None => return Ok(0),
+    };
+
+    // Prefer the ordered `seq_index`: take the first/last `n` keys straight from
+    // the `BTreeMap` — no scan, no decode, no `_seq` token read.
+    let keys: Vec<String> = if let Some(idx) = seq_index.get(collection) {
+        match idx.read() {
+            Ok(map) => {
+                if order_asc {
+                    map.iter().take(n).map(|(_, k)| k.clone()).collect()
+                } else {
+                    map.iter().rev().take(n).map(|(_, k)| k.clone()).collect()
+                }
+            }
+            Err(_) => Vec::new(),
+        }
+    } else {
+        // Fallback: seq_index not yet built — scan and sort by `_seq`.
+        let mut pairs: Vec<(u64, String)> = col
+            .iter()
+            .map(|e| (read_msgpack_seq_token(e.value()), e.key().clone()))
+            .collect();
+        if order_asc {
+            pairs.sort_unstable_by_key(|(seq, _)| *seq);
+        } else {
+            pairs.sort_unstable_by_key(|(seq, _)| std::cmp::Reverse(*seq));
+        }
+        pairs.into_iter().take(n).map(|(_, k)| k).collect()
+    };
+
+    let count = keys.len();
+    if count == 0 {
+        return Ok(0);
+    }
+    drop(col); // release the read guard before calling delete
+    delete(state, storage, tx, seq_index, collection, keys)?;
+    Ok(count)
+}
+
 /// Evict the `n` oldest documents from a collection by `_seq` (lowest values first).
 ///
 /// Used by the `maxSize` cap — after an insert batch pushes the collection over

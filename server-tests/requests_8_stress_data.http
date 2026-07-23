@@ -850,6 +850,31 @@ Authorization: Bearer {{token}}
   "order": "desc"
 }
 
+### §8e-3. Count-only delete — remove the 500 OLDEST documents (no `where`)
+### With no `keys`/`where`/`drop`, only a `count`, MoltenDB removes the oldest (default)
+### or newest `n` documents by `_seq`. It reads the ordered `_seq` index directly (like an
+### unsorted GET) — no scan, no predicate, no decode — so it's the cheapest prune primitive.
+### `count` is REQUIRED here (no default) so a tiny payload can never silently wipe data.
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "count": 500
+}
+
+### §8e-4. Count-only delete — remove the 500 NEWEST documents (order=desc)
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "count": 500,
+  "order": "desc"
+}
+
 ### §8f. Verify deletions — these should return empty results
 POST http://localhost:1538/get
 Content-Type: application/json

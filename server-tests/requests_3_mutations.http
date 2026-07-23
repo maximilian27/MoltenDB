@@ -562,6 +562,30 @@ Authorization: Bearer {{token}}
   "order": "desc"
 }
 
+### §63c. Count-only delete — remove the 2 OLDEST documents (no `where`)
+### With no `keys`/`where`/`drop`, only a `count`, MoltenDB deletes the oldest (default)
+### or newest `n` documents by `_seq`. It reads the ordered `_seq` index directly (like an
+### unsorted GET) — no scan, no decode. `count` is REQUIRED here (no default) for safety.
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "count": 2
+}
+
+### §63d. Count-only delete — remove the 2 NEWEST documents (order=desc)
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "count": 2,
+  "order": "desc"
+}
+
 ### §64. Bulk delete — drop all documents in a collection via where: {}
 ### An empty where clause matches every document — equivalent to clearing the collection
 ### without dropping it (the collection itself remains, just empty).

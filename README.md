@@ -68,6 +68,11 @@ an optional adapter layer built around the same core engine.
   scans about as cheaply as an unsorted `/get`. An optional `count` caps how many are removed (default `100`, max
   `1000`), and `order` (`"asc"` / `"desc"`) selects which matches go first — sorted by `_seq` **before** the cap, so a
   limited delete is deterministic. The default is `"asc"` (**oldest first**), ideal for pruning/cleanup.
+- **Count-only delete** — `POST /delete` with just a `count` (no `where`/`keys`/`drop`), e.g.
+  `{ "collection": "events", "count": 20 }`, prunes the oldest (default) or newest `n` documents by `_seq`. It reuses
+  the ordered `_seq` index (like unsorted `/get`) to take the first/last `n` keys directly — no scan, no decode. `order`
+  picks the direction (default `"asc"` = oldest first). For safety, `count` is **required** in this mode — a missing
+  `count` deletes nothing.
 - Cross-collection joins with dot-notation foreign keys
 - **Snapshot Exports:** Atomic, non-blocking binary snapshots for fast recovery and off-site backups.
 - **JSON Schema Validation:** High-speed consistency enforcement on a per-collection basis.

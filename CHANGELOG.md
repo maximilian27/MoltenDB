@@ -17,6 +17,15 @@
   newest first. `Db::delete_filtered` / `operations::delete_filtered` gained a `default_order_asc` parameter and their
   predicate signature changed to `Fn(&str, &[u8])` to match the GET fast path.
 
+* **Count-only bulk delete (`delete_n`)** — `POST /delete` now accepts a count-only mode with no `keys`/`where`/`drop`,
+  e.g. `{ "collection": "events", "count": 20 }`, to remove the oldest (default) or newest `n` documents by `_seq`.
+  Like the unsorted GET path, it reuses the ordered `seq_index` `BTreeMap` to take the first/last `n` keys directly — no
+  collection scan, no per-document decode, and no `_seq` token read (the `_seq` is the `BTreeMap` key), with a
+  scan-and-sort fallback when the index is not yet built. `order` selects direction (`"asc"` default = oldest first,
+  `"desc"` = newest first) and `MAX_DELETE_COUNT` (1000) is enforced. As a safety guard, `count` is **required** for
+  this mode (it does **not** fall back to `DEFAULT_DELETE_COUNT`), so a tiny payload can never silently destroy a
+  default-sized batch. Exposed as `Db::delete_n(collection, n, order_asc)` / `operations::delete_n`.
+
 ### Bug Fixes
 
 * **Wasm persist ttl after tab reload**

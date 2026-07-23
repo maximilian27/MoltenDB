@@ -346,6 +346,34 @@ impl Db {
         )
     }
 
+    /// Delete the `n` oldest or newest documents from a collection by `_seq`.
+    /// Count-only sibling of `delete_filtered` (no predicate) — reuses the ordered
+    /// `seq_index` `BTreeMap` to pick the first/last `n` keys directly, so it never
+    /// scans/decodes per document. `order_asc == true` removes the oldest first
+    /// (lowest `_seq`), `false` the newest first. If the collection has fewer than
+    /// `n` documents, all are removed. Returns the number of documents deleted.
+    pub fn delete_n(
+        &self,
+        collection: &str,
+        n: usize,
+        order_asc: bool,
+    ) -> Result<usize, DbError> {
+        if self.io_fault.load(Ordering::Relaxed) {
+            return Err(DbError::StorageFault(
+                "Background disk I/O failed. System is in read-only mode.".into(),
+            ));
+        }
+        operations::delete_n(
+            &self.state,
+            &self.storage,
+            &self.tx,
+            &self.seq_index,
+            collection,
+            n,
+            order_asc,
+        )
+    }
+
     /// Delete one or more documents by key. Pass a single key to delete one document.
     pub fn delete(&self, collection: &str, keys: Vec<String>) -> Result<(), DbError> {
         if self.io_fault.load(Ordering::Relaxed) {
