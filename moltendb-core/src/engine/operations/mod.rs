@@ -29,7 +29,7 @@ pub mod types;
 mod update;
 
 pub use compact::compact;
-pub use delete::{delete, delete_collection, delete_filtered, evict_oldest};
+pub use delete::{delete, delete_collection, delete_filtered, delete_n, evict_oldest};
 pub use get::{get, get_filtered, scan_top_n, scan_top_n_raw};
 #[cfg(not(target_arch = "wasm32"))]
 pub use recover::recover_to;

@@ -71,7 +71,7 @@ when the crate is used as a dependency of `moltendb-wasm`.
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc13"
+moltendb-core = "1.0.0-rc14"
 ```
 
 ### Minimal example
@@ -284,6 +284,49 @@ let (status, body) = handlers::process_delete::process_delete( & db, & payload, 
 
 All filter operators are supported. An optional `count` property limits how many documents are deleted (**default `100`
 **, max `1000`).
+
+Like the read path, the predicate is evaluated directly on the **raw MsgPack bytes** — `delete_filtered` never decodes a
+full `serde_json::Value` per document during the scan, only the cheap `_seq` token for matches. A bulk delete therefore
+scans about as cheaply as an unsorted `get_filtered`.
+
+When `count` caps the delete, matches are **sorted by `_seq` before the cap is applied**, so a limited delete removes a
+deterministic subset. An optional `order` property picks the direction — `"asc"` (**default**) removes the oldest
+documents first (lowest `_seq`), `"desc"` the newest first:
+
+```rust
+let payload = json!({
+    "collection": "events",
+    "where": { "level": { "$eq": "debug" } },
+    "count": 500,
+    "order": "asc" // oldest first (default) — ideal for pruning/retention
+});
+```
+
+At the engine level this maps to `Db::delete_filtered(collection, predicate, count_limit, default_order_asc)`, whose
+`predicate` is `Fn(&str, &[u8])` (key + raw bytes) and whose `default_order_asc` flag selects the `_seq` direction.
+
+---
+
+## Count-only delete (`delete_n`)
+
+Omitting `keys`, `where`, and `drop` and passing only a `count` prunes the oldest (default) or newest `n` documents by
+`_seq`. This is the count-only sibling of `delete_filtered`: it reuses the ordered `seq_index` `BTreeMap` (the same
+structure the unsorted `get_filtered` uses) to take the first/last `n` keys directly — no collection scan, no
+`serde_json::Value` decode, and no `_seq` token read (the `_seq` *is* the `BTreeMap` key). A scan-and-sort fallback runs
+only when the index has not been built yet.
+
+```rust
+let payload = json!({
+    "collection": "events",
+    "count": 20,
+    "order": "asc" // oldest first (default); "desc" removes the newest
+});
+// body → { "status": "ok", "deleted": 20 }
+```
+
+At the engine level this maps to `Db::delete_n(collection, n, order_asc)` / `operations::delete_n`. If `n` exceeds the
+collection size, all documents are removed. **`count` is required** for this mode — unlike the `where` path it never
+falls back to the default `100`, so a request with no `keys`/`where`/`drop`/`count` deletes nothing (returns `400`).
 
 ---
 

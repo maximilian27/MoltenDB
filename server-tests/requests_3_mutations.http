@@ -11,7 +11,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4MzA3NDg3OSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjRiMDI4ZGQ5LTVlYzMtNDMzZi05OGQwLThjNzBiMGNiOTZlMyJ9.i_MQBec6BybAVvR0GI0tD7UQ5hCejPkLnSUYKIDyiAU
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NDg2ODA5Miwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImZlMDNkNTViLWFhZmYtNDNmZS1hNDkxLTQ2ZWY1OTFhODQyMCJ9.0My50XFGTn2JP8ZaJ98IB_y-fPOrt5Im6HcKBfmLob8
 
 ### ─── STEP 2: Seed Data ───────────────────────────────────────────────────────
 ### Run §1, §2, §3 in order to populate the three collections used by all
@@ -472,6 +472,11 @@ Authorization: Bearer {{token}}
 ### Delete all documents matching a `where` filter in a single request.
 ### Response: { "status": "ok", "deleted": <count> }
 ### The `count` param (optional) limits how many matching documents are deleted.
+### The `order` param (optional) decides which matches go first when `count` caps
+### the delete. Matches are sorted by `_seq` before the cap, so a limited delete is
+### deterministic. Default "asc" removes the OLDEST first (lowest `_seq`); "desc"
+### removes the NEWEST first. The predicate runs on raw MsgPack bytes, so a bulk
+### delete scans about as cheaply as an unsorted GET.
 
 ### §60. Bulk delete — remove all out-of-stock laptops
 POST http://localhost:1538/delete
@@ -524,7 +529,7 @@ Authorization: Bearer {{token}}
   }
 }
 
-### §63. Bulk delete with count — remove at most 2 gaming laptops
+### §63. Bulk delete with count — remove at most 2 gaming laptops (oldest first)
 ### Useful for batched cleanup jobs that process large collections in chunks.
 POST http://localhost:1538/delete
 Content-Type: application/json
@@ -537,7 +542,48 @@ Authorization: Bearer {{token}}
       "$contains": "gaming"
     }
   },
+  "count": 2,
+  "order": "asc"
+}
+
+### §63b. Bulk delete with count + order=desc — remove the 2 NEWEST gaming laptops
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "where": {
+    "tags": {
+      "$contains": "gaming"
+    }
+  },
+  "count": 2,
+  "order": "desc"
+}
+
+### §63c. Count-only delete — remove the 2 OLDEST documents (no `where`)
+### With no `keys`/`where`/`drop`, only a `count`, MoltenDB deletes the oldest (default)
+### or newest `n` documents by `_seq`. It reads the ordered `_seq` index directly (like an
+### unsorted GET) — no scan, no decode. `count` is REQUIRED here (no default) for safety.
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
   "count": 2
+}
+
+### §63d. Count-only delete — remove the 2 NEWEST documents (order=desc)
+POST http://localhost:1538/delete
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "laptops",
+  "count": 2,
+  "order": "desc"
 }
 
 ### §64. Bulk delete — drop all documents in a collection via where: {}

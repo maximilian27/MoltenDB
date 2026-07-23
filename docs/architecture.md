@@ -46,7 +46,7 @@ tree.
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "1.0.0-rc13"
+moltendb-core = "1.0.0-rc14"
 ```
 
 ```rust
@@ -174,6 +174,36 @@ Sorted queries use lazy byte extraction (`find_msgpack_value` + `read_msgpack_nu
 raw MsgPack bytes during the parallel scan phase — no `serde_json::Value` is allocated per document. Full
 deserialization (`msgpack_to_value`) is deferred to the final `limit` winners only, eliminating millions of heap
 allocations for large collections.
+
+#### Bulk Delete Path (`delete_filtered`)
+
+`POST /delete` with a `where` clause mirrors the **`No sort, with where` read path**. The predicate runs directly on the
+raw MsgPack bytes (`query::evaluate_where_msgpack`) during a Rayon parallel scan — no `serde_json::Value` is decoded per
+document, only the cheap `_seq` token is read for matches. This makes a bulk delete about as cheap to scan as an
+equivalent unsorted `/get`, instead of paying a full `serde_json::Value` allocation for every document in the collection.
+
+Matches are collected as `(seq, key)` pairs and **sorted by `_seq` before the `count` cap is applied**, so a
+count-limited delete removes a deterministic subset rather than an arbitrary `DashMap`-iteration slice. The request's
+`order` property selects the direction:
+
+- `"asc"` (**default**) → oldest documents first (lowest `_seq`),
+- `"desc"` → newest documents first (highest `_seq`).
+
+Note the default here (`"asc"`, oldest-first) is the **opposite** of the unsorted `/get` default (`"desc"`,
+newest-first): oldest-first is the natural default for pruning and retention workloads.
+
+#### Count-only Delete Path (`delete_n`)
+
+`POST /delete` with only a `count` (no `keys`/`where`/`drop`) mirrors the **`No sort, no where` read path**. Instead of
+scanning the collection, it reads the ordered `seq_index` `BTreeMap` directly — `map.iter()` (asc) or `map.iter().rev()`
+(desc), `take(n)` — to pick the first/last `n` keys. Because the `_seq` is the `BTreeMap` key, there is no scan, no
+`serde_json::Value` decode, and not even a `_seq` token read; the removals then go through the shared `delete(...)`
+transaction. A scan-and-sort fallback is used only when the index has not been built yet (mirroring `get_filtered`).
+
+This makes it strictly cheaper than routing an empty `where` through `delete_filtered` (which would `par_iter` the whole
+collection and sort all matches just to keep `n`). It honours the same `order` directions and the same `asc` default as
+the `where` mode; if `n` exceeds the collection size, all documents are removed. As a safety guard, the handler
+**requires** an explicit `count` for this mode — it never falls back to the default `100`.
 
 ---
 

@@ -10,11 +10,21 @@ use serde_json::Value;
 
 /// Handle a DELETE request.
 ///
-/// Four modes:
+/// Five modes:
 ///   - Single key:    { "collection": "users", "keys": "u1" }
 ///   - Batch keys:    { "collection": "users", "keys": ["u1", "u2"] }
 ///   - WHERE filter:  { "collection": "users", "where": { "role": { "$eq": "guest" } } }
+///   - Count only:    { "collection": "users", "count": 20 }
 ///   - Drop all:      { "collection": "users", "drop": true }
+///
+/// The WHERE mode also accepts `count` (max documents to delete; default 100,
+/// max 1000) and `order` ("asc" | "desc"). Matches are ordered by `_seq` before
+/// `count` is applied, so a limited delete is deterministic: the default `asc`
+/// removes the oldest documents first (lowest `_seq`), `desc` the newest first.
+///
+/// The count-only mode (no `keys`/`where`/`drop`) removes the oldest (default) or
+/// newest `n` documents by `_seq` using the ordered index — `count` is required
+/// here (no default) and `order` selects the direction, same as the WHERE mode.
 pub fn process_delete(
     db: &engine::Db,
     payload: &Value,
@@ -61,14 +71,49 @@ pub fn process_delete(
                 .map(|n| n as usize)
                 .unwrap_or(DEFAULT_DELETE_COUNT),
         );
+        // `order` decides which documents a count-limited delete removes first.
+        // Default is oldest-first (ascending by `_seq`); "desc" removes newest first.
+        let default_order_asc = payload
+            .get(PayloadField::Order.as_str())
+            .and_then(|v| v.as_str())
+            .map(|s| s != "desc")
+            .unwrap_or(true);
         return match db.delete_filtered(
             col,
-            move |doc| query::evaluate_where(doc, &clause).unwrap_or(false),
+            move |_key, doc_bytes| {
+                query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
+            },
             count_limit,
+            default_order_asc,
         ) {
             Ok(count) => DeleteSuccess::Deleted(count).into_response(),
             Err(e) => DeleteError::FailedToDelete(e.to_string()).into_response(), // Clean, 1-line exit!
         };
+    }
+
+    // Count-only bulk delete — no `keys`/`where`/`drop`, just an explicit `count`.
+    // Removes the oldest (default) or newest `n` documents by `_seq` via the
+    // ordered index. `count` MUST be explicit (no default) so a tiny payload can
+    // never silently destroy a default-sized batch of documents.
+    if payload.get(PayloadField::Keys.as_str()).is_none() {
+        if let Some(n) = payload
+            .get(PayloadField::Count.as_str())
+            .and_then(|c| c.as_u64())
+        {
+            if n as usize > MAX_DELETE_COUNT {
+                return DeleteError::CountExceeded(MAX_DELETE_COUNT).into_response();
+            }
+            // `order` selects direction: default oldest-first (asc), "desc" = newest first.
+            let order_asc = payload
+                .get(PayloadField::Order.as_str())
+                .and_then(|v| v.as_str())
+                .map(|s| s != "desc")
+                .unwrap_or(true);
+            return match db.delete_n(col, n as usize, order_asc) {
+                Ok(count) => DeleteSuccess::Deleted(count).into_response(),
+                Err(e) => DeleteError::FailedToDelete(e.to_string()).into_response(),
+            };
+        }
     }
 
     match payload.get(PayloadField::Keys.as_str()) {

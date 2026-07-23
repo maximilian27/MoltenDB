@@ -1,4 +1,38 @@
-﻿# [1.0.0-rc13] (Jul 8, 2026)
+﻿# [1.0.0-rc14] (Jul 23, 2026)
+
+### Performance
+
+* **Raw-bytes predicate for bulk delete (`delete_filtered`)** — WHERE-based bulk deletes no longer fully deserialize
+  every document to `serde_json::Value` before testing the predicate. Mirroring the GET read path, the predicate now
+  runs directly on the raw MsgPack bytes (`query::evaluate_where_msgpack`) and only the cheap `_seq` token is read for
+  matches, eliminating a per-document `serde_json::Value` allocation across the whole collection scan. This closes most
+  of the gap that made bulk delete feel considerably slower than an equivalent GET.
+
+### New Features
+
+* **Deterministic, `_seq`-ordered bulk delete with configurable `order`** — count-limited WHERE deletes are now
+  ordered by `_seq` before the `count` cap is applied, so a limited delete removes a well-defined subset instead of an
+  arbitrary `DashMap`-iteration slice. A new optional `"order": "asc" | "desc"` property (registered in `DELETE_ALLOWED`)
+  controls direction: the default `"asc"` removes the oldest documents first (lowest `_seq`), `"desc"` removes the
+  newest first. `Db::delete_filtered` / `operations::delete_filtered` gained a `default_order_asc` parameter and their
+  predicate signature changed to `Fn(&str, &[u8])` to match the GET fast path.
+
+* **Count-only bulk delete (`delete_n`)** — `POST /delete` now accepts a count-only mode with no `keys`/`where`/`drop`,
+  e.g. `{ "collection": "events", "count": 20 }`, to remove the oldest (default) or newest `n` documents by `_seq`.
+  Like the unsorted GET path, it reuses the ordered `seq_index` `BTreeMap` to take the first/last `n` keys directly — no
+  collection scan, no per-document decode, and no `_seq` token read (the `_seq` is the `BTreeMap` key), with a
+  scan-and-sort fallback when the index is not yet built. `order` selects direction (`"asc"` default = oldest first,
+  `"desc"` = newest first) and `MAX_DELETE_COUNT` (1000) is enforced. As a safety guard, `count` is **required** for
+  this mode (it does **not** fall back to `DEFAULT_DELETE_COUNT`), so a tiny payload can never silently destroy a
+  default-sized batch. Exposed as `Db::delete_n(collection, n, order_asc)` / `operations::delete_n`.
+
+### Bug Fixes
+
+* **Wasm persist ttl after tab reload**
+
+---
+
+# [1.0.0-rc13] (Jul 8, 2026)
 
 ### Performance
 

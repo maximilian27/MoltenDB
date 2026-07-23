@@ -7,6 +7,7 @@ pub(crate) const DELETE_ALLOWED: &[&str] = &[
     PayloadField::Count.as_str(),
     PayloadField::Drop.as_str(),
     PayloadField::Keys.as_str(),
+    PayloadField::Order.as_str(),
     PayloadField::Where.as_str(),
 ];
 pub(crate) const DEFAULT_DELETE_COUNT: usize = 100;
