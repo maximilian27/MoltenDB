@@ -162,7 +162,7 @@ POST /set
 
 - The expiry clock resets to `now + ttl_secs` at the end of **every insert batch** — so the clock measures idle time
   since the last write, not time since schema registration.
-- On expiry the **entire collection is dropped** in one O(1) `delete_collection` call — no per-document iteration.
+- On expiry the **entire collection is dropped** in one O (1) `delete_collection` call — no per-document iteration.
 - `_expiresAt` is a **virtual field** — never stored inside documents. It is computed from the collection TTL map and
   injected into every response when the collection has a TTL.
 - TTL is **immutable by design** — once set, the TTL value cannot be changed without dropping and recreating the
@@ -474,15 +474,33 @@ Instead of incrementing `offset`, track the last value seen from the previous pa
 
 ```json
 // Page 1 — cheapest 10 items
-{ "collection": "laptops", "sort": [{ "field": "price", "order": "asc" }], "count": 10 }
+{
+  "collection": "laptops",
+  "sort": [
+    {
+      "field": "price",
+      "order": "asc"
+    }
+  ],
+  "count": 10
+}
 ```
 
 ```json
 // Page 2 — next 10 items (last page ended at price 499.99)
 {
   "collection": "laptops",
-  "where": { "price": { "$gt": 499.99 } },
-  "sort": [{ "field": "price", "order": "asc" }],
+  "where": {
+    "price": {
+      "$gt": 499.99
+    }
+  },
+  "sort": [
+    {
+      "field": "price",
+      "order": "asc"
+    }
+  ],
   "count": 10
 }
 ```
@@ -498,14 +516,29 @@ boundary with no duplicates:
 
 ```json
 // Page 1 — newest 100 Apple laptops
-{ "collection": "laptops", "where": { "brand": { "$eq": "Apple" } }, "count": 100 }
+{
+  "collection": "laptops",
+  "where": {
+    "brand": {
+      "$eq": "Apple"
+    }
+  },
+  "count": 100
+}
 ```
 
 ```json
 // Page 2 — next 100 Apple laptops (last page ended at _seq 4823)
 {
   "collection": "laptops",
-  "where": { "brand": { "$eq": "Apple" }, "_seq": { "$lt": 4823 } },
+  "where": {
+    "brand": {
+      "$eq": "Apple"
+    },
+    "_seq": {
+      "$lt": 4823
+    }
+  },
   "count": 100
 }
 ```
@@ -516,8 +549,18 @@ numbers):
 ```json
 {
   "collection": "stress",
-  "fields": ["brand", "model", "price", "_seq"],
-  "where": { "_seq": { "$gt": 300000, "$lt": 300100 } }
+  "fields": [
+    "brand",
+    "model",
+    "price",
+    "_seq"
+  ],
+  "where": {
+    "_seq": {
+      "$gt": 300000,
+      "$lt": 300100
+    }
+  }
 }
 ```
 
@@ -526,10 +569,10 @@ collect and discard thousands of results first.
 
 #### `$contains` / substring queries
 
-Queries using `$ct` / `$contains` on string fields (e.g. `"model": { "$ct": "Pro" }`) always require a full
-collection scan — there is no index that can skip non-matching documents for arbitrary substring matches. Performance
-depends on data distribution: if matching documents are near the newest end of the collection the early-exit fires
-quickly; if they are spread throughout or clustered at the oldest end, the scan approaches O(N).
+Queries using `$ct` / `$contains` on string fields (e.g. `"model": { "$ct": "Pro" }`) always require a full collection
+scan — there is no index that can skip non-matching documents for arbitrary substring matches. Performance depends on
+data distribution: if matching documents are near the newest end of the collection the early-exit fires quickly; if they
+are spread throughout or clustered at the oldest end, the scan approaches O (N).
 
 // $in — brand is one of a list
 
@@ -720,19 +763,36 @@ The `where` clause supports every filter operator available in `/get` — `$eq`,
 decides *which* matches to remove by ordering them on the system `_seq` field (the monotonic insertion sequence). An
 optional `order` property controls the direction:
 
-| `order`         | Deletes first…                       |
-|:----------------|:-------------------------------------|
-| `"asc"` (default) | **oldest** documents (lowest `_seq`) |
+| `order`           | Deletes first…                        |
+|:------------------|:--------------------------------------|
+| `"asc"` (default) | **oldest** documents (lowest `_seq`)  |
 | `"desc"`          | **newest** documents (highest `_seq`) |
 
 ```json
 // Remove the 50 oldest out-of-stock laptops (default order)
-{ "collection": "laptops", "where": { "in_stock": { "$eq": false } }, "count": 50 }
+{
+  "collection": "laptops",
+  "where": {
+    "in_stock": {
+      "$eq": false
+    }
+  },
+  "count": 50
+}
 ```
 
 ```json
 // Remove the 50 newest out-of-stock laptops
-{ "collection": "laptops", "where": { "in_stock": { "$eq": false } }, "count": 50, "order": "desc" }
+{
+  "collection": "laptops",
+  "where": {
+    "in_stock": {
+      "$eq": false
+    }
+  },
+  "count": 50,
+  "order": "desc"
+}
 ```
 
 Because matches are sorted by `_seq` **before** the `count` cap is applied, a count-limited delete is deterministic —
@@ -741,26 +801,33 @@ the same request always removes the same well-defined subset (never an arbitrary
 > **Note:** The default delete order is `"asc"` (oldest first), which differs from `/get`, where the default unsorted
 > order is `"desc"` (newest first). Oldest-first is the natural default for pruning/cleanup workloads.
 
-**Performance.** Bulk `where` deletes use the same fast scan path as `/get`: the filter is evaluated directly on the
-raw MsgPack bytes and only the cheap `_seq` token is read for matches — documents are **not** fully deserialized to
-JSON during the scan. This keeps a bulk delete roughly as cheap to scan as an equivalent unsorted `/get`.
+**Performance.** Bulk `where` deletes use the same fast scan path as `/get`: the filter is evaluated directly on the raw
+MsgPack bytes and only the cheap `_seq` token is read for matches — documents are **not** fully deserialized to JSON
+during the scan. This keeps a bulk delete roughly as cheap to scan as an equivalent unsorted `/get`.
 
-**Count-only delete (no `where`).** Omitting `keys`, `where`, and `drop` and providing only a `count` removes the
-oldest (default) or newest `n` documents in the collection by `_seq` — a fast "prune N docs" primitive:
+**Count-only delete (no `where`).** Omitting `keys`, `where`, and `drop` and providing only a `count` removes the oldest
+(default) or newest `n` documents in the collection by `_seq` — a fast "prune N docs" primitive:
 
 ```json
 // Delete the 20 oldest documents (default order)
-{ "collection": "events", "count": 20 }
+{
+  "collection": "events",
+  "count": 20
+}
 ```
 
 ```json
 // Delete the 20 newest documents
-{ "collection": "events", "count": 20, "order": "desc" }
+{
+  "collection": "events",
+  "count": 20,
+  "order": "desc"
+}
 ```
 
 This mode reuses the same ordered `_seq` index the unsorted `/get` uses, so it takes the first/last `n` keys directly —
-no collection scan and no per-document decode. It honours the same `order` directions as above (default `"asc"` =
-oldest first), and if `count` exceeds the collection size, all documents are removed. `count` is capped at `1000`.
+no collection scan and no per-document decode. It honours the same `order` directions as above (default `"asc"` = oldest
+first), and if `count` exceeds the collection size, all documents are removed. `count` is capped at `1000`.
 
 > **Safety:** Unlike the `where` mode, the count-only mode **requires** an explicit `count` — it never falls back to
 > the default `100`. A request with no `keys`/`where`/`drop`/`count` returns `400` (missing fields) rather than
@@ -844,15 +911,15 @@ wss://localhost:1538/ws
    authentication fails, with one of the following structured error codes:
 
    | `error` code | Cause |
-            |---|---|
+               |---|---|
    | `invalid_message` | First frame was not valid JSON or not a text frame |
    | `invalid_action` | First message was not an `AUTH` action |
    | `missing_token` | `AUTH` frame had no `token` field |
    | `invalid_token` | JWT verification failed (expired, wrong secret, malformed) |
    | `token_revoked` | Token has been revoked via `DELETE /auth/tokens/:jti` |
 
-2. After authentication, the server pushes a change event on every write **for collections the token's scopes
-   allow `read` access to**. Events for other collections are silently filtered out. Admin tokens (`*:*:*`) receive all
+2. After authentication, the server pushes a change event on every write **for collections the token's scopes allow
+   `read` access to**. Events for other collections are silently filtered out. Admin tokens (`*:*:*`) receive all
    events.
    ```json
    { "event": "change", "collection": "laptops", "key": "lp2", "new_v": 3 }
@@ -925,7 +992,8 @@ Authorization: Bearer <token>
 }
 ```
 
-> **Note:** Counts are O(1) atomic reads from the in-memory DashMap — no document scanning. On TTL collections the count
+> **Note:** Counts are O (1) atomic reads from the in-memory DashMap — no document scanning. On TTL collections the
+> count
 > may include a small number of not-yet-evicted documents; expired collections are reported accurately as `count: 0`.
 
 ## Telemetry
@@ -1242,8 +1310,32 @@ cargo run -p moltendb-server --example stress_fetch
 STRESS_CONCURRENCY=50000 STRESS_COLLECTION=stress cargo run -p moltendb-server --example stress_fetch
 ```
 
-The fetch report includes min / mean / p50 / p75 / p90 / p95 / p99 / p99.9 / max latency and sustained throughput (
-req/s). In a typical local debug build, MoltenDB sustains **4 000–8 000 req/s** for pure in-memory reads.
+The fetch report includes min / mean / p50 / p75 / p90 / p95 / p99 / p99.9 / max latency and sustained throughput
+(req/s).
+
+**Measured example run** (`STRESS_CONCURRENCY=100000`, single-key point lookups — each request is a
+`POST /get` with `"keys": "<single-key>"`, up to 2048 requests in flight at once, over a 512-connection pool):
+
+| Total requests | 200 OK         | Non-200 | Errors | Wall time | Throughput       |
+|----------------|----------------|---------|--------|-----------|------------------|
+| 100,000        | 91,246 (91.2%) | 0       | 8,754  | 6.694s    | **14,940 req/s** |
+
+| Percentile | Latency    |
+|------------|------------|
+| Min        | 0.62 ms    |
+| Mean       | 134.79 ms  |
+| p50        | 98.43 ms   |
+| p75        | 147.32 ms  |
+| p90        | 269.77 ms  |
+| p95        | 344.73 ms  |
+| p99        | 663.40 ms  |
+| p99.9      | 849.41 ms  |
+| Max        | 1307.53 ms |
+
+> This is an actual measured result from a `stress_fetch` run doing **single-key point lookups only** (not the
+> mixed-workload `where`/sort/pagination mix) — it should not be read as a general "MoltenDB throughput" figure. The
+> 8.8% failures were transport-level (the 2048 in-flight cap exceeds the 512-connection pool, causing some connection
+> churn), not server errors — `Non-200` is `0`.
 
 ---
 
@@ -1251,15 +1343,6 @@ req/s). In a typical local debug build, MoltenDB sustains **4 000–8 000 req/s*
 
 MoltenDB is currently a **single-node, embedded database**. Its state lives in `DashMap` in memory, backed by an
 append-only log on disk. There is no built-in concept of nodes, replication, or sharding.
-
-### Single-node throughput
-
-| Operation                             | Throughput       | Bottleneck                                         |
-|---------------------------------------|------------------|----------------------------------------------------|
-| Reads (`get`, `get_all`)              | 100k–500k+ req/s | None — pure lock-free `DashMap` lookups            |
-| Writes (`insert`, `delete`, `update`) | 10k–50k req/s    | Sequential log writer (one `Mutex`-guarded append) |
-
-Reads are fully parallel and scale with CPU cores. Writes are bounded by disk I/O on the log writer.
 
 ### Scaling options
 
@@ -1301,7 +1384,7 @@ MoltenDB is currently in **RC Stage**. The core engine is stable, fast, and feat
 
 - **Mobile Native Modules:** Compiling the exact same Rust core to run natively on iOS and Android (via FFI/JNI). This
   will bring blazing-fast, local-first embedded databases to React Native and Flutter.
-- **Language Clients:** Official transport drivers for Python, Go, and Swift.
+- **Language Clients:** Official transport drivers for Python, C#, and NodeJs.
 - **Data Portability:** Built-in, zero-friction utilities to export your entire database to standard JSON and CSV
   formats. No vendor lock-in.
 
