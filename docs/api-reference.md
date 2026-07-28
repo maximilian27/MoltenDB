@@ -644,6 +644,127 @@ are spread throughout or clustered at the oldest end, the scan approaches O (N).
 }
 ```
 
+---
+
+### Application-Side Materialized Indexes
+
+MoltenDB does not yet ship built-in secondary indexes — every `where` clause other than a direct `keys` lookup or a
+filter on the system `_seq` field goes through a collection scan (see [Pagination Limitations](#pagination-limitations)
+above, and especially the always-scanning [`$contains` / substring queries](#contains--substring-queries) case). Until
+native secondary indexes exist, you can get most of the benefit yourself with a small, fully application-managed
+pattern: an **application-side materialized index**.
+
+#### 1. Empty field projection (`"fields": []`)
+
+Passing `"fields": []` to `POST /get` still runs the full `where`/`sort`/pagination logic, but the projection step has
+nothing to build — the response for every matched document collapses down to just the protocol-primitive metadata
+tokens that are always present, `_key` and `_v` (see [Insert / Upsert](#insert--upsert) for the full list of
+engine-managed fields). No field values are copied, converted, or serialized into the response body:
+
+```json
+POST /get
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "collection": "stress",
+  "fields": [],
+  "where": {
+    "price": {
+      "$gte": 1500,
+      "$lte": 2500
+    }
+  }
+}
+```
+
+```json
+[
+  { "_key": "stress_004213", "_v": 1 },
+  { "_key": "stress_017842", "_v": 3 },
+  { "_key": "stress_052190", "_v": 1 }
+]
+```
+
+For a scan over a large collection this is the leanest possible response shape:
+
+- **Zero payload memory overhead** — no field values are ever copied into the output documents.
+- **Minimal network bytes** — the response is essentially just an array of keys instead of full documents.
+- **Maximum throughput** — every byte of work spent building the response goes toward identifying matches, not
+  shaping and transferring their contents.
+
+#### 2. Build the index once, reuse it many times
+
+Instead of re-running the same expensive filter on every request, run it **once**, save the resulting key array into a
+dedicated index collection, and read from that collection on every subsequent request:
+
+1. **Build** — run the `"fields": []` query above and collect every `_key` from the response into an array.
+2. **Store** — save that array as a single small document in a dedicated index collection, named after the query it
+   represents (e.g. `idx_price_1500_2500`):
+
+```json
+POST /set
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "collection": "idx_price_1500_2500",
+  "data": {
+    "range": {
+      "keys": ["stress_004213", "stress_017842", "stress_052190"]
+    }
+  }
+}
+```
+
+3. **Read** — on every subsequent request, fetch the `keys` array from the index document, then batch-lookup the
+   primary collection by `keys`. A `keys` lookup is a direct `DashMap` read — O(1) per key, no scan at all (see the
+   "Key lookup" row in [Pagination Limitations](#pagination-limitations)):
+
+```json
+POST /get
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "collection": "idx_price_1500_2500",
+  "keys": "range"
+}
+```
+
+```json
+POST /get
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "collection": "stress",
+  "keys": ["stress_004213", "stress_017842", "stress_052190"]
+}
+```
+
+This turns a repeated collection scan (or an always-full-scan `$contains` query) into one cheap index-document read
+plus a batch of O(1) key lookups — the same speed a real secondary index would give you, built entirely out of
+existing primitives.
+
+#### 3. Trade-offs & maintenance
+
+This is a manual, application-managed materialized view — MoltenDB does not know it exists and will not maintain it
+for you:
+
+- **You own invalidation.** If a document in the primary collection is inserted, updated, or deleted in a way that
+  changes whether it matches the indexed condition, you are responsible for updating or invalidating the
+  corresponding index document(s). MoltenDB will not remove `stress_004213` from `idx_price_1500_2500` if that
+  document's price is later updated to `4999`.
+- **Best for slow-changing, expensive-to-recompute filters.** The bigger the win from avoiding a full-collection or
+  `$contains` scan, and the less often the underlying data changes, the more this pattern pays off.
+- **Rebuild strategy is up to you.** Either re-run the `"fields": []` query on a schedule or on-demand and overwrite
+  the index document, or update the index incrementally in your application logic whenever you write to the primary
+  collection.
+- **Not a substitute for a real secondary index.** This is a workaround built on today's primitives. A native
+  secondary index, if added in the future, would maintain itself automatically on every write instead of requiring
+  manual invalidation.
+
 ### Cross-collection join
 
 ```http
