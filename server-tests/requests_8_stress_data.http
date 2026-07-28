@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NDg2ODA5Miwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImZlMDNkNTViLWFhZmYtNDNmZS1hNDkxLTQ2ZWY1OTFhODQyMCJ9.0My50XFGTn2JP8ZaJ98IB_y-fPOrt5Im6HcKBfmLob8
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NTMxNDA3NCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI4NmQ2YjQxLWQ2YTYtNDVmNi1iZjgzLWU3ZjNhZGNkNGU1YyJ9.9kaJo_RbuJgIEySLzRhKVN5RxHI3Xl2SjExUWNWnFGI
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document
@@ -38,7 +38,8 @@ Content-Type: application/json
 Authorization: Bearer {{token}}
 
 {
-  "collection": "stress"
+  "collection": "stress",
+  "order": "desc"
 }
 
 ### §1c. Fetch the last document
@@ -278,9 +279,10 @@ Authorization: Bearer {{token}}
   ],
   "where": {
     "model": {
-      "$ct": "Model-999"
+      "$ct": "Model-000"
     }
-  }
+  },
+  "order": "asc"
 }
 
 ### §3i. Items from Apple, Dell, or Razer ($in)
