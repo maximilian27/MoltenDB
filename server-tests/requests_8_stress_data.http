@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NTMxNDA3NCwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI4NmQ2YjQxLWQ2YTYtNDVmNi1iZjgzLWU3ZjNhZGNkNGU1YyJ9.9kaJo_RbuJgIEySLzRhKVN5RxHI3Xl2SjExUWNWnFGI
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NTg1MjAzNSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjY3MGI4MWQ0LTE3YzEtNGMzMS1iMzUxLTYxOGJhM2EwNjcwMSJ9.Ydxykz_rRuuDoocuE99YagiqFI2myoSAZ2EH3L7kAuk
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document
@@ -970,9 +970,11 @@ Authorization: Bearer {{token}}
   "data": {
     "range": {
       "keys": [
-        "stress_000001",
-        "stress_000042",
-        "stress_000913"
+        "stress_998333",
+        "stress_998332",
+        "stress_998330",
+        "stress_998329",
+        "stress_998328"
       ]
     }
   }
