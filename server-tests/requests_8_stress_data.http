@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NTg1MjAzNSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjY3MGI4MWQ0LTE3YzEtNGMzMS1iMzUxLTYxOGJhM2EwNjcwMSJ9.Ydxykz_rRuuDoocuE99YagiqFI2myoSAZ2EH3L7kAuk
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NTk1NjU3Mywic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImI5N2RhMDE4LTFjZWQtNDRiNS05NGQ5LTFiYTAzOTA1ZDhkMSJ9.b2LOYyNip2rPKLMC7mQVVhQfEhBt7oTnwX4aH8-tsZE
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document

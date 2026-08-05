@@ -15,11 +15,6 @@ Exposes the `moltendb-core` engine to JavaScript. Zero server-side code.
 
 </div>
 
-> [!WARNING]
-> **After careful consideration, a breaking change was introduced in v1.0.0-rc10. Versions starting with `v1.0.0-rc10`
-are not backwards compatible with previous versions.**
-> Review the [changelog](../CHANGELOG.md) before upgrading.
-
 ---
 
 ## What is this crate?
@@ -109,7 +104,7 @@ db.subscribe((eventStr) => {
 
 > **Why `WorkerDb.create()` and not `new WorkerDb()`?**  
 > Async constructors with `#[wasm_bindgen(constructor)]` produce invalid TypeScript bindings and are deprecated in
-`wasm-bindgen`. The named static factory `create()` is the correct pattern for async WASM initialisation.
+> `wasm-bindgen`. The named static factory `create()` is the correct pattern for async WASM initialisation.
 
 ### Handling messages
 

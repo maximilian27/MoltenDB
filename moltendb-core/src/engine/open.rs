@@ -123,6 +123,10 @@ impl Db {
             );
         }
 
+        // Spawn the coalesced-scan coordinator, sharing the same in-memory state.
+        // It batches concurrent full-collection WHERE scans into a single pass.
+        let scanner = std::sync::Arc::new(crate::engine::CoalescedScanner::new(Arc::clone(&state)));
+
         Ok(Self {
             state,
             storage,
@@ -141,6 +145,8 @@ impl Db {
             io_fault: io_fault_arc,
             #[cfg(not(target_arch = "wasm32"))]
             started_at: std::time::Instant::now(),
+            #[cfg(not(target_arch = "wasm32"))]
+            scanner,
         })
     }
 }

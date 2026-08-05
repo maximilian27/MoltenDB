@@ -31,8 +31,8 @@ is consumed exclusively by `moltendb-server`. It has no knowledge of the databas
 > irrelevant for local browser storage and would add unnecessary weight to the WASM bundle.
 
 - **Argon2 password hashing** — passwords are hashed with Argon2id; plain-text passwords never leave this crate.
-- **JWT minting & validation** — tokens are signed with HMAC-SHA256 (`jsonwebtoken`). Each token carries a `sub` (
-  username), `exp` (expiry), and `scopes` (permission list).
+- **JWT minting & validation** — tokens are signed with HMAC-SHA256 (`jsonwebtoken`). Each token carries a `sub`
+  (username), `exp` (expiry), and `scopes` (permission list).
 - **Scoped token delegation** — the root user can mint narrow-permission JWTs for clients via `create_scoped_token`.
   Clients only ever receive a token scoped to exactly what they need.
 - **Token revocation (JTI blacklist)** — every JWT carries a `jti` (UUID). Compromised tokens can be immediately
@@ -71,14 +71,14 @@ defaults to 86400 seconds (24 hours) and is configurable via `--root-token-ttl` 
 
 ## Scope → Endpoint Compatibility
 
-| Token scope        | `POST /get`       | `GET /collections/:col/docs/:key` | `POST /set` | `POST /update` | `POST /delete` | `POST /snapshot` |
-|--------------------|-------------------|-----------------------------------|-------------|----------------|----------------|------------------|
-| `read:laptops:lp1` | filtered to lp1   | ✅ lp1 only                        | ❌ 403       | ❌ 403          | ❌ 403          | ❌ 403            |
-| `read:laptops:*`   | ✅ full collection | ✅ any key                         | ❌ 403       | ❌ 403          | ❌ 403          | ❌ 403            |
-| `write:laptops:*`  | ❌ 403             | ❌ 403                             | ✅           | ✅              | ❌ 403          | ❌ 403            |
-| `delete:laptops:*` | ❌ 403             | ❌ 403                             | ❌ 403       | ❌ 403          | ✅              | ❌ 403            |
-| `read:*:*`         | ✅ any collection  | ✅ any col/key                     | ❌ 403       | ❌ 403          | ❌ 403          | ❌ 403            |
-| `*:*:*`            | ✅                 | ✅                                 | ✅           | ✅              | ✅              | ✅                |
+| Token scope        | `POST /get`        | `GET /collections/:col/docs/:key` | `POST /set` | `POST /update` | `POST /delete` | `POST /snapshot` |
+|--------------------|--------------------|-----------------------------------|-------------|----------------|----------------|------------------|
+| `read:laptops:lp1` | filtered to lp1    | ✅ lp1 only                       | ❌ 403      | ❌ 403         | ❌ 403         | ❌ 403           |
+| `read:laptops:*`   | ✅ full collection | ✅ any key                        | ❌ 403      | ❌ 403         | ❌ 403         | ❌ 403           |
+| `write:laptops:*`  | ❌ 403             | ❌ 403                            | ✅          | ✅             | ❌ 403         | ❌ 403           |
+| `delete:laptops:*` | ❌ 403             | ❌ 403                            | ❌ 403      | ❌ 403         | ✅             | ❌ 403           |
+| `read:*:*`         | ✅ any collection  | ✅ any col/key                    | ❌ 403      | ❌ 403         | ❌ 403         | ❌ 403           |
+| `*:*:*`            | ✅                 | ✅                                | ✅          | ✅             | ✅             | ✅               |
 
 ---
 
@@ -206,7 +206,7 @@ The root token never leaves your backend. Clients only ever receive a narrowly s
 
 ---
 
-## Current limitations (v1.0.0-rc)
+## Current limitations (v1.0.0)
 
 - **No token refresh** — tokens expire after the configured TTL. Re-mint via `/auth/delegate` when needed.
 - **In-memory revocation only** — the revocation store is persisted to a `.revocations.json` file alongside the WAL and
