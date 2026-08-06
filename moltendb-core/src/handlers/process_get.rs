@@ -5,7 +5,11 @@ use super::get::types::{FetchParams, GetParams};
 use super::get::{apply_joins, fetch_documents, make_comparator, shape_doc};
 use crate::common::payload_fields::PayloadField;
 use crate::engine::ttl;
-use crate::engine::{ScanTopNParams, ScanTopNRawParams};
+use crate::engine::ScanTopNParams;
+// `ScanTopNRawParams` is only used on wasm now; native routes the single-field
+// numeric sort through the coalesced-scan coordinator instead.
+#[cfg(target_arch = "wasm32")]
+use crate::engine::ScanTopNRawParams;
 use crate::handlers::common::errors::{OperationError, ValidationError};
 use crate::validation;
 use crate::{engine, query};
@@ -249,22 +253,44 @@ fn run_fast_sort_path(
         };
 
         if !field.is_empty() {
-            let raw = db.scan_top_n_raw(ScanTopNRawParams {
-                collection: params.col_name,
-                predicate: move |_key, doc_bytes| {
-                    where_clause_owned
-                        .as_ref()
-                        .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
-                        .unwrap_or(true)
-                },
-                sort_field: &field,
-                is_descending: descending,
-                cap,
-            });
-            // scan_top_n_raw returns items sorted ascending by sort_value (smallest
-            // first). For descending queries the values were negated, so the order
-            // is already correct — largest original value comes first.
-            raw
+            // Predicate evaluated directly on raw MsgPack bytes (the WHERE
+            // clause, if any). Boxed on native so it can be handed to the
+            // coalesced-scan coordinator.
+            let predicate = move |_key: &str, doc_bytes: &[u8]| -> bool {
+                where_clause_owned
+                    .as_ref()
+                    .map(|c| query::evaluate_where_msgpack(doc_bytes, c).unwrap_or(false))
+                    .unwrap_or(true)
+            };
+
+            // Both scan_top_n_raw and the coalesced coordinator return items
+            // sorted ascending by sort_value (smallest first). For descending
+            // queries the values were negated, so the order is already correct —
+            // the largest original value comes first.
+
+            // Native: route through the coalesced-scan coordinator so that many
+            // concurrent sorted queries share a single pass over the collection.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                db.scan_top_n_raw_coalesced(
+                    params.col_name,
+                    Box::new(predicate),
+                    &field,
+                    descending,
+                    cap,
+                )
+            }
+            // Wasm: no Rayon / OS threads — fall back to a direct scan.
+            #[cfg(target_arch = "wasm32")]
+            {
+                db.scan_top_n_raw(ScanTopNRawParams {
+                    collection: params.col_name,
+                    predicate,
+                    sort_field: &field,
+                    is_descending: descending,
+                    cap,
+                })
+            }
         } else {
             // Field name could not be parsed; fall back to generic path.
             let cmp = make_comparator(specs);

@@ -178,6 +178,32 @@ pub async fn handle_update(
     )
 }
 
+/// Run the (synchronous, CPU-bound) GET query on Tokio's blocking thread pool.
+///
+/// `process_get` performs a full scan / decode and, for full-collection WHERE
+/// queries, blocks briefly on the coalesced-scan coordinator while its batch
+/// window elapses. Offloading it via `spawn_blocking` keeps the async worker
+/// threads free, so a burst of concurrent GET requests can all reach the
+/// coordinator at once and be folded into a single shared pass over the
+/// collection — instead of being serialized across the limited worker pool.
+async fn run_process_get(
+    db: moltendb_core::engine::Db,
+    payload: Value,
+    max_body_size: usize,
+    max_keys_per_request: usize,
+) -> (u16, Value) {
+    tokio::task::spawn_blocking(move || {
+        handlers::process_get(&db, &payload, max_body_size, max_keys_per_request)
+    })
+    .await
+    .unwrap_or_else(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+            json!({ "error": "internal task error" }),
+        )
+    })
+}
+
 /// POST /get — query documents with optional WHERE, fields, joins, count, offset.
 ///
 /// Body: `{ "collection": "users", "where": { "role": "admin" }, "fields": ["name"] }`
@@ -201,7 +227,7 @@ pub async fn handle_get(
     // Fast path: collection-level (or broader) access — no filtering needed.
     if claims.has_collection_access(ACTION_READ, collection) {
         let (code, body) =
-            handlers::process_get(&db, &payload, max_body_size, max_keys_per_request);
+            run_process_get(db.clone(), payload.clone(), max_body_size, max_keys_per_request).await;
         return (
             StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Json(body),
@@ -242,7 +268,7 @@ pub async fn handle_get(
         }
         // All requested keys are allowed — run the query as-is.
         let (code, body) =
-            handlers::process_get(&db, &payload, max_body_size, max_keys_per_request);
+            run_process_get(db.clone(), payload.clone(), max_body_size, max_keys_per_request).await;
         return (
             StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Json(body),
@@ -264,7 +290,7 @@ pub async fn handle_get(
             scoped_payload["_allowed_prefixes"] = json!(prefixes);
         }
         let (code, body) =
-            handlers::process_get(&db, &scoped_payload, max_body_size, max_keys_per_request);
+            run_process_get(db.clone(), scoped_payload, max_body_size, max_keys_per_request).await;
         (
             StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Json(body),
@@ -273,7 +299,7 @@ pub async fn handle_get(
         let mut scoped_payload = payload.clone();
         scoped_payload["keys"] = json!(allowed_keys);
         let (code, body) =
-            handlers::process_get(&db, &scoped_payload, max_body_size, max_keys_per_request);
+            run_process_get(db.clone(), scoped_payload, max_body_size, max_keys_per_request).await;
         (
             StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Json(body),

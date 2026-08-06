@@ -15,13 +15,6 @@ Same query engine. Same storage semantics. Different execution backends.
 [![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen?style=flat-square)](./docs/api-reference.md#testing)
 [![Status](https://img.shields.io/badge/status-1.0.0--rc12-blue?style=flat-square)](CHANGELOG.md)
 
-> [!WARNING]
-> **After careful consideration, a breaking change was introduced in v1.0.0-rc10. Versions starting with `v1.0.0-rc10`
-are not backwards compatible with previous versions.**
-> Review the [changelog](../CHANGELOG.md) before upgrading.
-
-**🚀 Release Candidate (v1.0.0-rc14)** — The API is stable. Suitable for early production use. No other breaking changes
-are expected to occur before the final 1.0.0 release.
 
 > 🌐 **Building for the browser?** The WebAssembly engine, TypeScript client, and React/Angular adapters live in
 > the [moltendb-web](https://github.com/moltendb/moltendb-web) repository **(MIT Licensed)**.
@@ -47,8 +40,8 @@ an optional adapter layer built around the same core engine.
 
 ### 1️⃣ Layer 1: Core Engine (Identity)
 
-- **Fine-grained field projection (GraphQL-style selection)** — request only the fields you need using `fields` (
-  include) or `excludedFields` (exclude). Dot-notation works at any depth: `"specs.display.features.refresh_rate"`
+- **Fine-grained field projection (GraphQL-style selection)** — request only the fields you need using `fields`
+  (include) or `excludedFields` (exclude). Dot-notation works at any depth: `"specs.display.features.refresh_rate"`
   returns only that one nested value, not the whole document.
 - **In-memory store:** the entire dataset lives in RAM (`DashMap`) — reads are pure hashmap lookups with no disk I/O;
   RAM is the hard dataset size limit
@@ -60,7 +53,7 @@ an optional adapter layer built around the same core engine.
   (`"desc"`) — pass `"order": "asc"` to iterate oldest-first. `order` is mutually exclusive with `sort`. **Note:** deep
   `offset` on sorted queries is expensive (heap size grows with offset depth); prefer keyset pagination (filter by the
   last seen field value) for deep pages. For unsorted `where` queries, use `"_seq": { "$lt": last_seen_seq }` as a
-  cursor for O(1) page boundaries, or query a precise insertion-order window with
+  cursor for O (1) page boundaries, or query a precise insertion-order window with
   `"_seq": { "$gt": 300000, "$lt": 300100 }`.
   See [Pagination Limitations](docs/api-reference.md#pagination-limitations).
 - **Bulk delete by filter** — `POST /delete` accepts a `where` clause (same operators as `/get`) to remove many
@@ -127,8 +120,8 @@ an optional adapter layer built around the same core engine.
   a stateless delegation gateway, not an identity provider. Note that while the in-memory user store is ephemeral, the *
   *token revocation list is persisted** to `<db-path>.revocations.json` and reloaded on every server restart — a revoked
   JWT remains revoked even after a crash or restart.
-- Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch
-  size (max 1000 keys)
+- Input validation: collection names, key names, field names, JSON depth (max 32), payload size (max 10 MB), batch size
+  (max 1000 keys)
 - Security headers on every response: `X-Content-Type-Options`, `X-Frame-Options`, `HSTS`, `CSP`, etc.
 - Graceful shutdown: drains in-flight requests (up to 30 s), then awaits the async writer task to fully flush all
   buffered log entries before exit
@@ -161,18 +154,15 @@ an optional adapter layer built around the same core engine.
 Keeping a project fast and lightweight means being very strict about what *not* to build. Here are a few things I have
 intentionally decided to leave out of MoltenDB:
 
-- **Natural Language Queries (NLQ):** No “chat-to-query” interface in core.
-  MoltenDB is fundamentally designed to be lean, predictable, and exceptionally fast.
-  Adding NLQ or embedding a vector engine would completely destroy the lightweight footprint of the WASM build and the
-  native binary.
-  While I might explore building an NLQ adapter as a completely separate middleware package down the road, it will never
-  be baked into the core engine.
-- **Heavy Data Transformations (`map`, `flat`, `flatMap`):** The query engine is highly optimized to retrieve your
-  data (with precise field selection) as quickly as possible.
-  Baking complex array manipulations or heavy map/reduce operations into the fetch pipeline adds unnecessary overhead to
-  the core engine.
-  It is much faster and cleaner to let the database be a database, and handle those specific data transformations in
-  your application layer (JavaScript/Rust) after the data is returned.
+- **Natural Language Queries (NLQ):** No “chat-to-query” interface in core. MoltenDB is fundamentally designed to be
+  lean, predictable, and exceptionally fast. Adding NLQ or embedding a vector engine would completely destroy the
+  lightweight footprint of the WASM build and the native binary. While I might explore building an NLQ adapter as a
+  completely separate middleware package down the road, it will never be baked into the core engine.
+- **Heavy Data Transformations (`map`, `flat`, `flatMap`):** The query engine is highly optimized to retrieve your data
+  (with precise field selection) as quickly as possible. Baking complex array manipulations or heavy map/reduce
+  operations into the fetch pipeline adds unnecessary overhead to the core engine. It is much faster and cleaner to let
+  the database be a database, and handle those specific data transformations in your application layer (JavaScript/Rust)
+  after the data is returned.
 
 ---
 
@@ -199,7 +189,7 @@ Add `moltendb-core` to your `Cargo.toml` to embed the engine directly — no HTT
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc14"
+moltendb-core = "1.0.0-r"
 ```
 
 ### Download Pre-built Binaries

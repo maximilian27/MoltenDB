@@ -5,7 +5,9 @@
 ///   cargo run --example stress_fetch
 ///
 /// Environment variables (all optional):
-///   MOLTENDB_URL        — base URL,          default https://localhost:1538
+///   MOLTENDB_URL        — base URL,          default http://localhost:1538
+///                         (use https://localhost:1538 only when running
+///                         without --dev-mode)
 ///   MOLTENDB_USER       — username,           default admin
 ///   MOLTENDB_PASS       — password,           default admin123
 ///   MOLTENDB_TOKEN      — skip login, use JWT directly
@@ -42,9 +44,9 @@ fn bar(n: u64) -> ProgressBar {
 
 #[tokio::main]
 async fn main() {
-    let base_url = env("MOLTENDB_URL", "https://localhost:1538");
-    let user     = env("MOLTENDB_USER", "admin");
-    let pass     = env("MOLTENDB_PASS", "admin123");
+    let base_url = env("MOLTENDB_URL", "http://localhost:1538");
+    let user = env("MOLTENDB_USER", "admin");
+    let pass = env("MOLTENDB_PASS", "admin123");
     let concurrency: usize = env("STRESS_CONCURRENCY", "100000")
         .parse()
         .expect("STRESS_CONCURRENCY must be a number");
@@ -100,32 +102,32 @@ async fn main() {
     println!();
 
     // ── 4. Spawn tasks ───────────────────────────────────────────────────────
-    let client     = Arc::new(client);
-    let token      = Arc::new(token);
-    let base_url   = Arc::new(base_url);
+    let client = Arc::new(client);
+    let token = Arc::new(token);
+    let base_url = Arc::new(base_url);
     let collection = Arc::new(collection);
-    let all_keys   = Arc::new(all_keys);
-    let sem        = Arc::new(Semaphore::new(4096));
+    let all_keys = Arc::new(all_keys);
+    let sem = Arc::new(Semaphore::new(2048));
 
     let pb = bar(concurrency as u64);
     pb.set_message("firing requests…");
 
     let overall_start = Instant::now();
-    let mut handles   = Vec::with_capacity(concurrency);
+    let mut handles = Vec::with_capacity(concurrency);
 
     for i in 0..concurrency {
-        let client     = Arc::clone(&client);
-        let token      = Arc::clone(&token);
-        let base_url   = Arc::clone(&base_url);
+        let client = Arc::clone(&client);
+        let token = Arc::clone(&token);
+        let base_url = Arc::clone(&base_url);
         let collection = Arc::clone(&collection);
-        let all_keys   = Arc::clone(&all_keys);
-        let sem        = Arc::clone(&sem);
-        let pb_clone   = pb.clone();
-        let key        = all_keys[i % total_keys].clone();
+        let all_keys = Arc::clone(&all_keys);
+        let sem = Arc::clone(&sem);
+        let pb_clone = pb.clone();
+        let key = all_keys[i % total_keys].clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed");
-            let t0      = Instant::now();
+            let t0 = Instant::now();
 
             let result = client
                 .post(format!("{}/get", base_url))
@@ -153,17 +155,15 @@ async fn main() {
 
     // ── 5. Collect results ───────────────────────────────────────────────────
     let mut latencies_ms: Vec<f64> = Vec::with_capacity(concurrency);
-    let mut ok      = 0usize;
-    let mut errors  = 0usize;
+    let mut ok = 0usize;
+    let mut errors = 0usize;
     let mut non_200 = 0usize;
 
     for handle in handles {
         match handle.await {
             Ok((status, elapsed, err)) => {
                 latencies_ms.push(elapsed.as_secs_f64() * 1000.0);
-                if err.is_some()      { errors  += 1; }
-                else if status == 200 { ok      += 1; }
-                else                  { non_200 += 1; }
+                if err.is_some() { errors += 1; } else if status == 200 { ok += 1; } else { non_200 += 1; }
             }
             Err(_) => errors += 1,
         }
@@ -183,8 +183,8 @@ async fn main() {
     };
 
     let mean: f64 = latencies_ms.iter().sum::<f64>() / n as f64;
-    let min  = latencies_ms.first().copied().unwrap_or(0.0);
-    let max  = latencies_ms.last().copied().unwrap_or(0.0);
+    let min = latencies_ms.first().copied().unwrap_or(0.0);
+    let max = latencies_ms.last().copied().unwrap_or(0.0);
 
     // Color helpers
     let ok_pct = ok as f64 / concurrency as f64 * 100.0;
@@ -209,9 +209,7 @@ async fn main() {
     };
 
     let lat_color = |ms: f64| -> String {
-        if ms < 50.0       { format!("{:>8.2} ms", ms).bright_green().to_string() }
-        else if ms < 200.0 { format!("{:>8.2} ms", ms).bright_yellow().to_string() }
-        else               { format!("{:>8.2} ms", ms).bright_red().bold().to_string() }
+        if ms < 50.0 { format!("{:>8.2} ms", ms).bright_green().to_string() } else if ms < 200.0 { format!("{:>8.2} ms", ms).bright_yellow().to_string() } else { format!("{:>8.2} ms", ms).bright_red().bold().to_string() }
     };
 
     let throughput = concurrency as f64 / wall_secs;
@@ -231,15 +229,15 @@ async fn main() {
     println!("{}", "━".repeat(45).bright_black());
 
     let rows: &[(&str, f64)] = &[
-        ("Min",   min),
-        ("Mean",  mean),
-        ("p50",   percentile(50.0)),
-        ("p75",   percentile(75.0)),
-        ("p90",   percentile(90.0)),
-        ("p95",   percentile(95.0)),
-        ("p99",   percentile(99.0)),
+        ("Min", min),
+        ("Mean", mean),
+        ("p50", percentile(50.0)),
+        ("p75", percentile(75.0)),
+        ("p90", percentile(90.0)),
+        ("p95", percentile(95.0)),
+        ("p99", percentile(99.0)),
         ("p99.9", percentile(99.9)),
-        ("Max",   max),
+        ("Max", max),
     ];
 
     for (label, val) in rows {

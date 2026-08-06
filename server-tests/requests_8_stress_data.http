@@ -19,7 +19,7 @@ Content-Type: application/json
 }
 
 ### Paste the token from the response here:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NDg2ODA5Miwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImZlMDNkNTViLWFhZmYtNDNmZS1hNDkxLTQ2ZWY1OTFhODQyMCJ9.0My50XFGTn2JP8ZaJ98IB_y-fPOrt5Im6HcKBfmLob8
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NjEwMjQyOSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjQ3MTU4YTk5LTE0MzgtNDhmMy1iZmY2LTBmMGUyZTIwMTEzMSJ9.BE183D15OT6nx4mVah7s8b3YQZnShuOh56TYx6CSIKw
 
 ### ─── §1. Point lookups ───────────────────────────────────────────────────────
 ### §1a. Fetch the very first document
@@ -38,7 +38,9 @@ Content-Type: application/json
 Authorization: Bearer {{token}}
 
 {
-  "collection": "stress"
+  "collection": "stress",
+  "order": "desc",
+  "count": 1000
 }
 
 ### §1c. Fetch the last document
@@ -173,9 +175,6 @@ Authorization: Bearer {{token}}
 {
   "collection": "stress",
   "fields": [
-    "brand",
-    "model",
-    "price"
   ],
   "where": {
     "price": {
@@ -278,9 +277,10 @@ Authorization: Bearer {{token}}
   ],
   "where": {
     "model": {
-      "$ct": "Model-999"
+      "$ct": "Model-000"
     }
-  }
+  },
+  "order": "asc"
 }
 
 ### §3i. Items from Apple, Dell, or Razer ($in)
@@ -934,4 +934,91 @@ Authorization: Bearer {{token}}
 ### ✅ Metrics
 GET http://localhost:1538/system/metrics
 Authorization: Bearer {{token}}
+
+### ─── §11. Application-Side Materialized Index ──────────────────────────────
+### MoltenDB has no built-in secondary indexes yet. This section demonstrates the
+### documented workaround: use "fields": [] to cheaply collect matching keys, save
+### them into a dedicated idx_* collection, then serve future reads with an O(1)
+### batch `keys` lookup instead of re-running the filter every time.
+### See docs/api-reference.md → "Application-Side Materialized Indexes" for details.
+
+### §11a. BUILD — one-time filter query with "fields": [] to collect matching keys.
+### Only "_key"/"_v" are returned per match — no field values, minimal payload.
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "fields": [
+  ],
+  "where": {
+    "price": {
+      "$gte": 1500,
+      "$lte": 2500
+    }
+  }
+}
+
+### §11b. STORE — save the collected keys as the application-managed index document.
+### Copy the "_key" values from §11a's response into the "keys" array below.
+POST http://localhost:1538/set
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "idx_price_1500_2500",
+  "data": {
+    "range": {
+      "keys": [
+        "stress_998333",
+        "stress_998332",
+        "stress_998330",
+        "stress_998329",
+        "stress_998328"
+      ]
+    }
+  }
+}
+
+### §11c. READ (1/2) — pull the key array back out of the index collection.
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "idx_price_1500_2500",
+  "keys": "range"
+}
+
+### §11d. READ (2/2) — O(1) batch lookup against the primary collection using the
+### key array from §11c. No `where` scan, no sort — just direct DashMap lookups.
+POST http://localhost:1538/get
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "keys": [
+    "stress_000001",
+    "stress_000042",
+    "stress_000913"
+  ]
+}
+
+### §11e. MAINTENANCE reminder — this index is NOT auto-updated. If a document's
+### price changes (or it is deleted), you must rebuild/update idx_price_1500_2500
+### yourself, e.g. by re-running §11a and overwriting §11b.
+POST http://localhost:1538/update
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "collection": "stress",
+  "data": {
+    "stress_000001": {
+      "price": 9999
+    }
+  }
+}
 

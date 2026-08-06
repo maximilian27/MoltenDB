@@ -140,26 +140,42 @@ pub fn fetch_documents(db: &engine::Db, params: &FetchParams<'_>) -> Vec<(String
             let clause = params.where_clause.unwrap().clone();
             let fast_preds = extract_fast_predicates(&clause);
 
-            db.get_filtered(GetFilteredParams {
-                collection: params.col_name,
-                predicate: move |_key, doc_bytes| {
-                    if !fast_preds.is_empty() {
-                        // Fast path: evaluate all conditions directly on MsgPack
-                        // bytes — no full rmp_serde deserialization needed.
-                        fast_preds.iter().all(|(field, op, val)| {
-                            query::evaluate_predicate_msgpack(doc_bytes, field, op, val)
-                                .unwrap_or(false)
-                        })
-                    } else {
-                        // Full WHERE clause (e.g. $or/$and) — still on raw bytes.
-                        query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
-                    }
-                },
-                offset: 0,
-                count: early_exit_count,
-                default_order_asc: params.default_order_asc,
-                has_where: params.has_where,
-            })
+            // Predicate evaluated directly on raw MsgPack bytes (no full
+            // rmp_serde deserialization) — either as a flat list of fast-path
+            // conditions or, for logical clauses ($or/$and), the full evaluator.
+            let predicate = move |_key: &str, doc_bytes: &[u8]| -> bool {
+                if !fast_preds.is_empty() {
+                    fast_preds.iter().all(|(field, op, val)| {
+                        query::evaluate_predicate_msgpack(doc_bytes, field, op, val).unwrap_or(false)
+                    })
+                } else {
+                    query::evaluate_where_msgpack(doc_bytes, &clause).unwrap_or(false)
+                }
+            };
+
+            // Native: route through the coalesced-scan coordinator so that many
+            // concurrent WHERE scans share a single pass over the collection.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                db.get_filtered_coalesced(
+                    params.col_name,
+                    Box::new(predicate),
+                    early_exit_count,
+                    params.default_order_asc,
+                )
+            }
+            // Wasm: no Rayon / OS threads — fall back to a direct scan.
+            #[cfg(target_arch = "wasm32")]
+            {
+                db.get_filtered(GetFilteredParams {
+                    collection: params.col_name,
+                    predicate,
+                    offset: 0,
+                    count: early_exit_count,
+                    default_order_asc: params.default_order_asc,
+                    has_where: params.has_where,
+                })
+            }
         }
 
         // Prefix only: BTreeMap insertion-order scan filtered by key prefix.

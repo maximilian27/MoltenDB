@@ -46,7 +46,7 @@ tree.
 ```toml
 # Cargo.toml
 [dependencies]
-moltendb-core = "1.0.0-rc14"
+moltendb-core = "1.0.0"
 ```
 
 ```rust
@@ -154,7 +154,7 @@ Every `POST /get` request is routed through one of four execution paths dependin
 #### BTreeMap Seq-Index
 
 A secondary `BTreeMap<u64, String>` (insertion sequence → document key) is maintained per collection alongside the
-primary `DashMap`. It enables true O(k) ordered pagination for pure pagination queries (no `where`, no `sort`) — the
+primary `DashMap`. It enables true O (k) ordered pagination for pure pagination queries (no `where`, no `sort`) — the
 engine iterates in insertion order and breaks as soon as enough matches are found, without scanning the full collection.
 
 ```
@@ -162,9 +162,9 @@ state:     DashMap<Arc<str>, DashMap<String, Box<[u8]>>>   ← primary store (O(
 seq_index: DashMap<Arc<str>, RwLock<BTreeMap<u64, String>>> ← secondary index (ordered iteration)
 ```
 
-- **Write cost:** O(log n) BTreeMap insert per document write (plus `RwLock` acquisition).
-- **Read cost (no-where, no-sort):** O(k) where k = documents scanned to satisfy `offset + limit`.
-- **Startup:** index is rebuilt from the replayed WAL state in O(n log n) — no changes to the WAL format.
+- **Write cost:** O (log n) BTreeMap insert per document write (plus `RwLock` acquisition).
+- **Read cost (no-where, no-sort):** O (k) where k = documents scanned to satisfy `offset + limit`.
+- **Startup:** index is rebuilt from the replayed WAL state in O (n log n) — no changes to the WAL format.
 - **Default order:** newest-first (`map.iter().rev()`). Pass `"order": "asc"` in the request payload to iterate
   oldest-first.
 
@@ -180,7 +180,8 @@ allocations for large collections.
 `POST /delete` with a `where` clause mirrors the **`No sort, with where` read path**. The predicate runs directly on the
 raw MsgPack bytes (`query::evaluate_where_msgpack`) during a Rayon parallel scan — no `serde_json::Value` is decoded per
 document, only the cheap `_seq` token is read for matches. This makes a bulk delete about as cheap to scan as an
-equivalent unsorted `/get`, instead of paying a full `serde_json::Value` allocation for every document in the collection.
+equivalent unsorted `/get`, instead of paying a full `serde_json::Value` allocation for every document in the
+collection.
 
 Matches are collected as `(seq, key)` pairs and **sorted by `_seq` before the `count` cap is applied**, so a
 count-limited delete removes a deterministic subset rather than an arbitrary `DashMap`-iteration slice. The request's
@@ -228,9 +229,9 @@ from the previous page and use it as a `where` filter, keeping the heap size equ
 
 For unsorted `where` queries, use the system `_seq` field as a cursor instead of `offset`. `_seq` is a monotonically
 increasing `u64` stamped on every document at insert time and stored under a single-byte token key for zero-cost
-extraction. Adding `"_seq": { "$lt": last_seen_seq }` to the `where` clause makes each page start exactly where the
-last one ended — the Rayon atomic early-exit stops as soon as `count` matches are found, with no results to discard.
-You can also query a precise insertion-order window directly:
+extraction. Adding `"_seq": { "$lt": last_seen_seq }` to the `where` clause makes each page start exactly where the last
+one ended — the Rayon atomic early-exit stops as soon as `count` matches are found, with no results to discard. You can
+also query a precise insertion-order window directly:
 
 ```json
 { "where": { "_seq": { "$gt": 300000, "$lt": 300100 } } }
@@ -240,6 +241,6 @@ You can also query a precise insertion-order window directly:
 
 `$ct` / `$contains` predicates on string fields always require a full collection scan — no index can skip non-matching
 documents for arbitrary substring matches. The BTreeMap early-exit still fires once `offset + limit` matches are found,
-so performance is best when matching documents are near the newest end of the collection and degrades toward O(N) when
+so performance is best when matching documents are near the newest end of the collection and degrades toward O (N) when
 they are spread throughout or clustered at the oldest end.
 
