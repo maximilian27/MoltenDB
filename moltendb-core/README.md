@@ -40,8 +40,8 @@ Everything above this layer is an optional adapter.
 
 - **In-memory store** — `DashMap`-backed document collections, keyed by `(collection, key)`
 - **Append-only WAL** — every write is appended as a `LogEntry` (INSERT, DELETE, DROP, INDEX, ENC) with a `_t` timestamp
-- **Storage backends** — `AsyncDiskStorage` (default), `SyncDiskStorage`, `InMemoryStorage`, `EncryptedStorage` (
-  ChaCha20-Poly1305), `OpfsStorage` (WASM / browser OPFS)
+- **Storage backends** — `AsyncDiskStorage` (default), `SyncDiskStorage`, `InMemoryStorage`, `EncryptedStorage`
+  (ChaCha20-Poly1305), `OpfsStorage` (WASM / browser OPFS)
 - **Snapshot Versioning** — old snapshots are moved to `/backup` before rotation; no data is ever deleted
 - **Point-in-Time Recovery (PITR)** — rebuild state to any millisecond or sequence number (native only)
 
@@ -71,7 +71,7 @@ when the crate is used as a dependency of `moltendb-wasm`.
 
 ```toml
 [dependencies]
-moltendb-core = "1.0.0-rc14"
+moltendb-core = "1.0.0"
 ```
 
 ### Minimal example
@@ -128,15 +128,16 @@ println!("{} — {}", status_code, result);
 > **newest-first** — pass `"order": "asc"` to iterate oldest-first. `order` is mutually exclusive with `sort`.
 >
 > **Pagination performance notes:**
-> - **No `sort`, no `where`:** O(offset + limit) — BTreeMap seq-index iterates in insertion order and breaks early. Fast
-    for shallow offsets.
-> - **No `sort`, with `where`:** O(N) worst case — Rayon parallel scan with atomic early-exit; worst case when matching
+> - **No `sort`, no `where`:** O (offset + limit) — BTreeMap seq-index iterates in insertion order and breaks early.
+    Fast for shallow offsets.
+> - **No `sort`, with `where`:** O (N) worst case — Rayon parallel scan with atomic early-exit; worst case when matching
     documents are clustered at the oldest end. **Prefer `_seq`-based cursor pagination** for deep pages: add
-    `"_seq": { "$lt": last_seen_seq }` to the `where` clause so each page starts exactly where the last one ended
-    (e.g. `where: { "brand": { "$eq": "Apple" }, "_seq": { "$lt": 4823 } }`). You can also query a precise
-    insertion-order window directly: `where: { "_seq": { "$gt": 300000, "$lt": 300100 } }`.
-> - **`sort` present:** O(N), heap size = `offset + limit` — deep offsets are expensive because the engine must find the
-    true top `offset + limit` results before discarding the first `offset`. **Prefer keyset pagination** for deep pages:
+    `"_seq": { "$lt": last_seen_seq }` to the `where` clause so each page starts exactly where the last one ended (e.g.
+    `where: { "brand": { "$eq": "Apple" }, "_seq": { "$lt": 4823 } }`). You can also query a precise insertion-order
+    window directly: `where: { "_seq": { "$gt": 300000, "$lt": 300100 } }`.
+> - **`sort` present:** O (N), heap size = `offset + limit` — deep offsets are expensive because the engine must find
+    the true top `offset + limit` results before discarding the first `offset`. **Prefer keyset pagination** for deep
+    pages:
     filter by the last field value seen (`where: { "price": { "$gt": last_price } }`) to keep the heap size equal to
     `count` regardless of depth.
 > - **`$contains` / `$ct`:** always a full collection scan — no index can skip non-matching documents for substring
@@ -223,7 +224,7 @@ handlers::process_set::process_set( & db, & payload, 10 * 1024 * 1024, 1000);
 
 - The expiry clock resets to `now + ttl_secs` at the end of **every insert batch** — idle time since last write, not
   since schema registration.
-- On expiry the **entire collection is dropped** in one O(1) `Db::delete_collection` call.
+- On expiry the **entire collection is dropped** in one O (1) `Db::delete_collection` call.
 - `_expiresAt` is a **virtual field** — computed from `Db::ttl_expiry` and injected into every response when the
   collection has a TTL.
 - TTL is **immutable by design** — once set, it cannot be changed without dropping and recreating the collection.
@@ -237,7 +238,7 @@ handlers::process_set::process_set( & db, & payload, 10 * 1024 * 1024, 1000);
 
 **Eviction:**
 
-- **Lazy** — `process_get` checks the collection expiry once per request (O(1)) and returns `404` immediately if
+- **Lazy** — `process_get` checks the collection expiry once per request (O (1)) and returns `404` immediately if
   expired.
 - **Eager** (server only) — `ttl_sweep` uses an event-driven min-heap, wakes exactly when the next collection expires,
   and calls `Db::delete_collection`. Zero CPU when idle.

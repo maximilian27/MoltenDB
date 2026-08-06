@@ -1,4 +1,27 @@
-﻿# [1.0.0-rc14] (Jul 23, 2026)
+﻿# [1.0.0] (Aug 4, 2026)
+
+### Performance
+
+* **Coalesced (batched) scanning for concurrent queries** — under heavy read fan-out, many full-collection queries
+  arriving at nearly the same time no longer each launch their own independent parallel pass over the collection (N
+  queries means N full sweeps, pulling every document's bytes into CPU cache N times). A native-only background
+  coordinator thread (`engine::CoalescedScanner`) now batches incoming scan requests over a short window (~3ms, up to
+  64 per batch) and runs a **single shared pass** over the collection: each document's bytes are read once and every
+  batched request is evaluated against them, so the collection is streamed through cache a single time no matter how
+  many queries are in the batch. Two query shapes are folded into the same pass: full-collection `WHERE` scans (the
+  `WhereOnly` strategy in `handlers::get::fetch` → `Db::get_filtered_coalesced`), whose matches are ordered by `_seq`
+  and paginated independently; and the single-field **numeric-sort top-N** fast path (`process_get::run_fast_sort_path`
+  → `Db::scan_top_n_raw_coalesced`, mirroring `scan_top_n_raw`), where each query keeps its own bounded heap fed from
+  the shared pass — the numeric sort field is extracted from raw bytes once per document and full decoding is deferred
+  to each query's `cap` winners. Per query the results are identical to the non-coalesced paths. The server's
+  `POST /get` handler runs the synchronous query on Tokio's blocking pool (`spawn_blocking`) so a burst of concurrent
+  requests can actually reach the coordinator together instead of being serialized across the limited async worker
+  pool. Point lookups, prefix scans, the multi-field/generic comparator sort path and the wasm build keep their
+  existing code paths.
+
+---
+
+# [1.0.0-rc14] (Jul 23, 2026)
 
 ### Performance
 

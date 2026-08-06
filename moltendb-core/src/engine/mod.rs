@@ -22,6 +22,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Declare the sub-modules of the engine.
+#[cfg(not(target_arch = "wasm32"))]
+mod coalesce; // Coalesced (batched) scanning coordinator
+#[cfg(not(target_arch = "wasm32"))]
+pub use coalesce::CoalescedScanner;
 mod config; // DbConfig struct
 mod operations;
 pub use operations::{GetFilteredParams, ScanTopNParams, ScanTopNRawParams};
@@ -127,6 +131,12 @@ pub struct Db {
     /// Timestamp of when this Db instance was opened, used for uptime calculation.
     #[cfg(not(target_arch = "wasm32"))]
     pub started_at: std::time::Instant,
+
+    /// Coalesced-scan coordinator: batches concurrent full-collection WHERE
+    /// scans into a single shared pass over the collection. Shared across all
+    /// clones of this `Db`. Native-only (relies on Rayon + OS threads).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) scanner: Arc<CoalescedScanner>,
 }
 
 impl Db {
@@ -168,6 +178,64 @@ impl Db {
         P: Fn(&str, &[u8]) -> bool + Sync + Send,
     {
         operations::get_filtered(&self.state, &self.storage, &self.seq_index, params)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
+    }
+
+    /// Coalesced variant of a full-collection WHERE scan.
+    ///
+    /// Instead of launching an independent parallel pass over the collection,
+    /// the `predicate` is submitted to the shared coalesced-scan coordinator,
+    /// which batches concurrent WHERE scans over a short time window and runs a
+    /// single shared pass — every document's bytes are read from RAM once and
+    /// all batched predicates are evaluated against them. This is the mechanism
+    /// that keeps CPU usage bounded when many GET queries hit at once.
+    ///
+    /// Semantics match the no-sort WHERE branch of [`get_filtered`]: matches are
+    /// ordered by `_seq` (ascending when `default_order_asc`, else descending)
+    /// and capped at `need` (= `offset + limit`); pagination `offset` is applied
+    /// by the caller. Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_filtered_coalesced(
+        &self,
+        collection: &str,
+        predicate: crate::engine::coalesce::ScanPredicate,
+        need: Option<usize>,
+        default_order_asc: bool,
+    ) -> Vec<(String, Value)> {
+        self.scanner
+            .scan(collection, predicate, need, default_order_asc)
+            .into_iter()
+            .map(|(k, v)| (k, expand_system_fields(v)))
+            .collect()
+    }
+
+    /// Coalesced variant of the single-field numeric-sort top-N fast path.
+    ///
+    /// Instead of launching an independent parallel pass per query, the
+    /// `predicate` and sort spec are submitted to the shared coalesced-scan
+    /// coordinator, which folds concurrent sorted queries (and WHERE scans) that
+    /// arrive within the same short window into a single shared pass over the
+    /// collection — every document's bytes are read from RAM once and each query
+    /// feeds its own bounded heap.
+    ///
+    /// Semantics match [`scan_top_n_raw`]: the numeric `sort_field` is extracted
+    /// from raw bytes, matches are kept in a bounded heap of size `cap`
+    /// (= `offset + count`), the result is ordered best-first (`is_descending`
+    /// reverses it), and pagination `offset` is applied by the caller.
+    /// Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn scan_top_n_raw_coalesced(
+        &self,
+        collection: &str,
+        predicate: crate::engine::coalesce::ScanPredicate,
+        sort_field: &str,
+        is_descending: bool,
+        cap: usize,
+    ) -> Vec<(String, Value)> {
+        self.scanner
+            .scan_top_n(collection, predicate, sort_field, is_descending, cap)
             .into_iter()
             .map(|(k, v)| (k, expand_system_fields(v)))
             .collect()

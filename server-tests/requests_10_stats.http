@@ -256,7 +256,7 @@ Authorization: Bearer {{token}}
 
 
 ### Set your token here after login:
-@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NDg2ODA5Miwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6ImZlMDNkNTViLWFhZmYtNDNmZS1hNDkxLTQ2ZWY1OTFhODQyMCJ9.0My50XFGTn2JP8ZaJ98IB_y-fPOrt5Im6HcKBfmLob8
+@token = eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTc4NjEwMjQyOSwic2NvcGVzIjpbIio6KjoqIl0sImp0aSI6IjQ3MTU4YTk5LTE0MzgtNDhmMy1iZmY2LTBmMGUyZTIwMTEzMSJ9.BE183D15OT6nx4mVah7s8b3YQZnShuOh56TYx6CSIKw
 
 ###############################################################################
 ### /stats -- Collection document counts

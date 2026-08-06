@@ -15,11 +15,6 @@ The runnable binary. Delegates all database logic to `moltendb-core`.
 
 </div>
 
-> [!WARNING]
-> **After careful consideration, a breaking change was introduced in v1.0.0-rc10. Versions starting with `v1.0.0-rc10`
-are not backwards compatible with previous versions.**
-> Review the [changelog](../CHANGELOG.md) before upgrading.
-
 ---
 
 ## What is this crate?
